@@ -34,13 +34,13 @@ pub enum Refresh {
 pub fn set(monitor: Option<u32>, width: u32, height: u32, refresh: Refresh) -> Result<Mode, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
+    let display = query::display_label(&name, index as u32 + 1);
     let base = query::current_mode(&name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
     let modes = capabilities::enumerate_modes(&name);
-    let refresh =
-        resolve_refresh(refresh, &modes, width, height, base.dm_display_frequency, index as u32 + 1)?;
+    let refresh = resolve_refresh(refresh, &modes, width, height, base.dm_display_frequency, &display)?;
     let mode = Mode { width, height, refresh };
     let devmode = build_devmode(&mode, &base);
-    apply_mode(&name, &devmode)?;
+    apply_mode(&name, &display, &devmode)?;
     Ok(mode)
 }
 
@@ -56,22 +56,23 @@ pub fn set(monitor: Option<u32>, width: u32, height: u32, refresh: Refresh) -> R
 pub fn max(monitor: Option<u32>) -> Result<Mode, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
+    let display = query::display_label(&name, index as u32 + 1);
     let best = best_mode(capabilities::enumerate_modes(&name))
-        .ok_or_else(|| format!("no supported modes found for monitor {}", index + 1))?;
+        .ok_or_else(|| format!("{display} has no supported modes"))?;
     let base = query::current_mode(&name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
     let devmode = build_devmode(&best, &base);
-    apply_mode(&name, &devmode)?;
+    apply_mode(&name, &display, &devmode)?;
     Ok(best)
 }
 
 /// Validates a mode with a dry run, then applies and persists it.
-fn apply_mode(name: &str, devmode: &DEVMODEW) -> Result<(), String> {
+fn apply_mode(name: &str, display: &str, devmode: &DEVMODEW) -> Result<(), String> {
     let name_ptr = encode_wide(name);
     let test = unsafe {
         ChangeDisplaySettingsExW(name_ptr.as_ptr(), devmode, 0, CDS_TEST, std::ptr::null())
     };
     if test != DISP_CHANGE_SUCCESSFUL {
-        return Err(format!("failed to apply mode: {}", describe_change_result(test)));
+        return Err(describe_change_failure(test, display, devmode));
     }
     let applied = unsafe {
         ChangeDisplaySettingsExW(
@@ -83,19 +84,27 @@ fn apply_mode(name: &str, devmode: &DEVMODEW) -> Result<(), String> {
         )
     };
     if applied != DISP_CHANGE_SUCCESSFUL {
-        return Err(format!(
-            "failed to apply mode: {}",
-            describe_change_result(applied)
-        ));
+        return Err(describe_change_failure(applied, display, devmode));
     }
     Ok(())
+}
+
+/// Describes a rejected display change; a bad mode names the display and
+/// the attempted resolution and refresh rate.
+fn describe_change_failure(code: i32, display: &str, devmode: &DEVMODEW) -> String {
+    if code == DISP_CHANGE_BADMODE {
+        return format!(
+            "{display} does not support {}x{}@{}Hz",
+            devmode.dm_pels_width, devmode.dm_pels_height, devmode.dm_display_frequency
+        );
+    }
+    describe_change_result(code)
 }
 
 fn describe_change_result(code: i32) -> String {
     match code {
         DISP_CHANGE_SUCCESSFUL => "success".to_string(),
         DISP_CHANGE_RESTART => "a restart is required to apply this mode".to_string(),
-        DISP_CHANGE_BADMODE => "the display does not support this mode".to_string(),
         DISP_CHANGE_FAILED => "the display change failed".to_string(),
         DISP_CHANGE_NOTUPDATED => "the display settings were not updated".to_string(),
         DISP_CHANGE_BADFLAGS | DISP_CHANGE_BADPARAM | DISP_CHANGE_BADDUALVIEW => {
@@ -134,13 +143,13 @@ fn resolve_refresh(
     width: u32,
     height: u32,
     current_refresh: u32,
-    monitor_number: u32,
+    display: &str,
 ) -> Result<u32, String> {
     match policy {
         Refresh::Keep => Ok(current_refresh),
         Refresh::Fixed(r) => Ok(r),
         Refresh::Max => best_refresh(modes, width, height)
-            .ok_or_else(|| format!("monitor {monitor_number} does not support {width}x{height}")),
+            .ok_or_else(|| format!("{display} does not support {width}x{height}")),
     }
 }
 
@@ -150,15 +159,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn describe_change_result_maps_every_disp_change_code() {
+    fn describe_change_result_maps_disp_change_codes() {
         assert_eq!(describe_change_result(DISP_CHANGE_SUCCESSFUL), "success");
         assert_eq!(
             describe_change_result(DISP_CHANGE_RESTART),
             "a restart is required to apply this mode"
-        );
-        assert_eq!(
-            describe_change_result(DISP_CHANGE_BADMODE),
-            "the display does not support this mode"
         );
         assert_eq!(
             describe_change_result(DISP_CHANGE_FAILED),
@@ -173,6 +178,30 @@ mod tests {
         assert_eq!(
             describe_change_result(DISP_CHANGE_BADDUALVIEW),
             "invalid parameters"
+        );
+    }
+
+    #[test]
+    fn describe_change_failure_badmode_names_display_and_mode() {
+        let devmode = build_devmode(
+            &Mode { width: 9999, height: 9999, refresh: 1 },
+            &unsafe { std::mem::zeroed() },
+        );
+        assert_eq!(
+            describe_change_failure(DISP_CHANGE_BADMODE, "Generic PnP Monitor [:1]", &devmode),
+            "Generic PnP Monitor [:1] does not support 9999x9999@1Hz"
+        );
+    }
+
+    #[test]
+    fn describe_change_failure_passes_through_other_codes() {
+        let devmode = build_devmode(
+            &Mode { width: 1920, height: 1080, refresh: 120 },
+            &unsafe { std::mem::zeroed() },
+        );
+        assert_eq!(
+            describe_change_failure(DISP_CHANGE_RESTART, "Generic PnP Monitor [:1]", &devmode),
+            "a restart is required to apply this mode"
         );
     }
 
@@ -305,14 +334,17 @@ mod tests {
     #[test]
     fn resolve_refresh_keep_returns_current_refresh() {
         let modes = vec![Mode { width: 1920, height: 1080, refresh: 144 }];
-        assert_eq!(resolve_refresh(Refresh::Keep, &modes, 1920, 1080, 59, 1), Ok(59));
+        assert_eq!(
+            resolve_refresh(Refresh::Keep, &modes, 1920, 1080, 59, "Generic PnP Monitor [:1]"),
+            Ok(59)
+        );
     }
 
     #[test]
     fn resolve_refresh_fixed_returns_the_value() {
         let modes = vec![Mode { width: 1920, height: 1080, refresh: 60 }];
         assert_eq!(
-            resolve_refresh(Refresh::Fixed(75), &modes, 1920, 1080, 59, 1),
+            resolve_refresh(Refresh::Fixed(75), &modes, 1920, 1080, 59, "Generic PnP Monitor [:1]"),
             Ok(75)
         );
     }
@@ -323,15 +355,18 @@ mod tests {
             Mode { width: 1920, height: 1080, refresh: 60 },
             Mode { width: 1920, height: 1080, refresh: 144 },
         ];
-        assert_eq!(resolve_refresh(Refresh::Max, &modes, 1920, 1080, 60, 1), Ok(144));
+        assert_eq!(
+            resolve_refresh(Refresh::Max, &modes, 1920, 1080, 60, "Generic PnP Monitor [:1]"),
+            Ok(144)
+        );
     }
 
     #[test]
     fn resolve_refresh_max_no_matching_mode_is_error() {
         let modes = vec![Mode { width: 2560, height: 1440, refresh: 60 }];
         assert_eq!(
-            resolve_refresh(Refresh::Max, &modes, 320, 200, 60, 1),
-            Err("monitor 1 does not support 320x200".to_string())
+            resolve_refresh(Refresh::Max, &modes, 320, 200, 60, "Generic PnP Monitor [:1]"),
+            Err("Generic PnP Monitor [:1] does not support 320x200".to_string())
         );
     }
 
@@ -344,7 +379,10 @@ mod tests {
         let Some(current) = query::current_mode(&names[0]) else {
             return;
         };
-        assert_eq!(apply_mode(&names[0], &current), Ok(()));
+        assert_eq!(
+            apply_mode(&names[0], &query::display_label(&names[0], 1), &current),
+            Ok(())
+        );
     }
 
     #[test]
@@ -358,9 +396,8 @@ mod tests {
             &Mode { width: 1, height: 1, refresh: 1 },
             &base,
         );
-        assert_eq!(
-            apply_mode(&names[0], &devmode),
-            Err("failed to apply mode: the display does not support this mode".to_string())
-        );
+        let result = apply_mode(&names[0], &query::display_label(&names[0], 1), &devmode);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not support 1x1@1Hz"));
     }
 }

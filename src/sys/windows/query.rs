@@ -66,6 +66,14 @@ pub(crate) fn friendly_name(device: &[u16]) -> Option<String> {
     Some(wide_to_string(&monitor.device_string))
 }
 
+/// Human-readable display label for error messages: friendly name (falling
+/// back to the device name) plus the 1-based monitor number, e.g.
+/// `Generic PnP Monitor [:1]`.
+pub(crate) fn display_label(name: &str, number: u32) -> String {
+    let friendly = friendly_name(&encode_wide(name)).unwrap_or_else(|| name.to_string());
+    format!("{friendly} [:{number}]")
+}
+
 /// Builds a [`Monitor`] for a device: friendly name (falling back to the
 /// raw device name) and current mode; primary is determined by origin 0,0.
 pub(crate) fn describe(index: usize, name: &str) -> Monitor {

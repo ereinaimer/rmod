@@ -47,7 +47,10 @@ pub fn caps(monitor: Option<u32>) -> Result<(Monitor, Vec<Mode>), String> {
     let (index, name) = query::resolve_device(monitor, &names)?;
     let modes = capabilities::enumerate_modes(&name);
     if modes.is_empty() {
-        return Err(format!("no supported modes found for monitor {}", index + 1));
+        return Err(format!(
+            "{} has no supported modes",
+            query::display_label(&name, index as u32 + 1)
+        ));
     }
     Ok((
         query::describe(index, &name),

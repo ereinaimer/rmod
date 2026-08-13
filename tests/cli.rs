@@ -47,6 +47,8 @@ fn subcommand_help_flags_exit_zero() {
     assert!(rmod(&["max", "--help"]).status.success());
     assert!(rmod(&["caps", "-h"]).status.success());
     assert!(rmod(&["caps", "--help"]).status.success());
+    assert!(rmod(&["1920x1080@60", "-h"]).status.success());
+    assert!(rmod(&["4k", "--help"]).status.success());
 }
 
 #[test]
@@ -227,5 +229,5 @@ fn set_zero_monitor_is_error() {
 fn set_unsupported_mode_is_error() {
     let out = rmod(&["9999x9999@1"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("failed to apply mode:"));
+    assert!(stderr(&out).contains("does not support 9999x9999@1Hz"));
 }
