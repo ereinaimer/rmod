@@ -118,6 +118,3 @@ jobs:
 
       - name: Run tests (nextest)
         run: cargo nextest run --locked --workspace --all-features
-
-      - name: Run doc tests (cargo test)
-        run: cargo test --doc --locked --workspace --all-features

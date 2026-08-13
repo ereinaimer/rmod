@@ -89,12 +89,12 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-artifacts-${{ matrix.platform_key }}
-          path: ${{ env.ARCHIVE_NAME }}
+          path: ${{ matrix.archive_name }}
 
       - name: Write checksum file
         shell: bash
         run: |
-          echo "${{ env.SHA256 }}  ${{ env.ARCHIVE_NAME }}" > checksums-${{ matrix.platform_key }}.sha256
+          echo "$SHA256  ${{ matrix.archive_name }}" > checksums-${{ matrix.platform_key }}.sha256
 
       - name: Upload Checksum File
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
