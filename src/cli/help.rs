@@ -79,7 +79,8 @@ Usage:
     keep changes? [N/y]
   Answer y to keep; anything else — or no answer within 5
   seconds — reverts to the previous mode. Use -y to apply
-  without asking.
+  without asking. If the requested mode is already active,
+  rmod reports it and exits without prompting.
 
 Examples:
   rmod max
@@ -137,7 +138,8 @@ Usage:
     keep changes? [N/y]
   Answer y to keep; anything else — or no answer within 5
   seconds — reverts to the previous mode. Use -y to apply
-  without asking.
+  without asking. If the requested mode is already active,
+  rmod reports it and exits without prompting.
 
 Profiles:
   720       1280x720

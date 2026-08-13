@@ -2,7 +2,8 @@
 //!
 //! Picks the highest-resolution supported mode (`max`) or applies a
 //! requested resolution/refresh (`set`), tests it with a dry run, then
-//! applies it and persists it to the registry.
+//! applies it and persists it to the registry. A mode that is already
+//! active is reported as unchanged and never re-applied.
 
 use super::bindings::{
     CDS_TEST, CDS_UPDATEREGISTRY, ChangeDisplaySettingsExW, DISP_CHANGE_BADDUALVIEW,
@@ -38,9 +39,36 @@ pub struct Change {
     pub previous: Mode,
 }
 
+/// The result of applying a mode policy to a display.
+#[derive(Debug, PartialEq)]
+pub enum ApplyOutcome {
+    /// The mode was applied and can be reverted with its previous mode.
+    Applied(Change),
+    /// The requested mode was already active; nothing was applied.
+    Unchanged(Change),
+}
+
+/// Builds the outcome for an attempted change; identical modes produce
+/// [`ApplyOutcome::Unchanged`].
+fn outcome_of(monitor: u32, display: String, mode: Mode, previous: Mode) -> ApplyOutcome {
+    let change = Change {
+        monitor,
+        display,
+        mode,
+        previous,
+    };
+    if change.mode == change.previous {
+        ApplyOutcome::Unchanged(change)
+    } else {
+        ApplyOutcome::Applied(change)
+    }
+}
+
 /// Applies a resolution and refresh policy to a display.
 ///
 /// `monitor` is the 1-based number from `ls`; `None` selects the primary.
+/// Returns [`ApplyOutcome::Unchanged`] when the requested mode is already
+/// active.
 ///
 /// # Errors
 /// Unknown monitor, no matching mode for `@max`, or a mode the display
@@ -50,7 +78,7 @@ pub fn set(
     width: u32,
     height: u32,
     refresh: Refresh,
-) -> Result<Change, String> {
+) -> Result<ApplyOutcome, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
     let display = query::display_label(&name, index as u32 + 1);
@@ -70,26 +98,26 @@ pub fn set(
         refresh,
     };
     let previous = mode_of(&base);
-    let devmode = build_devmode(&mode, &base);
-    apply_mode(&name, &display, &devmode)?;
-    Ok(Change {
-        monitor: index as u32 + 1,
-        display,
-        mode,
-        previous,
-    })
+    let result = outcome_of(index as u32 + 1, display, mode, previous);
+    if let ApplyOutcome::Applied(change) = &result {
+        let devmode = build_devmode(&change.mode, &base);
+        apply_mode(&name, &change.display, &devmode)?;
+    }
+    Ok(result)
 }
 
-/// Applies the best supported mode to a monitor and returns the change.
+/// Applies the best supported mode to a monitor and returns the outcome.
 ///
 /// `monitor` is the 1-based number from [`super::list`]; `None` selects the
 /// primary display. The mode is validated with `CDS_TEST` before being
-/// applied and written to the registry.
+/// applied and written to the registry. Returns
+/// [`ApplyOutcome::Unchanged`] when the display is already at its best
+/// mode.
 ///
 /// # Errors
 /// Returns `Err` for an unknown monitor number, no supported modes, or a
 /// rejected display change.
-pub fn max(monitor: Option<u32>) -> Result<Change, String> {
+pub fn max(monitor: Option<u32>) -> Result<ApplyOutcome, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
     let display = query::display_label(&name, index as u32 + 1);
@@ -97,24 +125,24 @@ pub fn max(monitor: Option<u32>) -> Result<Change, String> {
         .ok_or_else(|| format!("{display} has no supported modes"))?;
     let base = query::current_mode(&name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
     let previous = mode_of(&base);
-    let devmode = build_devmode(&best, &base);
-    apply_mode(&name, &display, &devmode)?;
-    Ok(Change {
-        monitor: index as u32 + 1,
-        display,
-        mode: best,
-        previous,
-    })
+    let result = outcome_of(index as u32 + 1, display, best, previous);
+    if let ApplyOutcome::Applied(change) = &result {
+        let devmode = build_devmode(&change.mode, &base);
+        apply_mode(&name, &change.display, &devmode)?;
+    }
+    Ok(result)
 }
 
 /// Applies a resolution and refresh policy to every attached display.
 ///
 /// Every monitor is dry-run validated before anything is applied; when any
 /// display rejects the mode, nothing changes and the failures are listed.
+/// Monitors already at the requested mode are reported as unchanged and
+/// left untouched.
 ///
 /// # Errors
 /// No displays found, a mode no display supports, or preflight failures.
-pub fn set_all(width: u32, height: u32, refresh: Refresh) -> Result<Vec<Change>, String> {
+pub fn set_all(width: u32, height: u32, refresh: Refresh) -> Result<Vec<ApplyOutcome>, String> {
     let names = query::enumerate_devices();
     let targets = query::resolve_all(&names)?;
     apply_all(plan_set(&targets, width, height, refresh)?)
@@ -124,12 +152,13 @@ pub fn set_all(width: u32, height: u32, refresh: Refresh) -> Result<Vec<Change>,
 ///
 /// Every monitor is dry-run validated before anything is applied; when any
 /// display rejects its best mode, nothing changes and the failures are
-/// listed.
+/// listed. Monitors already at their best mode are reported as unchanged
+/// and left untouched.
 ///
 /// # Errors
 /// No displays found, a display with no supported modes, or preflight
 /// failures.
-pub fn max_all() -> Result<Vec<Change>, String> {
+pub fn max_all() -> Result<Vec<ApplyOutcome>, String> {
     let names = query::enumerate_devices();
     let targets = query::resolve_all(&names)?;
     apply_all(plan_max(&targets)?)
@@ -260,14 +289,11 @@ fn resolve_refresh(
 }
 
 /// A planned change for one monitor: everything needed to validate and
-/// apply a mode and report the resulting [`Change`].
+/// apply a mode and report the resulting outcome.
 struct Planned {
-    index: usize,
     name: String,
-    display: String,
-    mode: Mode,
-    previous: Mode,
     devmode: DevmodeW,
+    outcome: ApplyOutcome,
 }
 
 fn plan_set(
@@ -296,13 +322,11 @@ fn plan_set(
         };
         let previous = mode_of(&base);
         let devmode = build_devmode(&mode, &base);
+        let outcome = outcome_of(*index as u32 + 1, display, mode, previous);
         planned.push(Planned {
-            index: *index,
             name: name.clone(),
-            display,
-            mode,
-            previous,
             devmode,
+            outcome,
         });
     }
     Ok(planned)
@@ -320,13 +344,11 @@ fn plan_max(targets: &[(usize, String)]) -> Result<Vec<Planned>, String> {
         let base = query::current_mode(name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
         let previous = mode_of(&base);
         let devmode = build_devmode(&mode, &base);
+        let outcome = outcome_of(*index as u32 + 1, display, mode, previous);
         planned.push(Planned {
-            index: *index,
             name: name.clone(),
-            display,
-            mode,
-            previous,
             devmode,
+            outcome,
         });
     }
     if failures.is_empty() {
@@ -336,27 +358,27 @@ fn plan_max(targets: &[(usize, String)]) -> Result<Vec<Planned>, String> {
     }
 }
 
-fn apply_all(planned: Vec<Planned>) -> Result<Vec<Change>, String> {
+fn apply_all(planned: Vec<Planned>) -> Result<Vec<ApplyOutcome>, String> {
     let mut failures = Vec::new();
     for p in &planned {
-        if let Err(e) = validate_mode(&p.name, &p.display, &p.devmode) {
+        let ApplyOutcome::Applied(change) = &p.outcome else {
+            continue;
+        };
+        if let Err(e) = validate_mode(&p.name, &change.display, &p.devmode) {
             failures.push(e);
         }
     }
     if !failures.is_empty() {
         return Err(failures.join("\n"));
     }
-    let mut changes = Vec::with_capacity(planned.len());
+    let mut outcomes = Vec::with_capacity(planned.len());
     for p in planned {
-        apply_mode(&p.name, &p.display, &p.devmode)?;
-        changes.push(Change {
-            monitor: p.index as u32 + 1,
-            display: p.display,
-            mode: p.mode,
-            previous: p.previous,
-        });
+        if let ApplyOutcome::Applied(change) = &p.outcome {
+            apply_mode(&p.name, &change.display, &p.devmode)?;
+        }
+        outcomes.push(p.outcome);
     }
-    Ok(changes)
+    Ok(outcomes)
 }
 
 #[cfg(test)]
@@ -428,6 +450,72 @@ mod tests {
     #[test]
     fn describe_change_result_unknown_code() {
         assert_eq!(describe_change_result(12345), "unknown error (12345)");
+    }
+
+    #[test]
+    fn outcome_of_identical_modes_is_unchanged() {
+        let mode = Mode {
+            width: 1920,
+            height: 1080,
+            refresh: 120,
+        };
+        assert_eq!(
+            outcome_of(
+                1,
+                "Generic PnP Monitor [:1]".to_string(),
+                mode,
+                Mode {
+                    width: 1920,
+                    height: 1080,
+                    refresh: 120,
+                }
+            ),
+            ApplyOutcome::Unchanged(Change {
+                monitor: 1,
+                display: "Generic PnP Monitor [:1]".to_string(),
+                mode: Mode {
+                    width: 1920,
+                    height: 1080,
+                    refresh: 120,
+                },
+                previous: Mode {
+                    width: 1920,
+                    height: 1080,
+                    refresh: 120,
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn outcome_of_different_modes_is_applied() {
+        let mode = Mode {
+            width: 1920,
+            height: 1080,
+            refresh: 120,
+        };
+        let previous = Mode {
+            width: 1280,
+            height: 720,
+            refresh: 120,
+        };
+        assert_eq!(
+            outcome_of(1, "Generic PnP Monitor [:1]".to_string(), mode, previous),
+            ApplyOutcome::Applied(Change {
+                monitor: 1,
+                display: "Generic PnP Monitor [:1]".to_string(),
+                mode: Mode {
+                    width: 1920,
+                    height: 1080,
+                    refresh: 120,
+                },
+                previous: Mode {
+                    width: 1280,
+                    height: 720,
+                    refresh: 120,
+                },
+            })
+        );
     }
 
     #[test]

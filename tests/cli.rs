@@ -269,3 +269,41 @@ fn set_all_unsupported_mode_is_error() {
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("does not support"));
 }
+
+fn current_mode() -> String {
+    let out = rmod(&["ls"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let stdout = stdout(&out);
+    let row = stdout
+        .lines()
+        .find(|l| l.contains('*') && l.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        .expect("no primary monitor row");
+    let tokens: Vec<&str> = row.split_whitespace().collect();
+    let refresh = tokens
+        .last()
+        .and_then(|t| t.strip_suffix("Hz"))
+        .expect("refresh column");
+    format!("{}@{}", tokens[tokens.len() - 2], refresh)
+}
+
+#[test]
+fn set_already_active_is_noop() {
+    let mode = current_mode();
+    let out = rmod(&[&mode]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let stdout = stdout(&out);
+    assert!(stdout.contains("already at"));
+    assert!(!stdout.contains("keep changes"));
+    assert!(!stdout.contains("applied"));
+}
+
+#[test]
+fn set_all_already_active_is_noop() {
+    let all = format!("{}:*", current_mode());
+    let out = rmod(&[&all]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let stdout = stdout(&out);
+    assert!(stdout.contains("is already at"));
+    assert!(!stdout.contains("keep changes"));
+    assert!(!stdout.contains("applied"));
+}

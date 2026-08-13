@@ -129,7 +129,14 @@ fn main() {
                     cli::Target::All => unreachable!(),
                 };
                 match sys::windows::max(monitor) {
-                    Ok(change) => {
+                    Ok(sys::windows::ApplyOutcome::Unchanged(change)) => {
+                        println!(
+                            "already at {}x{} @ {}Hz",
+                            change.mode.width, change.mode.height, change.mode.refresh
+                        );
+                        0
+                    }
+                    Ok(sys::windows::ApplyOutcome::Applied(change)) => {
                         println!(
                             "applied {}x{} @ {}Hz",
                             change.mode.width, change.mode.height, change.mode.refresh
@@ -166,17 +173,30 @@ fn main() {
                 }
             }
             cli::Target::All => match sys::windows::max_all() {
-                Ok(changes) => {
-                    for change in &changes {
-                        println!(
-                            "applied {}x{} @ {}Hz to {}",
-                            change.mode.width,
-                            change.mode.height,
-                            change.mode.refresh,
-                            change.display
-                        );
+                Ok(outcomes) => {
+                    let mut applied = Vec::new();
+                    for outcome in outcomes {
+                        match outcome {
+                            sys::windows::ApplyOutcome::Unchanged(change) => println!(
+                                "{} is already at {}x{} @ {}Hz",
+                                change.display,
+                                change.mode.width,
+                                change.mode.height,
+                                change.mode.refresh
+                            ),
+                            sys::windows::ApplyOutcome::Applied(change) => {
+                                println!(
+                                    "applied {}x{} @ {}Hz to {}",
+                                    change.mode.width,
+                                    change.mode.height,
+                                    change.mode.refresh,
+                                    change.display
+                                );
+                                applied.push(change);
+                            }
+                        }
                     }
-                    if yes {
+                    if applied.is_empty() || yes {
                         0
                     } else {
                         match cli::confirm_keep(std::time::Duration::from_secs(
@@ -185,7 +205,7 @@ fn main() {
                             cli::Confirm::Keep => 0,
                             cli::Confirm::Revert => {
                                 let mut failed = false;
-                                for change in changes {
+                                for change in applied {
                                     match sys::windows::revert(
                                         Some(change.monitor),
                                         change.previous,
@@ -225,7 +245,14 @@ fn main() {
                     cli::Target::All => unreachable!(),
                 };
                 match sys::windows::set(monitor, width, height, refresh) {
-                    Ok(change) => {
+                    Ok(sys::windows::ApplyOutcome::Unchanged(change)) => {
+                        println!(
+                            "already at {}x{} @ {}Hz",
+                            change.mode.width, change.mode.height, change.mode.refresh
+                        );
+                        0
+                    }
+                    Ok(sys::windows::ApplyOutcome::Applied(change)) => {
                         println!(
                             "applied {}x{} @ {}Hz",
                             change.mode.width, change.mode.height, change.mode.refresh
@@ -262,17 +289,30 @@ fn main() {
                 }
             }
             cli::Target::All => match sys::windows::set_all(width, height, refresh) {
-                Ok(changes) => {
-                    for change in &changes {
-                        println!(
-                            "applied {}x{} @ {}Hz to {}",
-                            change.mode.width,
-                            change.mode.height,
-                            change.mode.refresh,
-                            change.display
-                        );
+                Ok(outcomes) => {
+                    let mut applied = Vec::new();
+                    for outcome in outcomes {
+                        match outcome {
+                            sys::windows::ApplyOutcome::Unchanged(change) => println!(
+                                "{} is already at {}x{} @ {}Hz",
+                                change.display,
+                                change.mode.width,
+                                change.mode.height,
+                                change.mode.refresh
+                            ),
+                            sys::windows::ApplyOutcome::Applied(change) => {
+                                println!(
+                                    "applied {}x{} @ {}Hz to {}",
+                                    change.mode.width,
+                                    change.mode.height,
+                                    change.mode.refresh,
+                                    change.display
+                                );
+                                applied.push(change);
+                            }
+                        }
                     }
-                    if yes {
+                    if applied.is_empty() || yes {
                         0
                     } else {
                         match cli::confirm_keep(std::time::Duration::from_secs(
@@ -281,7 +321,7 @@ fn main() {
                             cli::Confirm::Keep => 0,
                             cli::Confirm::Revert => {
                                 let mut failed = false;
-                                for change in changes {
+                                for change in applied {
                                     match sys::windows::revert(
                                         Some(change.monitor),
                                         change.previous,
