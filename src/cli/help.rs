@@ -99,3 +99,74 @@ Options:
 pub fn version() -> String {
     format!("rmod {}", env!("CARGO_PKG_VERSION"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn top_help_lists_all_commands() {
+        let h = help();
+        assert!(h.contains("Resolution modifier"));
+        assert!(h.contains("rmod ls"));
+        assert!(h.contains("rmod max[:N]"));
+        assert!(h.contains("rmod caps[:N]"));
+        assert!(h.contains("rmod WxH@R[:N]"));
+    }
+
+    #[test]
+    fn top_help_documents_profiles() {
+        let h = help();
+        for (name, width, height) in super::super::parser::PROFILES {
+            assert!(h.contains(&format!("{name:<10}{width}x{height}")), "profile '{name}'");
+        }
+    }
+
+    #[test]
+    fn top_help_has_examples() {
+        let h = help();
+        assert!(h.contains("rmod max:2"));
+        assert!(h.contains("rmod caps"));
+        assert!(h.contains("rmod 4k"));
+        assert!(h.contains("rmod 1920x1080@60:2"));
+    }
+
+    #[test]
+    fn top_help_has_options() {
+        let h = help();
+        assert!(h.contains("-h, --help"));
+        assert!(h.contains("-V, --version"));
+    }
+
+    #[test]
+    fn ls_help() {
+        let h = ls();
+        assert!(h.contains("rmod ls"));
+        assert!(h.contains("Usage:"));
+        assert!(h.contains("rmod ls"));
+        assert!(h.contains("-h, --help"));
+    }
+
+    #[test]
+    fn max_help() {
+        let h = max();
+        assert!(h.contains("rmod max"));
+        assert!(h.contains("Usage:"));
+        assert!(h.contains("rmod max:2"));
+        assert!(h.contains("-h, --help"));
+    }
+
+    #[test]
+    fn caps_help() {
+        let h = caps();
+        assert!(h.contains("rmod caps"));
+        assert!(h.contains("Usage:"));
+        assert!(h.contains("rmod caps:2"));
+        assert!(h.contains("-h, --help"));
+    }
+
+    #[test]
+    fn version_matches_package_version() {
+        assert_eq!(version(), format!("rmod {}", env!("CARGO_PKG_VERSION")));
+    }
+}
