@@ -65,3 +65,73 @@ fn invalid_resolution_exits_2() {
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("error:"));
 }
+
+#[test]
+fn ls_lists_displays() {
+    let out = rmod(&["ls"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let stdout = stdout(&out);
+    let mut lines = stdout.lines();
+    let header = lines.next().expect("missing header line");
+    assert!(header.starts_with("#  PRIMARY"));
+    assert!(header.contains("REFRESH"));
+    let sep = lines.next().expect("missing separator line");
+    assert_eq!(sep.chars().count(), header.chars().count());
+    assert!(sep.chars().all(|c| c == '─'));
+    let data: Vec<&str> = lines.collect();
+    assert!(!data.is_empty(), "no monitor rows");
+    for line in &data {
+        assert_eq!(line.len(), header.len(), "misaligned row: '{line}'");
+        assert!(line.chars().next().is_some_and(|c| c.is_ascii_digit()));
+        assert!(line.contains('x'));
+        assert!(line.trim_end().ends_with("Hz"));
+    }
+}
+
+#[test]
+fn ls_marks_primary_display() {
+    let out = rmod(&["ls"]);
+    assert!(out.status.success());
+    let stdout = stdout(&out);
+    let data: Vec<&str> = stdout.lines().skip(2).collect();
+    let starred = data
+        .iter()
+        .filter(|l| l.split_whitespace().any(|t| t == "*"))
+        .count();
+    assert_eq!(starred, 1, "expected exactly one primary marker");
+}
+
+#[test]
+fn trailing_argument_exits_2() {
+    let out = rmod(&["1920x1080@60", "extra"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("error:"));
+}
+
+#[test]
+fn empty_argument_exits_2() {
+    let out = rmod(&[""]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("error:"));
+}
+
+#[test]
+fn uppercase_command_exits_2() {
+    let out = rmod(&["MAX"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("error:"));
+}
+
+#[test]
+fn overflow_monitor_exits_2() {
+    let out = rmod(&["max:4294967296"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("error:"));
+}
+
+#[test]
+fn flag_with_trailing_argument_exits_2() {
+    let out = rmod(&["-h", "extra"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("error:"));
+}

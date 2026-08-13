@@ -41,31 +41,35 @@ pub fn parse_from<I: Iterator<Item = String>>(args: I) -> Result<Command, String
     let Some(cmd) = args.next() else {
         return Ok(Command::Help { topic: None });
     };
-    match cmd.as_str() {
-        "-h" | "--help" => Ok(Command::Help { topic: None }),
-        "-V" | "--version" => Ok(Command::Version),
-        "ls" => parse_tail("ls", args.next().as_deref(), Command::List, HelpTopic::List),
-        "max" => parse_tail("max", args.next().as_deref(), Command::Max { monitor: None }, HelpTopic::Max),
-        "caps" => parse_tail("caps", args.next().as_deref(), Command::Caps { monitor: None }, HelpTopic::Caps),
+    let command = match cmd.as_str() {
+        "-h" | "--help" => Command::Help { topic: None },
+        "-V" | "--version" => Command::Version,
+        "ls" => parse_tail("ls", args.next(), Command::List, HelpTopic::List)?,
+        "max" => parse_tail("max", args.next(), Command::Max { monitor: None }, HelpTopic::Max)?,
+        "caps" => parse_tail("caps", args.next(), Command::Caps { monitor: None }, HelpTopic::Caps)?,
         _ if cmd.starts_with("max:") => {
             let monitor = parse_monitor(&cmd[4..], &cmd)?;
-            Ok(Command::Max { monitor: Some(monitor) })
+            Command::Max { monitor: Some(monitor) }
         }
         _ if cmd.starts_with("caps:") => {
             let monitor = parse_monitor(&cmd[5..], &cmd)?;
-            Ok(Command::Caps { monitor: Some(monitor) })
+            Command::Caps { monitor: Some(monitor) }
         }
-        _ => parse_set(&cmd),
+        _ => parse_set(&cmd)?,
+    };
+    if let Some(extra) = args.next() {
+        return Err(format!("unexpected argument '{extra}'"));
     }
+    Ok(command)
 }
 
 fn parse_tail(
     name: &str,
-    tail: Option<&str>,
+    tail: Option<String>,
     cmd: Command,
     topic: HelpTopic,
 ) -> Result<Command, String> {
-    match tail {
+    match tail.as_deref() {
         Some("-h" | "--help") => Ok(Command::Help { topic: Some(topic) }),
         Some(other) => Err(format!("unknown argument '{other}' for '{name}'")),
         None => Ok(cmd),
@@ -313,5 +317,112 @@ mod tests {
     #[test]
     fn max_with_refresh_syntax_is_error() {
         assert!(parse(&["max@60"]).is_err());
+    }
+
+    #[test]
+    fn trailing_argument_after_set_is_error() {
+        assert!(parse(&["1920x1080@60", "extra"]).is_err());
+        assert!(parse(&["4k:2", "extra"]).is_err());
+    }
+
+    #[test]
+    fn trailing_argument_after_flag_is_error() {
+        assert!(parse(&["-h", "extra"]).is_err());
+        assert!(parse(&["--version", "extra"]).is_err());
+    }
+
+    #[test]
+    fn trailing_argument_after_monitor_command_is_error() {
+        assert!(parse(&["max:2", "-h"]).is_err());
+        assert!(parse(&["caps:2", "extra"]).is_err());
+    }
+
+    #[test]
+    fn monitor_overflow_is_error() {
+        assert!(parse(&["max:4294967296"]).is_err());
+        assert!(parse(&["caps:4294967296"]).is_err());
+        assert!(parse(&["1920x1080@60:4294967296"]).is_err());
+    }
+
+    #[test]
+    fn dimension_overflow_is_error() {
+        assert!(parse(&["99999999999999x1080@60"]).is_err());
+        assert!(parse(&["1920x99999999999999@60"]).is_err());
+    }
+
+    #[test]
+    fn refresh_overflow_is_error() {
+        assert!(parse(&["1920x1080@99999999999"]).is_err());
+    }
+
+    #[test]
+    fn zero_refresh_parses_as_fixed_zero() {
+        assert_eq!(
+            parse(&["1920x1080@0"]),
+            Ok(set(1920, 1080, Refresh::Fixed(0), None))
+        );
+    }
+
+    #[test]
+    fn monitor_with_leading_zeros() {
+        assert_eq!(
+            parse(&["1920x1080@60:02"]),
+            Ok(set(1920, 1080, Refresh::Fixed(60), Some(2)))
+        );
+    }
+
+    #[test]
+    fn multiple_at_signs_is_error() {
+        assert!(parse(&["1920x1080@60@70"]).is_err());
+    }
+
+    #[test]
+    fn multiple_x_is_error() {
+        assert!(parse(&["1920x1080x2@60"]).is_err());
+    }
+
+    #[test]
+    fn multiple_colons_is_error() {
+        assert!(parse(&["1920x1080@60:2:3"]).is_err());
+        assert!(parse(&["max:2:3"]).is_err());
+    }
+
+    #[test]
+    fn colon_before_at_is_error() {
+        assert!(parse(&["1920x1080:2@60"]).is_err());
+    }
+
+    #[test]
+    fn commands_are_case_sensitive() {
+        assert!(parse(&["LS"]).is_err());
+        assert!(parse(&["Max"]).is_err());
+        assert!(parse(&["Caps"]).is_err());
+        assert!(parse(&["4K"]).is_err());
+        assert!(parse(&["-V"]).is_ok());
+        assert!(parse(&["-v"]).is_err());
+        assert!(parse(&["--HELP"]).is_err());
+    }
+
+    #[test]
+    fn whitespace_in_token_is_error() {
+        assert!(parse(&[" 720"]).is_err());
+        assert!(parse(&["720 "]).is_err());
+        assert!(parse(&["1920x1080 @60"]).is_err());
+    }
+
+    #[test]
+    fn empty_argument_is_error() {
+        assert!(parse(&[""]).is_err());
+    }
+
+    #[test]
+    fn double_dash_is_error() {
+        assert!(parse(&["--"]).is_err());
+    }
+
+    #[test]
+    fn command_with_monitor_suffix_is_error() {
+        assert!(parse(&["ls:2"]).is_err());
+        assert!(parse(&["ls:"]).is_err());
     }
 }
