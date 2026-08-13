@@ -1,0 +1,25 @@
+[package]
+name = "rmod-rs"
+version = "0.1.0"
+edition = "2024"
+authors = ["Erein Aimer ereinaimer@gmail.com"]
+description = "Resolution Modifier"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/ereinaimer/rmod"
+homepage = "https://github.com/ereinaimer/rmod"
+keywords = ["cli", "resolution", "display", "monitor"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "rmod"
+path = "src/main.rs"
+
+[dependencies]
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
