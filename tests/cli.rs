@@ -205,6 +205,13 @@ fn max_nonexistent_monitor_is_error() {
 }
 
 #[test]
+fn max_nonexistent_monitor_yes_flag() {
+    let out = rmod(&["max:99", "-y"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("monitor 99 not found"));
+}
+
+#[test]
 fn max_zero_monitor_is_error() {
     let out = rmod(&["max:0"]);
     assert_eq!(out.status.code(), Some(2));
@@ -221,6 +228,13 @@ fn set_nonexistent_monitor_is_error() {
 #[test]
 fn set_zero_monitor_is_error() {
     let out = rmod(&["1920x1080@60:0"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("monitor 0 not found"));
+}
+
+#[test]
+fn set_nonexistent_monitor_yes_flag() {
+    let out = rmod(&["1920x1080@60:0", "-y"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("monitor 0 not found"));
 }

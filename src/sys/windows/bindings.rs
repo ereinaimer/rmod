@@ -1,6 +1,6 @@
 //! Raw Win32 FFI bindings: structs, externs, and string marshalling.
 //!
-//! `DEVMODEW`/`DISPLAY_DEVICEW` layouts and offsets are pinned by tests;
+//! `DevmodeW`/`DISPLAY_DEVICEW` layouts and offsets are pinned by tests;
 //! do not reorder fields. Used by [`super::query`], [`super::capabilities`],
 //! and [`super::apply`].
 
@@ -22,21 +22,21 @@ pub(crate) const DISP_CHANGE_BADDUALVIEW: i32 = -6;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub(crate) struct POINTL {
+pub(crate) struct Pointl {
     pub x: i32,
     pub y: i32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub(crate) struct DEVMODEW {
+pub(crate) struct DevmodeW {
     pub dm_device_name: [u16; 32],
     pub dm_spec_version: u16,
     pub dm_driver_version: u16,
     pub dm_size: u16,
     pub dm_driver_extra: u16,
     pub dm_fields: u32,
-    pub dm_position: POINTL,
+    pub dm_position: Pointl,
     pub dm_display_orientation: u32,
     pub dm_display_fixed_output: u32,
     pub dm_color: i16,
@@ -82,11 +82,11 @@ unsafe extern "system" {
     pub(crate) fn EnumDisplaySettingsW(
         lpsz_device_name: *const u16,
         i_mode_num: u32,
-        lp_dev_mode: *mut DEVMODEW,
+        lp_dev_mode: *mut DevmodeW,
     ) -> i32;
     pub(crate) fn ChangeDisplaySettingsExW(
         lpsz_device_name: *const u16,
-        lp_dev_mode: *const DEVMODEW,
+        lp_dev_mode: *const DevmodeW,
         hwnd: usize,
         dw_flags: u32,
         l_param: *const (),
@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn devmode_layout_is_220_bytes() {
-        assert_eq!(std::mem::size_of::<DEVMODEW>(), 220);
+        assert_eq!(std::mem::size_of::<DevmodeW>(), 220);
     }
 
     #[test]
@@ -136,10 +136,10 @@ mod tests {
 
     #[test]
     fn devmode_field_offsets() {
-        assert_eq!(offset_of!(DEVMODEW, dm_position), 76);
-        assert_eq!(offset_of!(DEVMODEW, dm_pels_width), 172);
-        assert_eq!(offset_of!(DEVMODEW, dm_pels_height), 176);
-        assert_eq!(offset_of!(DEVMODEW, dm_display_frequency), 184);
+        assert_eq!(offset_of!(DevmodeW, dm_position), 76);
+        assert_eq!(offset_of!(DevmodeW, dm_pels_width), 172);
+        assert_eq!(offset_of!(DevmodeW, dm_pels_height), 176);
+        assert_eq!(offset_of!(DevmodeW, dm_display_frequency), 184);
     }
 
     #[test]

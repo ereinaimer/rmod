@@ -5,7 +5,7 @@
 //! applies it and persists it to the registry.
 
 use super::bindings::{
-    encode_wide, ChangeDisplaySettingsExW, DEVMODEW, CDS_TEST, CDS_UPDATEREGISTRY,
+    encode_wide, ChangeDisplaySettingsExW, DevmodeW, CDS_TEST, CDS_UPDATEREGISTRY,
     DISP_CHANGE_BADDUALVIEW, DISP_CHANGE_BADFLAGS, DISP_CHANGE_BADMODE, DISP_CHANGE_BADPARAM,
     DISP_CHANGE_FAILED, DISP_CHANGE_NOTUPDATED, DISP_CHANGE_RESTART, DISP_CHANGE_SUCCESSFUL,
     DM_DISPLAYFREQUENCY, DM_PELSHEIGHT, DM_PELSWIDTH,
@@ -97,7 +97,7 @@ pub fn revert(monitor: Option<u32>, previous: Mode) -> Result<Mode, String> {
 }
 
 /// Validates a mode with a dry run, then applies and persists it.
-fn apply_mode(name: &str, display: &str, devmode: &DEVMODEW) -> Result<(), String> {
+fn apply_mode(name: &str, display: &str, devmode: &DevmodeW) -> Result<(), String> {
     let name_ptr = encode_wide(name);
     let test = unsafe {
         ChangeDisplaySettingsExW(name_ptr.as_ptr(), devmode, 0, CDS_TEST, std::ptr::null())
@@ -122,7 +122,7 @@ fn apply_mode(name: &str, display: &str, devmode: &DEVMODEW) -> Result<(), Strin
 
 /// Describes a rejected display change; a bad mode names the display and
 /// the attempted resolution and refresh rate.
-fn describe_change_failure(code: i32, display: &str, devmode: &DEVMODEW) -> String {
+fn describe_change_failure(code: i32, display: &str, devmode: &DevmodeW) -> String {
     if code == DISP_CHANGE_BADMODE {
         return format!(
             "{display} does not support {}x{}@{}Hz",
@@ -145,7 +145,7 @@ fn describe_change_result(code: i32) -> String {
     }
 }
 
-fn mode_of(devmode: &DEVMODEW) -> Mode {
+fn mode_of(devmode: &DevmodeW) -> Mode {
     Mode {
         width: devmode.dm_pels_width,
         height: devmode.dm_pels_height,
@@ -153,13 +153,13 @@ fn mode_of(devmode: &DEVMODEW) -> Mode {
     }
 }
 
-fn build_devmode(mode: &Mode, current: &DEVMODEW) -> DEVMODEW {
+fn build_devmode(mode: &Mode, current: &DevmodeW) -> DevmodeW {
     let mut devmode = *current;
     devmode.dm_pels_width = mode.width;
     devmode.dm_pels_height = mode.height;
     devmode.dm_display_frequency = mode.refresh;
     devmode.dm_fields |= DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
-    devmode.dm_size = std::mem::size_of::<DEVMODEW>() as u16;
+    devmode.dm_size = std::mem::size_of::<DevmodeW>() as u16;
     devmode.dm_driver_extra = 0;
     devmode
 }
@@ -194,7 +194,7 @@ fn resolve_refresh(
 
 #[cfg(test)]
 mod tests {
-    use super::super::bindings::POINTL;
+    use super::super::bindings::Pointl;
     use super::*;
 
     #[test]
@@ -256,8 +256,8 @@ mod tests {
             height: 2160,
             refresh: 144,
         };
-        let mut current: DEVMODEW = unsafe { std::mem::zeroed() };
-        current.dm_position = POINTL { x: -1, y: -1 };
+        let mut current: DevmodeW = unsafe { std::mem::zeroed() };
+        current.dm_position = Pointl { x: -1, y: -1 };
         let devmode = build_devmode(&mode, &current);
         assert_eq!(devmode.dm_pels_width, 3840);
         assert_eq!(devmode.dm_pels_height, 2160);

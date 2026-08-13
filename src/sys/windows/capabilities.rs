@@ -3,7 +3,7 @@
 //! Walks the mode list Windows exposes for a device and produces the
 //! deduplicated, ascending-ordered list shown by the caps command.
 
-use super::bindings::{encode_wide, DEVMODEW, EnumDisplaySettingsW};
+use super::bindings::{encode_wide, DevmodeW, EnumDisplaySettingsW};
 
 /// A resolution and refresh-rate combination a display supports.
 #[derive(Debug, PartialEq)]
@@ -22,7 +22,7 @@ pub(crate) fn enumerate_modes(name: &str) -> Vec<Mode> {
     let mut modes = Vec::new();
     let mut index = 0u32;
     loop {
-        let mut mode: DEVMODEW = unsafe { std::mem::zeroed() };
+        let mut mode: DevmodeW = unsafe { std::mem::zeroed() };
         let ok = unsafe { EnumDisplaySettingsW(name_wide.as_ptr(), index, &mut mode) };
         if ok == 0 {
             break;

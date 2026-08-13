@@ -42,8 +42,7 @@ Options:
 
 /// Help page for the `ls` command.
 pub fn ls() -> String {
-    format!(
-        "rmod ls
+    "rmod ls
 List all connected displays and their current settings
 
 Usage:
@@ -56,14 +55,12 @@ Examples:
   rmod ls
 
 Options:
-  -h, --help              print help"
-    )
+  -h, --help              print help".to_string()
 }
 
 /// Help page for the `max` command.
 pub fn max() -> String {
-    format!(
-        "rmod max
+    "rmod max
 Apply the highest supported resolution and refresh rate
 
 Usage:
@@ -86,14 +83,12 @@ Examples:
 
 Options:
   -h, --help              print help
-  -y, --yes               skip the confirmation prompt"
-    )
+  -y, --yes               skip the confirmation prompt".to_string()
 }
 
 /// Help page for the `caps` command.
 pub fn caps() -> String {
-    format!(
-        "rmod caps
+    "rmod caps
 List all supported resolutions and refresh rates
 
 Usage:
@@ -109,14 +104,12 @@ Examples:
   rmod caps:2
 
 Options:
-  -h, --help              print help"
-    )
+  -h, --help              print help".to_string()
 }
 
 /// Help page for the `set` command (`WxH@R`).
 pub fn set() -> String {
-    format!(
-        "rmod WxH@R
+    "rmod WxH@R
 Apply a resolution and refresh rate to a display
 
 Usage:
@@ -150,8 +143,7 @@ Examples:
 
 Options:
   -h, --help              print help
-  -y, --yes               skip the confirmation prompt"
-    )
+  -y, --yes               skip the confirmation prompt".to_string()
 }
 
 /// Version string, e.g. `rmod 0.1.0`.

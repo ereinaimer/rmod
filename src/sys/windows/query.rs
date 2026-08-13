@@ -4,7 +4,7 @@
 //! friendly names, current mode, and the primary-display designation.
 
 use super::bindings::{
-    encode_wide, wide_to_string, DEVMODEW, DISPLAY_DEVICEW, EnumDisplayDevicesW,
+    encode_wide, wide_to_string, DevmodeW, DISPLAY_DEVICEW, EnumDisplayDevicesW,
     EnumDisplaySettingsW, DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, ENUM_CURRENT_SETTINGS,
 };
 
@@ -44,9 +44,9 @@ pub(crate) fn enumerate_devices() -> Vec<String> {
 }
 
 /// Reads the currently applied mode for a device name.
-pub(crate) fn current_mode(name: &str) -> Option<DEVMODEW> {
+pub(crate) fn current_mode(name: &str) -> Option<DevmodeW> {
     let name_wide = encode_wide(name);
-    let mut mode: DEVMODEW = unsafe { std::mem::zeroed() };
+    let mut mode: DevmodeW = unsafe { std::mem::zeroed() };
     let ok = unsafe { EnumDisplaySettingsW(name_wide.as_ptr(), ENUM_CURRENT_SETTINGS, &mut mode) };
     if ok == 0 {
         None
@@ -99,10 +99,11 @@ pub(crate) fn resolve_device(
     match monitor {
         None => {
             for (i, name) in names.iter().enumerate() {
-                if let Some(mode) = current_mode(name) {
-                    if mode.dm_position.x == 0 && mode.dm_position.y == 0 {
-                        return Ok((i, name.clone()));
-                    }
+                if let Some(mode) = current_mode(name)
+                    && mode.dm_position.x == 0
+                    && mode.dm_position.y == 0
+                {
+                    return Ok((i, name.clone()));
                 }
             }
             names

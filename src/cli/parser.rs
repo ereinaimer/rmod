@@ -109,7 +109,13 @@ pub fn parse_from<I: Iterator<Item = String>>(args: I) -> Result<Command, String
         }
         _ if cmd.starts_with("caps:") => {
             let monitor = parse_monitor(&cmd[5..], &cmd)?;
-            Command::Caps { monitor: Some(monitor) }
+            parse_tail(
+                "caps",
+                args.next(),
+                Command::Caps { monitor: Some(monitor) },
+                HelpTopic::Caps,
+                false,
+            )?
         }
         _ => parse_set(&cmd, args.next())?,
     };
@@ -305,8 +311,20 @@ mod tests {
     }
 
     #[test]
+    fn caps_help_flags_with_monitor() {
+        assert_eq!(parse(&["caps:2", "-h"]), Ok(help(Some(HelpTopic::Caps))));
+        assert_eq!(parse(&["caps:2", "--help"]), Ok(help(Some(HelpTopic::Caps))));
+    }
+
+    #[test]
     fn caps_yes_flag_is_error() {
         let err = parse(&["caps", "-y"]).unwrap_err();
+        assert!(err.contains("unknown argument '-y' for 'caps'"), "{err}");
+    }
+
+    #[test]
+    fn caps_yes_flag_with_monitor_is_error() {
+        let err = parse(&["caps:2", "-y"]).unwrap_err();
         assert!(err.contains("unknown argument '-y' for 'caps'"), "{err}");
     }
 
