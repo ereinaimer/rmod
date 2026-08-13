@@ -11,6 +11,10 @@ fn stdout(out: &std::process::Output) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+fn strip_ansi(s: &str) -> String {
+    s.replace("\x1b[92m", "").replace("\x1b[0m", "")
+}
+
 fn stderr(out: &std::process::Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
@@ -134,4 +138,50 @@ fn flag_with_trailing_argument_exits_2() {
     let out = rmod(&["-h", "extra"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("error:"));
+}
+
+#[test]
+fn caps_lists_supported_modes() {
+    let out = rmod(&["caps"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let stdout = stdout(&out);
+    let mut lines = stdout.lines();
+    let header = lines.next().expect("missing monitor line");
+    assert!(!header.trim().is_empty());
+    let modes: Vec<&str> = lines.collect();
+    assert!(!modes.is_empty(), "no supported modes listed");
+    let at_pos = strip_ansi(modes[0]).find('@').expect("missing '@' in mode line");
+    for line in &modes {
+        let clean = strip_ansi(line);
+        assert!(line.starts_with("  "), "expected indented mode: '{line}'");
+        assert!(line.contains('x'));
+        assert!(line.contains('@'));
+        assert!(line.ends_with("Hz"));
+        assert_eq!(
+            clean.find('@'),
+            Some(at_pos),
+            "misaligned mode line: '{line}'"
+        );
+    }
+    let starred = modes.iter().filter(|l| l.contains('*')).count();
+    assert_eq!(starred, 1, "expected exactly one active mode marker");
+}
+
+#[test]
+fn caps_first_monitor_succeeds() {
+    assert!(rmod(&["caps:1"]).status.success());
+}
+
+#[test]
+fn caps_unknown_monitor_exits_2() {
+    let out = rmod(&["caps:999"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("monitor 999 not found"));
+}
+
+#[test]
+fn caps_zero_monitor_exits_2() {
+    let out = rmod(&["caps:0"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("monitor 0 not found"));
 }
