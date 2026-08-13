@@ -27,23 +27,23 @@ pub enum Command {
     List,
     /// `max[:N]` — apply the highest supported resolution/refresh.
     Max {
-        /// Monitor number; `None` = primary display.
-        monitor: Option<u32>,
+        /// Which display to target; `:*` = every monitor.
+        target: Target,
         /// `-y`/`--yes` — skip the confirmation prompt.
         yes: bool,
     },
     /// `caps[:N]` — list supported modes.
     Caps {
-        /// Monitor number; `None` = primary display.
-        monitor: Option<u32>,
+        /// Which display to target; `:*` = every monitor.
+        target: Target,
     },
     /// `WxH@R[:N]` — set resolution and refresh rate.
     Set {
         width: u32,
         height: u32,
         refresh: Refresh,
-        /// Monitor number; `None` = primary display.
-        monitor: Option<u32>,
+        /// Which display to target; `:*` = every monitor.
+        target: Target,
         /// `-y`/`--yes` — skip the confirmation prompt.
         yes: bool,
     },
@@ -54,6 +54,17 @@ pub enum Command {
     },
     /// `-V`/`--version` — print the version.
     Version,
+}
+
+/// Which display(s) a command targets.
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum Target {
+    /// The primary display (no `:N` suffix).
+    Primary,
+    /// A numbered display from `ls` (`:N`, 1-based).
+    Index(u32),
+    /// Every attached display (`:*`).
+    All,
 }
 
 /// Named resolution presets (`720`, `1080`, `1440`, `4k`, `8k`).
@@ -92,27 +103,38 @@ pub fn parse_from<I: Iterator<Item = String>>(args: I) -> Result<Command, String
         "max" => parse_tail(
             "max",
             args.next(),
-            Command::Max { monitor: None, yes: false },
+            Command::Max {
+                target: Target::Primary,
+                yes: false,
+            },
             HelpTopic::Max,
             true,
         )?,
-        "caps" => parse_tail("caps", args.next(), Command::Caps { monitor: None }, HelpTopic::Caps, false)?,
+        "caps" => parse_tail(
+            "caps",
+            args.next(),
+            Command::Caps {
+                target: Target::Primary,
+            },
+            HelpTopic::Caps,
+            false,
+        )?,
         _ if cmd.starts_with("max:") => {
-            let monitor = parse_monitor(&cmd[4..], &cmd)?;
+            let target = parse_monitor(&cmd[4..], &cmd)?;
             parse_tail(
                 "max",
                 args.next(),
-                Command::Max { monitor: Some(monitor), yes: false },
+                Command::Max { target, yes: false },
                 HelpTopic::Max,
                 true,
             )?
         }
         _ if cmd.starts_with("caps:") => {
-            let monitor = parse_monitor(&cmd[5..], &cmd)?;
+            let target = parse_monitor(&cmd[5..], &cmd)?;
             parse_tail(
                 "caps",
                 args.next(),
-                Command::Caps { monitor: Some(monitor) },
+                Command::Caps { target },
                 HelpTopic::Caps,
                 false,
             )?
@@ -135,10 +157,20 @@ fn parse_tail(
     match tail.as_deref() {
         Some("-h" | "--help") => Ok(Command::Help { topic: Some(topic) }),
         Some("-y" | "--yes") if allow_yes => Ok(match cmd {
-            Command::Max { monitor, .. } => Command::Max { monitor, yes: true },
-            Command::Set { width, height, refresh, monitor, .. } => {
-                Command::Set { width, height, refresh, monitor, yes: true }
-            }
+            Command::Max { target, .. } => Command::Max { target, yes: true },
+            Command::Set {
+                width,
+                height,
+                refresh,
+                target,
+                ..
+            } => Command::Set {
+                width,
+                height,
+                refresh,
+                target,
+                yes: true,
+            },
             other => other,
         }),
         Some(other) => Err(format!("unknown argument '{other}' for '{name}'")),
@@ -147,9 +179,9 @@ fn parse_tail(
 }
 
 fn parse_set(cmd: &str, tail: Option<String>) -> Result<Command, String> {
-    let (spec, monitor) = match cmd.split_once(':') {
-        Some((spec, m)) => (spec, Some(parse_monitor(m, cmd)?)),
-        None => (cmd, None),
+    let (spec, target) = match cmd.split_once(':') {
+        Some((spec, m)) => (spec, parse_monitor(m, cmd)?),
+        None => (cmd, Target::Primary),
     };
     let (res, refresh) = match spec.split_once('@') {
         Some((res, r)) => (res, Some(parse_refresh(r, cmd)?)),
@@ -158,7 +190,8 @@ fn parse_set(cmd: &str, tail: Option<String>) -> Result<Command, String> {
     let (width, height) = match res.split_once('x') {
         Some((w, h)) => (
             w.parse().map_err(|_| format!("invalid width in '{cmd}'"))?,
-            h.parse().map_err(|_| format!("invalid height in '{cmd}'"))?,
+            h.parse()
+                .map_err(|_| format!("invalid height in '{cmd}'"))?,
         ),
         None => match PROFILES.iter().find(|(name, _, _)| *name == res) {
             Some((_, w, h)) => (*w, *h),
@@ -167,10 +200,24 @@ fn parse_set(cmd: &str, tail: Option<String>) -> Result<Command, String> {
     };
     let refresh = refresh.unwrap_or(Refresh::Keep);
     match tail.as_deref() {
-        Some("-h" | "--help") => Ok(Command::Help { topic: Some(HelpTopic::Set) }),
-        Some("-y" | "--yes") => Ok(Command::Set { width, height, refresh, monitor, yes: true }),
+        Some("-h" | "--help") => Ok(Command::Help {
+            topic: Some(HelpTopic::Set),
+        }),
+        Some("-y" | "--yes") => Ok(Command::Set {
+            width,
+            height,
+            refresh,
+            target,
+            yes: true,
+        }),
         Some(other) => Err(format!("unexpected argument '{other}'")),
-        None => Ok(Command::Set { width, height, refresh, monitor, yes: false }),
+        None => Ok(Command::Set {
+            width,
+            height,
+            refresh,
+            target,
+            yes: false,
+        }),
     }
 }
 
@@ -184,8 +231,14 @@ fn parse_refresh(r: &str, cmd: &str) -> Result<Refresh, String> {
     }
 }
 
-fn parse_monitor(m: &str, cmd: &str) -> Result<u32, String> {
-    m.parse().map_err(|_| format!("invalid monitor id in '{cmd}'"))
+fn parse_monitor(m: &str, cmd: &str) -> Result<Target, String> {
+    if m == "*" {
+        Ok(Target::All)
+    } else {
+        m.parse()
+            .map(Target::Index)
+            .map_err(|_| format!("invalid monitor id in '{cmd}'"))
+    }
 }
 
 #[cfg(test)]
@@ -193,17 +246,27 @@ mod tests {
     use super::*;
 
     fn parse(args: &[&str]) -> Result<Command, String> {
-        parse_from(
-            std::iter::once("rmod".to_string()).chain(args.iter().map(|s| s.to_string())),
-        )
+        parse_from(std::iter::once("rmod".to_string()).chain(args.iter().map(|s| s.to_string())))
     }
 
-    fn set(width: u32, height: u32, refresh: Refresh, monitor: Option<u32>) -> Command {
-        Command::Set { width, height, refresh, monitor, yes: false }
+    fn set(width: u32, height: u32, refresh: Refresh, target: Target) -> Command {
+        Command::Set {
+            width,
+            height,
+            refresh,
+            target,
+            yes: false,
+        }
     }
 
-    fn set_yes(width: u32, height: u32, refresh: Refresh, monitor: Option<u32>) -> Command {
-        Command::Set { width, height, refresh, monitor, yes: true }
+    fn set_yes(width: u32, height: u32, refresh: Refresh, target: Target) -> Command {
+        Command::Set {
+            width,
+            height,
+            refresh,
+            target,
+            yes: true,
+        }
     }
 
     fn help(topic: Option<HelpTopic>) -> Command {
@@ -251,19 +314,34 @@ mod tests {
 
     #[test]
     fn max_command() {
-        assert_eq!(parse(&["max"]), Ok(Command::Max { monitor: None, yes: false }));
+        assert_eq!(
+            parse(&["max"]),
+            Ok(Command::Max {
+                target: Target::Primary,
+                yes: false
+            })
+        );
     }
 
     #[test]
     fn max_with_monitor() {
-        assert_eq!(parse(&["max:2"]), Ok(Command::Max { monitor: Some(2), yes: false }));
+        assert_eq!(
+            parse(&["max:2"]),
+            Ok(Command::Max {
+                target: Target::Index(2),
+                yes: false
+            })
+        );
     }
 
     #[test]
     fn max_yes_flag() {
         assert_eq!(
             parse(&["max", "-y"]),
-            Ok(Command::Max { monitor: None, yes: true })
+            Ok(Command::Max {
+                target: Target::Primary,
+                yes: true
+            })
         );
     }
 
@@ -271,8 +349,39 @@ mod tests {
     fn max_yes_flag_with_monitor() {
         assert_eq!(
             parse(&["max:2", "-y"]),
-            Ok(Command::Max { monitor: Some(2), yes: true })
+            Ok(Command::Max {
+                target: Target::Index(2),
+                yes: true
+            })
         );
+    }
+
+    #[test]
+    fn max_all_target() {
+        assert_eq!(
+            parse(&["max:*"]),
+            Ok(Command::Max {
+                target: Target::All,
+                yes: false
+            })
+        );
+    }
+
+    #[test]
+    fn max_all_target_with_yes() {
+        assert_eq!(
+            parse(&["max:*", "-y"]),
+            Ok(Command::Max {
+                target: Target::All,
+                yes: true
+            })
+        );
+    }
+
+    #[test]
+    fn max_all_invalid_id_is_error() {
+        let err = parse(&["max:*:2"]).unwrap_err();
+        assert!(err.contains("invalid monitor id"), "{err}");
     }
 
     #[test]
@@ -290,12 +399,32 @@ mod tests {
 
     #[test]
     fn caps_command() {
-        assert_eq!(parse(&["caps"]), Ok(Command::Caps { monitor: None }));
+        assert_eq!(
+            parse(&["caps"]),
+            Ok(Command::Caps {
+                target: Target::Primary
+            })
+        );
     }
 
     #[test]
     fn caps_with_monitor() {
-        assert_eq!(parse(&["caps:2"]), Ok(Command::Caps { monitor: Some(2) }));
+        assert_eq!(
+            parse(&["caps:2"]),
+            Ok(Command::Caps {
+                target: Target::Index(2)
+            })
+        );
+    }
+
+    #[test]
+    fn caps_all_target() {
+        assert_eq!(
+            parse(&["caps:*"]),
+            Ok(Command::Caps {
+                target: Target::All
+            })
+        );
     }
 
     #[test]
@@ -313,7 +442,10 @@ mod tests {
     #[test]
     fn caps_help_flags_with_monitor() {
         assert_eq!(parse(&["caps:2", "-h"]), Ok(help(Some(HelpTopic::Caps))));
-        assert_eq!(parse(&["caps:2", "--help"]), Ok(help(Some(HelpTopic::Caps))));
+        assert_eq!(
+            parse(&["caps:2", "--help"]),
+            Ok(help(Some(HelpTopic::Caps)))
+        );
     }
 
     #[test]
@@ -330,7 +462,10 @@ mod tests {
 
     #[test]
     fn set_help_flags() {
-        assert_eq!(parse(&["1920x1080@60", "-h"]), Ok(help(Some(HelpTopic::Set))));
+        assert_eq!(
+            parse(&["1920x1080@60", "-h"]),
+            Ok(help(Some(HelpTopic::Set)))
+        );
         assert_eq!(parse(&["4k", "--help"]), Ok(help(Some(HelpTopic::Set))));
         assert_eq!(
             parse(&["1920x1080@60:2", "-h"]),
@@ -352,7 +487,7 @@ mod tests {
     fn set_yes_flag() {
         assert_eq!(
             parse(&["1920x1080@60", "-y"]),
-            Ok(set_yes(1920, 1080, Refresh::Fixed(60), None))
+            Ok(set_yes(1920, 1080, Refresh::Fixed(60), Target::Primary))
         );
     }
 
@@ -360,7 +495,7 @@ mod tests {
     fn set_yes_flag_long() {
         assert_eq!(
             parse(&["1920x1080@60", "--yes"]),
-            Ok(set_yes(1920, 1080, Refresh::Fixed(60), None))
+            Ok(set_yes(1920, 1080, Refresh::Fixed(60), Target::Primary))
         );
     }
 
@@ -373,7 +508,7 @@ mod tests {
     fn set_resolution_and_refresh() {
         assert_eq!(
             parse(&["1920x1080@144"]),
-            Ok(set(1920, 1080, Refresh::Fixed(144), None))
+            Ok(set(1920, 1080, Refresh::Fixed(144), Target::Primary))
         );
     }
 
@@ -381,15 +516,37 @@ mod tests {
     fn set_with_monitor_suffix() {
         assert_eq!(
             parse(&["1920x1080@60:2"]),
-            Ok(set(1920, 1080, Refresh::Fixed(60), Some(2)))
+            Ok(set(1920, 1080, Refresh::Fixed(60), Target::Index(2)))
         );
+    }
+
+    #[test]
+    fn set_all_target() {
+        assert_eq!(
+            parse(&["1920x1080@60:*"]),
+            Ok(set(1920, 1080, Refresh::Fixed(60), Target::All))
+        );
+    }
+
+    #[test]
+    fn set_all_target_help() {
+        assert_eq!(
+            parse(&["1920x1080@60:*", "-h"]),
+            Ok(help(Some(HelpTopic::Set)))
+        );
+    }
+
+    #[test]
+    fn set_all_invalid_id_is_error() {
+        let err = parse(&["1920x1080@60:12x"]).unwrap_err();
+        assert!(err.contains("invalid monitor id"), "{err}");
     }
 
     #[test]
     fn set_without_refresh_keeps_current() {
         assert_eq!(
             parse(&["1920x1080"]),
-            Ok(set(1920, 1080, Refresh::Keep, None))
+            Ok(set(1920, 1080, Refresh::Keep, Target::Primary))
         );
     }
 
@@ -397,20 +554,23 @@ mod tests {
     fn set_with_max_refresh() {
         assert_eq!(
             parse(&["1920x1080@max"]),
-            Ok(set(1920, 1080, Refresh::Max, None))
+            Ok(set(1920, 1080, Refresh::Max, Target::Primary))
         );
     }
 
     #[test]
     fn profile_resolves_to_resolution() {
-        assert_eq!(parse(&["4k"]), Ok(set(3840, 2160, Refresh::Keep, None)));
+        assert_eq!(
+            parse(&["4k"]),
+            Ok(set(3840, 2160, Refresh::Keep, Target::Primary))
+        );
     }
 
     #[test]
     fn profile_with_fixed_refresh() {
         assert_eq!(
             parse(&["720@60"]),
-            Ok(set(1280, 720, Refresh::Fixed(60), None))
+            Ok(set(1280, 720, Refresh::Fixed(60), Target::Primary))
         );
     }
 
@@ -418,13 +578,16 @@ mod tests {
     fn profile_with_max_refresh_and_monitor() {
         assert_eq!(
             parse(&["720@max:2"]),
-            Ok(set(1280, 720, Refresh::Max, Some(2)))
+            Ok(set(1280, 720, Refresh::Max, Target::Index(2)))
         );
     }
 
     #[test]
     fn profile_with_monitor_suffix() {
-        assert_eq!(parse(&["4k:2"]), Ok(set(3840, 2160, Refresh::Keep, Some(2))));
+        assert_eq!(
+            parse(&["4k:2"]),
+            Ok(set(3840, 2160, Refresh::Keep, Target::Index(2)))
+        );
     }
 
     #[test]
@@ -432,7 +595,7 @@ mod tests {
         for (name, width, height) in PROFILES {
             assert_eq!(
                 parse(&[name]),
-                Ok(set(*width, *height, Refresh::Keep, None)),
+                Ok(set(*width, *height, Refresh::Keep, Target::Primary)),
                 "profile '{name}'"
             );
         }
@@ -516,7 +679,7 @@ mod tests {
     fn zero_refresh_parses_as_fixed_zero() {
         assert_eq!(
             parse(&["1920x1080@0"]),
-            Ok(set(1920, 1080, Refresh::Fixed(0), None))
+            Ok(set(1920, 1080, Refresh::Fixed(0), Target::Primary))
         );
     }
 
@@ -524,7 +687,7 @@ mod tests {
     fn monitor_with_leading_zeros() {
         assert_eq!(
             parse(&["1920x1080@60:02"]),
-            Ok(set(1920, 1080, Refresh::Fixed(60), Some(2)))
+            Ok(set(1920, 1080, Refresh::Fixed(60), Target::Index(2)))
         );
     }
 

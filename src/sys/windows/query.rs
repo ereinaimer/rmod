@@ -4,8 +4,8 @@
 //! friendly names, current mode, and the primary-display designation.
 
 use super::bindings::{
-    encode_wide, wide_to_string, DevmodeW, DISPLAY_DEVICEW, EnumDisplayDevicesW,
-    EnumDisplaySettingsW, DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, ENUM_CURRENT_SETTINGS,
+    DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, DISPLAY_DEVICEW, DevmodeW, ENUM_CURRENT_SETTINGS,
+    EnumDisplayDevicesW, EnumDisplaySettingsW, encode_wide, wide_to_string,
 };
 
 /// A display attached to the desktop and its current settings.
@@ -48,11 +48,7 @@ pub(crate) fn current_mode(name: &str) -> Option<DevmodeW> {
     let name_wide = encode_wide(name);
     let mut mode: DevmodeW = unsafe { std::mem::zeroed() };
     let ok = unsafe { EnumDisplaySettingsW(name_wide.as_ptr(), ENUM_CURRENT_SETTINGS, &mut mode) };
-    if ok == 0 {
-        None
-    } else {
-        Some(mode)
-    }
+    if ok == 0 { None } else { Some(mode) }
 }
 
 /// Queries the friendly name of the monitor attached to a device.
@@ -123,4 +119,21 @@ pub(crate) fn resolve_device(
                 .ok_or_else(|| format!("monitor {n} not found"))
         }
     }
+}
+
+/// Resolves every attached device to its `(index, name)` pair, where
+/// `index` is the 0-based position in `names`, matching how
+/// [`resolve_device`] reports indices.
+///
+/// # Errors
+/// Returns an error when no displays are attached.
+pub(crate) fn resolve_all(names: &[String]) -> Result<Vec<(usize, String)>, String> {
+    if names.is_empty() {
+        return Err("no displays found".to_string());
+    }
+    Ok(names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (i, n.clone()))
+        .collect())
 }

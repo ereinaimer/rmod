@@ -18,19 +18,27 @@ fn main() {
             println!("{}", cli::help());
             0
         }
-        Ok(cli::Command::Help { topic: Some(cli::HelpTopic::List) }) => {
+        Ok(cli::Command::Help {
+            topic: Some(cli::HelpTopic::List),
+        }) => {
             println!("{}", cli::ls());
             0
         }
-        Ok(cli::Command::Help { topic: Some(cli::HelpTopic::Max) }) => {
+        Ok(cli::Command::Help {
+            topic: Some(cli::HelpTopic::Max),
+        }) => {
             println!("{}", cli::max());
             0
         }
-        Ok(cli::Command::Help { topic: Some(cli::HelpTopic::Caps) }) => {
+        Ok(cli::Command::Help {
+            topic: Some(cli::HelpTopic::Caps),
+        }) => {
             println!("{}", cli::caps());
             0
         }
-        Ok(cli::Command::Help { topic: Some(cli::HelpTopic::Set) }) => {
+        Ok(cli::Command::Help {
+            topic: Some(cli::HelpTopic::Set),
+        }) => {
             println!("{}", cli::set());
             0
         }
@@ -82,96 +90,117 @@ fn main() {
                 2
             }
         },
-        Ok(cli::Command::Caps { monitor }) => match sys::windows::caps(monitor) {
-            Ok((mon, modes)) => {
-                let primary = if mon.is_primary { " (primary)" } else { "" };
-                println!("{}{}:", mon.name, primary);
-                let res_width = modes
-                    .iter()
-                    .map(|m| format!("{}x{}", m.width, m.height).len())
-                    .max()
-                    .unwrap_or(0);
-                for mode in &modes {
-                    let active =
-                        mode.width == mon.width && mode.height == mon.height && mode.refresh == mon.refresh;
-                    let marker = if active {
-                        format!("{GREEN}*{RESET} ")
-                    } else {
-                        "  ".to_string()
-                    };
-                    println!(
-                        "  {marker}{:<res_width$} @ {}Hz",
-                        format!("{}x{}", mode.width, mode.height),
-                        mode.refresh
-                    );
+        Ok(cli::Command::Caps { target }) => match target {
+            cli::Target::Primary | cli::Target::Index(_) => {
+                let monitor = match target {
+                    cli::Target::Primary => None,
+                    cli::Target::Index(n) => Some(n),
+                    cli::Target::All => unreachable!(),
+                };
+                match sys::windows::caps(monitor) {
+                    Ok((mon, modes)) => {
+                        print_caps(&mon, &modes);
+                        0
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        2
+                    }
                 }
-                0
             }
-            Err(e) => {
-                eprintln!("error: {e}");
-                2
-            }
-        },
-        Ok(cli::Command::Max { monitor, yes }) => match sys::windows::max(monitor) {
-            Ok(change) => {
-                println!(
-                    "applied {}x{} @ {}Hz",
-                    change.mode.width, change.mode.height, change.mode.refresh
-                );
-                if yes {
+            cli::Target::All => match sys::windows::caps_all() {
+                Ok(monitors) => {
+                    for (mon, modes) in monitors {
+                        print_caps(&mon, &modes);
+                    }
                     0
-                } else {
-                    match cli::confirm_keep(std::time::Duration::from_secs(CONFIRM_TIMEOUT_SECS)) {
-                        cli::Confirm::Keep => 0,
-                        cli::Confirm::Revert => {
-                            match sys::windows::revert(monitor, change.previous) {
-                                Ok(mode) => {
-                                    println!(
-                                        "reverted to {}x{} @ {}Hz",
-                                        mode.width, mode.height, mode.refresh
-                                    );
-                                    0
-                                }
-                                Err(e) => {
-                                    eprintln!("error: {e}");
-                                    2
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    2
+                }
+            },
+        },
+        Ok(cli::Command::Max { target, yes }) => match target {
+            cli::Target::Primary | cli::Target::Index(_) => {
+                let monitor = match target {
+                    cli::Target::Primary => None,
+                    cli::Target::Index(n) => Some(n),
+                    cli::Target::All => unreachable!(),
+                };
+                match sys::windows::max(monitor) {
+                    Ok(change) => {
+                        println!(
+                            "applied {}x{} @ {}Hz",
+                            change.mode.width, change.mode.height, change.mode.refresh
+                        );
+                        if yes {
+                            0
+                        } else {
+                            match cli::confirm_keep(std::time::Duration::from_secs(
+                                CONFIRM_TIMEOUT_SECS,
+                            )) {
+                                cli::Confirm::Keep => 0,
+                                cli::Confirm::Revert => {
+                                    match sys::windows::revert(monitor, change.previous) {
+                                        Ok(mode) => {
+                                            println!(
+                                                "reverted to {}x{} @ {}Hz",
+                                                mode.width, mode.height, mode.refresh
+                                            );
+                                            0
+                                        }
+                                        Err(e) => {
+                                            eprintln!("error: {e}");
+                                            2
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        2
+                    }
                 }
             }
-            Err(e) => {
-                eprintln!("error: {e}");
-                2
-            }
-        },
-        Ok(cli::Command::Set { width, height, refresh, monitor, yes }) => {
-            match sys::windows::set(monitor, width, height, refresh) {
-                Ok(change) => {
-                    println!(
-                        "applied {}x{} @ {}Hz",
-                        change.mode.width, change.mode.height, change.mode.refresh
-                    );
+            cli::Target::All => match sys::windows::max_all() {
+                Ok(changes) => {
+                    for change in &changes {
+                        println!(
+                            "applied {}x{} @ {}Hz to {}",
+                            change.mode.width,
+                            change.mode.height,
+                            change.mode.refresh,
+                            change.display
+                        );
+                    }
                     if yes {
                         0
                     } else {
-                        match cli::confirm_keep(std::time::Duration::from_secs(CONFIRM_TIMEOUT_SECS)) {
+                        match cli::confirm_keep(std::time::Duration::from_secs(
+                            CONFIRM_TIMEOUT_SECS,
+                        )) {
                             cli::Confirm::Keep => 0,
                             cli::Confirm::Revert => {
-                                match sys::windows::revert(monitor, change.previous) {
-                                    Ok(mode) => {
-                                        println!(
-                                            "reverted to {}x{} @ {}Hz",
-                                            mode.width, mode.height, mode.refresh
-                                        );
-                                        0
-                                    }
-                                    Err(e) => {
-                                        eprintln!("error: {e}");
-                                        2
+                                let mut failed = false;
+                                for change in changes {
+                                    match sys::windows::revert(
+                                        Some(change.monitor),
+                                        change.previous,
+                                    ) {
+                                        Ok(mode) => println!(
+                                            "reverted {} to {}x{} @ {}Hz",
+                                            change.display, mode.width, mode.height, mode.refresh
+                                        ),
+                                        Err(e) => {
+                                            eprintln!("error: {e}");
+                                            failed = true;
+                                        }
                                     }
                                 }
+                                if failed { 2 } else { 0 }
                             }
                         }
                     }
@@ -180,12 +209,132 @@ fn main() {
                     eprintln!("error: {e}");
                     2
                 }
+            },
+        },
+        Ok(cli::Command::Set {
+            width,
+            height,
+            refresh,
+            target,
+            yes,
+        }) => match target {
+            cli::Target::Primary | cli::Target::Index(_) => {
+                let monitor = match target {
+                    cli::Target::Primary => None,
+                    cli::Target::Index(n) => Some(n),
+                    cli::Target::All => unreachable!(),
+                };
+                match sys::windows::set(monitor, width, height, refresh) {
+                    Ok(change) => {
+                        println!(
+                            "applied {}x{} @ {}Hz",
+                            change.mode.width, change.mode.height, change.mode.refresh
+                        );
+                        if yes {
+                            0
+                        } else {
+                            match cli::confirm_keep(std::time::Duration::from_secs(
+                                CONFIRM_TIMEOUT_SECS,
+                            )) {
+                                cli::Confirm::Keep => 0,
+                                cli::Confirm::Revert => {
+                                    match sys::windows::revert(monitor, change.previous) {
+                                        Ok(mode) => {
+                                            println!(
+                                                "reverted to {}x{} @ {}Hz",
+                                                mode.width, mode.height, mode.refresh
+                                            );
+                                            0
+                                        }
+                                        Err(e) => {
+                                            eprintln!("error: {e}");
+                                            2
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        2
+                    }
+                }
             }
-        }
+            cli::Target::All => match sys::windows::set_all(width, height, refresh) {
+                Ok(changes) => {
+                    for change in &changes {
+                        println!(
+                            "applied {}x{} @ {}Hz to {}",
+                            change.mode.width,
+                            change.mode.height,
+                            change.mode.refresh,
+                            change.display
+                        );
+                    }
+                    if yes {
+                        0
+                    } else {
+                        match cli::confirm_keep(std::time::Duration::from_secs(
+                            CONFIRM_TIMEOUT_SECS,
+                        )) {
+                            cli::Confirm::Keep => 0,
+                            cli::Confirm::Revert => {
+                                let mut failed = false;
+                                for change in changes {
+                                    match sys::windows::revert(
+                                        Some(change.monitor),
+                                        change.previous,
+                                    ) {
+                                        Ok(mode) => println!(
+                                            "reverted {} to {}x{} @ {}Hz",
+                                            change.display, mode.width, mode.height, mode.refresh
+                                        ),
+                                        Err(e) => {
+                                            eprintln!("error: {e}");
+                                            failed = true;
+                                        }
+                                    }
+                                }
+                                if failed { 2 } else { 0 }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    2
+                }
+            },
+        },
         Err(e) => {
             eprintln!("error: {e}");
             2
         }
     };
     std::process::exit(code);
+}
+
+fn print_caps(mon: &sys::windows::Monitor, modes: &[sys::windows::Mode]) {
+    let primary = if mon.is_primary { " (primary)" } else { "" };
+    println!("{}{}:", mon.name, primary);
+    let res_width = modes
+        .iter()
+        .map(|m| format!("{}x{}", m.width, m.height).len())
+        .max()
+        .unwrap_or(0);
+    for mode in modes {
+        let active =
+            mode.width == mon.width && mode.height == mon.height && mode.refresh == mon.refresh;
+        let marker = if active {
+            format!("{GREEN}*{RESET} ")
+        } else {
+            "  ".to_string()
+        };
+        println!(
+            "  {marker}{:<res_width$} @ {}Hz",
+            format!("{}x{}", mode.width, mode.height),
+            mode.refresh
+        );
+    }
 }

@@ -10,12 +10,13 @@ pub fn help() -> String {
 Resolution modifier
 
 Usage:
-  rmod ls                 list displays
-  rmod max[:N]            max resolution (primary display, or monitor N)
-  rmod caps[:N]           list supported resolutions (primary, or monitor N)
-  rmod WxH@R[:N]          set resolution and refresh rate (primary, or monitor N)
+  rmod ls                     list displays
+  rmod max[:N|:*] [-y]        max resolution (primary, or monitor N; :* = every monitor)
+  rmod caps[:N|:*]            list supported resolutions (primary, or monitor N; :* = every monitor)
+  rmod WxH@R[:N|:*] [-y]      set resolution and refresh rate (primary, or monitor N; :* = every monitor)
 
   :N = monitor number from 'rmod ls'; omit = primary display.
+  :* = every monitor.
 
 Profiles:
   720       1280x720
@@ -55,7 +56,8 @@ Examples:
   rmod ls
 
 Options:
-  -h, --help              print help".to_string()
+  -h, --help              print help"
+        .to_string()
 }
 
 /// Help page for the `max` command.
@@ -64,12 +66,14 @@ pub fn max() -> String {
 Apply the highest supported resolution and refresh rate
 
 Usage:
-  rmod max[:N]
+  rmod max[:N|:*]
 
   Sets the highest resolution and refresh rate supported by the
-  display. Without :N, applies to the primary display.
+  display. Without :N, applies to the primary display; with :*,
+  applies to every monitor.
 
   :N = monitor number from `rmod ls`; omit = primary display.
+  :* = every monitor.
 
   After applying, rmod asks whether to keep the change:
     keep changes? [N/y]
@@ -80,10 +84,12 @@ Usage:
 Examples:
   rmod max
   rmod max:2
+  rmod max:*
 
 Options:
   -h, --help              print help
-  -y, --yes               skip the confirmation prompt".to_string()
+  -y, --yes               skip the confirmation prompt"
+        .to_string()
 }
 
 /// Help page for the `caps` command.
@@ -92,19 +98,23 @@ pub fn caps() -> String {
 List all supported resolutions and refresh rates
 
 Usage:
-  rmod caps[:N]
+  rmod caps[:N|:*]
 
   Prints every resolution and refresh rate supported by the display.
-  Without :N, applies to the primary display.
+  Without :N, applies to the primary display; with :*,
+  applies to every monitor.
 
   :N = monitor number from `rmod ls`; omit = primary display.
+  :* = every monitor.
 
 Examples:
   rmod caps
   rmod caps:2
+  rmod caps:*
 
 Options:
-  -h, --help              print help".to_string()
+  -h, --help              print help"
+        .to_string()
 }
 
 /// Help page for the `set` command (`WxH@R`).
@@ -113,7 +123,7 @@ pub fn set() -> String {
 Apply a resolution and refresh rate to a display
 
 Usage:
-  rmod WxH@R[:N]          set resolution and refresh rate (primary, or monitor N)
+  rmod WxH@R[:N|:*]       set resolution and refresh rate (primary, or monitor N; :* = every monitor)
 
   R options:
     @60                   fixed refresh rate
@@ -121,6 +131,7 @@ Usage:
     omit @R               keep the current refresh rate
 
   :N = monitor number from `rmod ls`; omit = primary display.
+  :* = every monitor.
 
   After applying, rmod asks whether to keep the change:
     keep changes? [N/y]
@@ -139,6 +150,7 @@ Examples:
   rmod 4k
   rmod 1920x1080@144
   rmod 1920x1080@60:2
+  rmod 1920x1080@60:*
   rmod 1440@max
 
 Options:
@@ -160,16 +172,19 @@ mod tests {
         let h = help();
         assert!(h.contains("Resolution modifier"));
         assert!(h.contains("rmod ls"));
-        assert!(h.contains("rmod max[:N]"));
-        assert!(h.contains("rmod caps[:N]"));
-        assert!(h.contains("rmod WxH@R[:N]"));
+        assert!(h.contains("rmod max[:N|:*] [-y]"));
+        assert!(h.contains("rmod caps[:N|:*]"));
+        assert!(h.contains("rmod WxH@R[:N|:*] [-y]"));
     }
 
     #[test]
     fn top_help_documents_profiles() {
         let h = help();
         for (name, width, height) in super::super::parser::PROFILES {
-            assert!(h.contains(&format!("{name:<10}{width}x{height}")), "profile '{name}'");
+            assert!(
+                h.contains(&format!("{name:<10}{width}x{height}")),
+                "profile '{name}'"
+            );
         }
     }
 

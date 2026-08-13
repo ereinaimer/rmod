@@ -7,6 +7,6 @@ mod confirm;
 mod help;
 mod parser;
 
-pub use confirm::{confirm_keep, Confirm};
+pub use confirm::{Confirm, confirm_keep};
 pub use help::{caps, help, ls, max, set, version};
-pub use parser::{parse, Command, HelpTopic};
+pub use parser::{Command, HelpTopic, Target, parse};

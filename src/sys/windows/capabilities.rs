@@ -3,7 +3,7 @@
 //! Walks the mode list Windows exposes for a device and produces the
 //! deduplicated, ascending-ordered list shown by the caps command.
 
-use super::bindings::{encode_wide, DevmodeW, EnumDisplaySettingsW};
+use super::bindings::{DevmodeW, EnumDisplaySettingsW, encode_wide};
 
 /// A resolution and refresh-rate combination a display supports.
 #[derive(Debug, PartialEq)]
@@ -51,17 +51,45 @@ mod tests {
     #[test]
     fn normalize_modes_dedupes_and_sorts() {
         let modes = vec![
-            Mode { width: 1920, height: 1080, refresh: 144 },
-            Mode { width: 3840, height: 2160, refresh: 60 },
-            Mode { width: 1920, height: 1080, refresh: 144 },
-            Mode { width: 1920, height: 1080, refresh: 60 },
+            Mode {
+                width: 1920,
+                height: 1080,
+                refresh: 144,
+            },
+            Mode {
+                width: 3840,
+                height: 2160,
+                refresh: 60,
+            },
+            Mode {
+                width: 1920,
+                height: 1080,
+                refresh: 144,
+            },
+            Mode {
+                width: 1920,
+                height: 1080,
+                refresh: 60,
+            },
         ];
         assert_eq!(
             normalize_modes(modes),
             vec![
-                Mode { width: 1920, height: 1080, refresh: 60 },
-                Mode { width: 1920, height: 1080, refresh: 144 },
-                Mode { width: 3840, height: 2160, refresh: 60 },
+                Mode {
+                    width: 1920,
+                    height: 1080,
+                    refresh: 60
+                },
+                Mode {
+                    width: 1920,
+                    height: 1080,
+                    refresh: 144
+                },
+                Mode {
+                    width: 3840,
+                    height: 2160,
+                    refresh: 60
+                },
             ]
         );
     }

@@ -11,7 +11,7 @@ mod capabilities;
 mod query;
 
 #[allow(unused_imports)]
-pub use apply::{max, revert, set, Change};
+pub use apply::{Change, max, max_all, revert, set, set_all};
 pub use capabilities::Mode;
 pub use query::Monitor;
 
@@ -57,4 +57,30 @@ pub fn caps(monitor: Option<u32>) -> Result<(Monitor, Vec<Mode>), String> {
         query::describe(index, &name),
         capabilities::normalize_modes(modes),
     ))
+}
+
+/// Returns the supported modes for every attached monitor, sorted
+/// ascending by resolution then refresh rate.
+///
+/// # Errors
+/// Returns `Err` when no displays are attached or any display reports
+/// no supported modes.
+pub fn caps_all() -> Result<Vec<(Monitor, Vec<Mode>)>, String> {
+    let names = query::enumerate_devices();
+    let targets = query::resolve_all(&names)?;
+    let mut monitors = Vec::with_capacity(targets.len());
+    for (index, name) in targets {
+        let modes = capabilities::enumerate_modes(&name);
+        if modes.is_empty() {
+            return Err(format!(
+                "{} has no supported modes",
+                query::display_label(&name, index as u32 + 1)
+            ));
+        }
+        monitors.push((
+            query::describe(index, &name),
+            capabilities::normalize_modes(modes),
+        ));
+    }
+    Ok(monitors)
 }

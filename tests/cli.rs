@@ -152,7 +152,9 @@ fn caps_lists_supported_modes() {
     assert!(!header.trim().is_empty());
     let modes: Vec<&str> = lines.collect();
     assert!(!modes.is_empty(), "no supported modes listed");
-    let at_pos = strip_ansi(modes[0]).find('@').expect("missing '@' in mode line");
+    let at_pos = strip_ansi(modes[0])
+        .find('@')
+        .expect("missing '@' in mode line");
     for line in &modes {
         let clean = strip_ansi(line);
         assert!(line.starts_with("  "), "expected indented mode: '{line}'");
@@ -189,12 +191,27 @@ fn caps_zero_monitor_exits_2() {
 }
 
 #[test]
+fn caps_all_lists_every_monitor() {
+    let out = rmod(&["caps:*"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let stdout = stdout(&out);
+    assert!(stdout.contains("Generic PnP Monitor"));
+    let modes: Vec<&str> = stdout.lines().filter(|l| l.starts_with("  ")).collect();
+    assert!(!modes.is_empty(), "no mode rows listed");
+    for line in &modes {
+        assert!(line.contains('x'));
+        assert!(line.contains('@'));
+        assert!(line.ends_with("Hz"));
+    }
+}
+
+#[test]
 fn max_help_lists_usage() {
     let out = rmod(&["max", "-h"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let stdout = stdout(&out);
     assert!(stdout.contains("Apply the highest supported resolution"));
-    assert!(stdout.contains("rmod max[:N]"));
+    assert!(stdout.contains("rmod max[:N|:*]"));
 }
 
 #[test]
@@ -244,4 +261,11 @@ fn set_unsupported_mode_is_error() {
     let out = rmod(&["9999x9999@1"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("does not support 9999x9999@1Hz"));
+}
+
+#[test]
+fn set_all_unsupported_mode_is_error() {
+    let out = rmod(&["9999x9999@1:*"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("does not support"));
 }

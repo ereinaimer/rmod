@@ -5,16 +5,16 @@
 //! applies it and persists it to the registry.
 
 use super::bindings::{
-    encode_wide, ChangeDisplaySettingsExW, DevmodeW, CDS_TEST, CDS_UPDATEREGISTRY,
-    DISP_CHANGE_BADDUALVIEW, DISP_CHANGE_BADFLAGS, DISP_CHANGE_BADMODE, DISP_CHANGE_BADPARAM,
-    DISP_CHANGE_FAILED, DISP_CHANGE_NOTUPDATED, DISP_CHANGE_RESTART, DISP_CHANGE_SUCCESSFUL,
-    DM_DISPLAYFREQUENCY, DM_PELSHEIGHT, DM_PELSWIDTH,
+    CDS_TEST, CDS_UPDATEREGISTRY, ChangeDisplaySettingsExW, DISP_CHANGE_BADDUALVIEW,
+    DISP_CHANGE_BADFLAGS, DISP_CHANGE_BADMODE, DISP_CHANGE_BADPARAM, DISP_CHANGE_FAILED,
+    DISP_CHANGE_NOTUPDATED, DISP_CHANGE_RESTART, DISP_CHANGE_SUCCESSFUL, DM_DISPLAYFREQUENCY,
+    DM_PELSHEIGHT, DM_PELSWIDTH, DevmodeW, encode_wide,
 };
 use super::capabilities::{self, Mode};
 use super::query;
 
 /// Refresh rate handling for the set command.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Refresh {
     /// Leave the refresh rate unchanged.
     Keep,
@@ -24,9 +24,14 @@ pub enum Refresh {
     Fixed(u32),
 }
 
-/// A display change: the applied mode and the mode it replaced.
+/// A display change: the applied mode, the mode it replaced, and the
+/// monitor the change applies to.
 #[derive(Debug, PartialEq)]
 pub struct Change {
+    /// The 1-based monitor number the change applies to.
+    pub monitor: u32,
+    /// The display label used in batch output.
+    pub display: String,
     /// The mode that was applied.
     pub mode: Mode,
     /// The mode in effect before the change.
@@ -40,18 +45,39 @@ pub struct Change {
 /// # Errors
 /// Unknown monitor, no matching mode for `@max`, or a mode the display
 /// rejects.
-pub fn set(monitor: Option<u32>, width: u32, height: u32, refresh: Refresh) -> Result<Change, String> {
+pub fn set(
+    monitor: Option<u32>,
+    width: u32,
+    height: u32,
+    refresh: Refresh,
+) -> Result<Change, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
     let display = query::display_label(&name, index as u32 + 1);
     let base = query::current_mode(&name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
     let modes = capabilities::enumerate_modes(&name);
-    let refresh = resolve_refresh(refresh, &modes, width, height, base.dm_display_frequency, &display)?;
-    let mode = Mode { width, height, refresh };
+    let refresh = resolve_refresh(
+        refresh,
+        &modes,
+        width,
+        height,
+        base.dm_display_frequency,
+        &display,
+    )?;
+    let mode = Mode {
+        width,
+        height,
+        refresh,
+    };
     let previous = mode_of(&base);
     let devmode = build_devmode(&mode, &base);
     apply_mode(&name, &display, &devmode)?;
-    Ok(Change { mode, previous })
+    Ok(Change {
+        monitor: index as u32 + 1,
+        display,
+        mode,
+        previous,
+    })
 }
 
 /// Applies the best supported mode to a monitor and returns the change.
@@ -73,7 +99,40 @@ pub fn max(monitor: Option<u32>) -> Result<Change, String> {
     let previous = mode_of(&base);
     let devmode = build_devmode(&best, &base);
     apply_mode(&name, &display, &devmode)?;
-    Ok(Change { mode: best, previous })
+    Ok(Change {
+        monitor: index as u32 + 1,
+        display,
+        mode: best,
+        previous,
+    })
+}
+
+/// Applies a resolution and refresh policy to every attached display.
+///
+/// Every monitor is dry-run validated before anything is applied; when any
+/// display rejects the mode, nothing changes and the failures are listed.
+///
+/// # Errors
+/// No displays found, a mode no display supports, or preflight failures.
+pub fn set_all(width: u32, height: u32, refresh: Refresh) -> Result<Vec<Change>, String> {
+    let names = query::enumerate_devices();
+    let targets = query::resolve_all(&names)?;
+    apply_all(plan_set(&targets, width, height, refresh)?)
+}
+
+/// Applies the best supported mode to every attached display.
+///
+/// Every monitor is dry-run validated before anything is applied; when any
+/// display rejects its best mode, nothing changes and the failures are
+/// listed.
+///
+/// # Errors
+/// No displays found, a display with no supported modes, or preflight
+/// failures.
+pub fn max_all() -> Result<Vec<Change>, String> {
+    let names = query::enumerate_devices();
+    let targets = query::resolve_all(&names)?;
+    apply_all(plan_max(&targets)?)
 }
 
 /// Re-applies a previously captured mode to undo a display change.
@@ -98,13 +157,8 @@ pub fn revert(monitor: Option<u32>, previous: Mode) -> Result<Mode, String> {
 
 /// Validates a mode with a dry run, then applies and persists it.
 fn apply_mode(name: &str, display: &str, devmode: &DevmodeW) -> Result<(), String> {
+    validate_mode(name, display, devmode)?;
     let name_ptr = encode_wide(name);
-    let test = unsafe {
-        ChangeDisplaySettingsExW(name_ptr.as_ptr(), devmode, 0, CDS_TEST, std::ptr::null())
-    };
-    if test != DISP_CHANGE_SUCCESSFUL {
-        return Err(describe_change_failure(test, display, devmode));
-    }
     let applied = unsafe {
         ChangeDisplaySettingsExW(
             name_ptr.as_ptr(),
@@ -116,6 +170,19 @@ fn apply_mode(name: &str, display: &str, devmode: &DevmodeW) -> Result<(), Strin
     };
     if applied != DISP_CHANGE_SUCCESSFUL {
         return Err(describe_change_failure(applied, display, devmode));
+    }
+    Ok(())
+}
+
+/// Runs the CDS_TEST dry run for a mode; returns an error description when
+/// the display rejects it.
+fn validate_mode(name: &str, display: &str, devmode: &DevmodeW) -> Result<(), String> {
+    let name_ptr = encode_wide(name);
+    let test = unsafe {
+        ChangeDisplaySettingsExW(name_ptr.as_ptr(), devmode, 0, CDS_TEST, std::ptr::null())
+    };
+    if test != DISP_CHANGE_SUCCESSFUL {
+        return Err(describe_change_failure(test, display, devmode));
     }
     Ok(())
 }
@@ -192,6 +259,106 @@ fn resolve_refresh(
     }
 }
 
+/// A planned change for one monitor: everything needed to validate and
+/// apply a mode and report the resulting [`Change`].
+struct Planned {
+    index: usize,
+    name: String,
+    display: String,
+    mode: Mode,
+    previous: Mode,
+    devmode: DevmodeW,
+}
+
+fn plan_set(
+    targets: &[(usize, String)],
+    width: u32,
+    height: u32,
+    policy: Refresh,
+) -> Result<Vec<Planned>, String> {
+    let mut planned = Vec::new();
+    for (index, name) in targets {
+        let display = query::display_label(name, *index as u32 + 1);
+        let base = query::current_mode(name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
+        let modes = capabilities::enumerate_modes(name);
+        let refresh = resolve_refresh(
+            policy,
+            &modes,
+            width,
+            height,
+            base.dm_display_frequency,
+            &display,
+        )?;
+        let mode = Mode {
+            width,
+            height,
+            refresh,
+        };
+        let previous = mode_of(&base);
+        let devmode = build_devmode(&mode, &base);
+        planned.push(Planned {
+            index: *index,
+            name: name.clone(),
+            display,
+            mode,
+            previous,
+            devmode,
+        });
+    }
+    Ok(planned)
+}
+
+fn plan_max(targets: &[(usize, String)]) -> Result<Vec<Planned>, String> {
+    let mut planned = Vec::new();
+    let mut failures = Vec::new();
+    for (index, name) in targets {
+        let display = query::display_label(name, *index as u32 + 1);
+        let Some(mode) = best_mode(capabilities::enumerate_modes(name)) else {
+            failures.push(format!("{display} has no supported modes"));
+            continue;
+        };
+        let base = query::current_mode(name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
+        let previous = mode_of(&base);
+        let devmode = build_devmode(&mode, &base);
+        planned.push(Planned {
+            index: *index,
+            name: name.clone(),
+            display,
+            mode,
+            previous,
+            devmode,
+        });
+    }
+    if failures.is_empty() {
+        Ok(planned)
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+fn apply_all(planned: Vec<Planned>) -> Result<Vec<Change>, String> {
+    let mut failures = Vec::new();
+    for p in &planned {
+        if let Err(e) = validate_mode(&p.name, &p.display, &p.devmode) {
+            failures.push(e);
+        }
+    }
+    if !failures.is_empty() {
+        return Err(failures.join("\n"));
+    }
+    let mut changes = Vec::with_capacity(planned.len());
+    for p in planned {
+        apply_mode(&p.name, &p.display, &p.devmode)?;
+        changes.push(Change {
+            monitor: p.index as u32 + 1,
+            display: p.display,
+            mode: p.mode,
+            previous: p.previous,
+        });
+    }
+    Ok(changes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::bindings::Pointl;
@@ -212,8 +379,14 @@ mod tests {
             describe_change_result(DISP_CHANGE_NOTUPDATED),
             "the display settings were not updated"
         );
-        assert_eq!(describe_change_result(DISP_CHANGE_BADFLAGS), "invalid parameters");
-        assert_eq!(describe_change_result(DISP_CHANGE_BADPARAM), "invalid parameters");
+        assert_eq!(
+            describe_change_result(DISP_CHANGE_BADFLAGS),
+            "invalid parameters"
+        );
+        assert_eq!(
+            describe_change_result(DISP_CHANGE_BADPARAM),
+            "invalid parameters"
+        );
         assert_eq!(
             describe_change_result(DISP_CHANGE_BADDUALVIEW),
             "invalid parameters"
@@ -223,7 +396,11 @@ mod tests {
     #[test]
     fn describe_change_failure_badmode_names_display_and_mode() {
         let devmode = build_devmode(
-            &Mode { width: 9999, height: 9999, refresh: 1 },
+            &Mode {
+                width: 9999,
+                height: 9999,
+                refresh: 1,
+            },
             &unsafe { std::mem::zeroed() },
         );
         assert_eq!(
@@ -235,7 +412,11 @@ mod tests {
     #[test]
     fn describe_change_failure_passes_through_other_codes() {
         let devmode = build_devmode(
-            &Mode { width: 1920, height: 1080, refresh: 120 },
+            &Mode {
+                width: 1920,
+                height: 1080,
+                refresh: 120,
+            },
             &unsafe { std::mem::zeroed() },
         );
         assert_eq!(
@@ -264,7 +445,10 @@ mod tests {
         assert_eq!(devmode.dm_display_frequency, 144);
         assert_eq!(devmode.dm_size, 220);
         assert_eq!(devmode.dm_driver_extra, 0);
-        assert_eq!(devmode.dm_fields, DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY);
+        assert_eq!(
+            devmode.dm_fields,
+            DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY
+        );
         assert_eq!(devmode.dm_position.x, -1);
         assert_eq!(devmode.dm_position.y, -1);
     }
@@ -347,10 +531,26 @@ mod tests {
     #[test]
     fn best_refresh_picks_highest_at_matching_resolution() {
         let modes = vec![
-            Mode { width: 1920, height: 1080, refresh: 60 },
-            Mode { width: 1920, height: 1080, refresh: 120 },
-            Mode { width: 1920, height: 1080, refresh: 144 },
-            Mode { width: 2560, height: 1440, refresh: 240 },
+            Mode {
+                width: 1920,
+                height: 1080,
+                refresh: 60,
+            },
+            Mode {
+                width: 1920,
+                height: 1080,
+                refresh: 120,
+            },
+            Mode {
+                width: 1920,
+                height: 1080,
+                refresh: 144,
+            },
+            Mode {
+                width: 2560,
+                height: 1440,
+                refresh: 240,
+            },
         ];
         assert_eq!(best_refresh(&modes, 1920, 1080), Some(144));
     }
@@ -358,32 +558,66 @@ mod tests {
     #[test]
     fn best_refresh_ignores_other_resolutions() {
         let modes = vec![
-            Mode { width: 1920, height: 1080, refresh: 60 },
-            Mode { width: 2560, height: 1440, refresh: 240 },
+            Mode {
+                width: 1920,
+                height: 1080,
+                refresh: 60,
+            },
+            Mode {
+                width: 2560,
+                height: 1440,
+                refresh: 240,
+            },
         ];
         assert_eq!(best_refresh(&modes, 1920, 1080), Some(60));
     }
 
     #[test]
     fn best_refresh_no_matching_resolution_returns_none() {
-        let modes = vec![Mode { width: 2560, height: 1440, refresh: 144 }];
+        let modes = vec![Mode {
+            width: 2560,
+            height: 1440,
+            refresh: 144,
+        }];
         assert_eq!(best_refresh(&modes, 1920, 1080), None);
     }
 
     #[test]
     fn resolve_refresh_keep_returns_current_refresh() {
-        let modes = vec![Mode { width: 1920, height: 1080, refresh: 144 }];
+        let modes = vec![Mode {
+            width: 1920,
+            height: 1080,
+            refresh: 144,
+        }];
         assert_eq!(
-            resolve_refresh(Refresh::Keep, &modes, 1920, 1080, 59, "Generic PnP Monitor [:1]"),
+            resolve_refresh(
+                Refresh::Keep,
+                &modes,
+                1920,
+                1080,
+                59,
+                "Generic PnP Monitor [:1]"
+            ),
             Ok(59)
         );
     }
 
     #[test]
     fn resolve_refresh_fixed_returns_the_value() {
-        let modes = vec![Mode { width: 1920, height: 1080, refresh: 60 }];
+        let modes = vec![Mode {
+            width: 1920,
+            height: 1080,
+            refresh: 60,
+        }];
         assert_eq!(
-            resolve_refresh(Refresh::Fixed(75), &modes, 1920, 1080, 59, "Generic PnP Monitor [:1]"),
+            resolve_refresh(
+                Refresh::Fixed(75),
+                &modes,
+                1920,
+                1080,
+                59,
+                "Generic PnP Monitor [:1]"
+            ),
             Ok(75)
         );
     }
@@ -391,20 +625,46 @@ mod tests {
     #[test]
     fn resolve_refresh_max_picks_best_matching_mode() {
         let modes = vec![
-            Mode { width: 1920, height: 1080, refresh: 60 },
-            Mode { width: 1920, height: 1080, refresh: 144 },
+            Mode {
+                width: 1920,
+                height: 1080,
+                refresh: 60,
+            },
+            Mode {
+                width: 1920,
+                height: 1080,
+                refresh: 144,
+            },
         ];
         assert_eq!(
-            resolve_refresh(Refresh::Max, &modes, 1920, 1080, 60, "Generic PnP Monitor [:1]"),
+            resolve_refresh(
+                Refresh::Max,
+                &modes,
+                1920,
+                1080,
+                60,
+                "Generic PnP Monitor [:1]"
+            ),
             Ok(144)
         );
     }
 
     #[test]
     fn resolve_refresh_max_no_matching_mode_is_error() {
-        let modes = vec![Mode { width: 2560, height: 1440, refresh: 60 }];
+        let modes = vec![Mode {
+            width: 2560,
+            height: 1440,
+            refresh: 60,
+        }];
         assert_eq!(
-            resolve_refresh(Refresh::Max, &modes, 320, 200, 60, "Generic PnP Monitor [:1]"),
+            resolve_refresh(
+                Refresh::Max,
+                &modes,
+                320,
+                200,
+                60,
+                "Generic PnP Monitor [:1]"
+            ),
             Err("Generic PnP Monitor [:1] does not support 320x200".to_string())
         );
     }
@@ -432,7 +692,11 @@ mod tests {
         }
         let base = query::current_mode(&names[0]).unwrap_or_else(|| unsafe { std::mem::zeroed() });
         let devmode = build_devmode(
-            &Mode { width: 1, height: 1, refresh: 1 },
+            &Mode {
+                width: 1,
+                height: 1,
+                refresh: 1,
+            },
             &base,
         );
         let result = apply_mode(&names[0], &query::display_label(&names[0], 1), &devmode);
