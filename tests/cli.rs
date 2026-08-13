@@ -274,7 +274,7 @@ fn set_all_unsupported_mode_is_error() {
     assert!(err.contains("does not support") || err.contains("the display change failed"));
 }
 
-fn current_mode() -> String {
+fn current_mode() -> (String, String, String) {
     let out = rmod(&["ls"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let stdout = stdout(&out);
@@ -283,16 +283,21 @@ fn current_mode() -> String {
         .find(|l| l.contains('*') && l.chars().next().is_some_and(|c| c.is_ascii_digit()))
         .expect("no primary monitor row");
     let tokens: Vec<&str> = row.split_whitespace().collect();
+    let (width, height) = tokens[tokens.len() - 2]
+        .split_once('x')
+        .map(|(w, h)| (w.to_string(), h.to_string()))
+        .expect("resolution column");
     let refresh = tokens
         .last()
         .and_then(|t| t.strip_suffix("Hz"))
         .expect("refresh column");
-    format!("{}@{}", tokens[tokens.len() - 2], refresh)
+    (width, height, refresh.to_string())
 }
 
 #[test]
 fn set_already_active_is_noop() {
-    let mode = current_mode();
+    let (w, h, r) = current_mode();
+    let mode = format!("{w}x{h}@{r}");
     let out = rmod(&[&mode]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let stdout = stdout(&out);
@@ -303,11 +308,84 @@ fn set_already_active_is_noop() {
 
 #[test]
 fn set_all_already_active_is_noop() {
-    let all = format!("{}:*", current_mode());
+    let (w, h, r) = current_mode();
+    let all = format!("{w}x{h}@{r}:*");
     let out = rmod(&[&all]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let stdout = stdout(&out);
     assert!(stdout.contains("is already at"));
     assert!(!stdout.contains("keep changes"));
     assert!(!stdout.contains("applied"));
+}
+
+#[test]
+fn set_flags_already_active_is_noop() {
+    let (w, h, r) = current_mode();
+    let out = rmod(&["-w", &w, "-h", &h, "-r", &r]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let stdout = stdout(&out);
+    assert!(stdout.contains("already at"));
+    assert!(!stdout.contains("keep changes"));
+    assert!(!stdout.contains("applied"));
+}
+
+#[test]
+fn set_flags_all_already_active_is_noop() {
+    let (w, h, r) = current_mode();
+    let out = rmod(&["-w", &w, "-h", &h, "-r", &r, "-m", "*"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let stdout = stdout(&out);
+    assert!(stdout.contains("is already at"));
+    assert!(!stdout.contains("keep changes"));
+    assert!(!stdout.contains("applied"));
+}
+
+#[test]
+fn set_flags_unsupported_mode_is_error() {
+    let out = rmod(&["-w", "9999", "-h", "9999", "-r", "1"]);
+    assert_eq!(out.status.code(), Some(2));
+    let err = stderr(&out);
+    assert!(err.contains("does not support") || err.contains("the display change failed"));
+}
+
+#[test]
+fn set_flags_missing_height_is_error() {
+    let out = rmod(&["-w", "1920"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("-w requires -h"));
+}
+
+#[test]
+fn set_flags_nothing_to_set_is_error() {
+    let out = rmod(&["-y"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("nothing to set"));
+}
+
+#[test]
+fn set_flags_missing_value_is_error() {
+    let out = rmod(&["-w"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("missing value for -w"));
+}
+
+#[test]
+fn set_flags_invalid_refresh_is_error() {
+    let out = rmod(&["-r", "abc"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("invalid refresh"));
+}
+
+#[test]
+fn set_flags_monitor_not_found() {
+    let out = rmod(&["-w", "1920", "-h", "1080", "-r", "60", "-m", "99"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("monitor 99 not found"));
+}
+
+#[test]
+fn set_flags_help() {
+    let out = rmod(&["-w", "1920", "-h", "1080", "--help"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("Flags"));
 }

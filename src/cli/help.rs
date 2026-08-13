@@ -154,6 +154,16 @@ Examples:
   rmod 1920x1080@60:2
   rmod 1920x1080@60:*
   rmod 1440@max
+  rmod -w 1920 -h 1080 -r 144 -m 2
+  `rmod -w 1920 -h 1080 -r 144 -m 2` is equivalent to `rmod 1920x1080@144:2`
+
+Flags:
+  -w, --width W       pixel width (default: current)
+  -h, --height H      pixel height (default: current)
+  -r, --refresh R     refresh rate: 144 | max | keep (default: keep)
+  -m, --monitor N     monitor number from `rmod ls`; * = every monitor (default: primary)
+  -y, --yes           skip the confirmation prompt
+  --help              print help
 
 Options:
   -h, --help              print help
@@ -242,6 +252,11 @@ mod tests {
         assert!(h.contains("@max"));
         assert!(h.contains("rmod 1920x1080@60:2"));
         assert!(h.contains("-h, --help"));
+        assert!(h.contains("Flags:"));
+        assert!(h.contains("-w, --width W"));
+        assert!(h.contains("-m, --monitor N"));
+        assert!(h.contains("rmod -w 1920 -h 1080 -r 144 -m 2"));
+        assert!(h.contains("is equivalent to `rmod 1920x1080@144:2`"));
     }
 
     #[test]

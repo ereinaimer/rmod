@@ -39,8 +39,10 @@ pub enum Command {
     },
     /// `WxH@R[:N]` — set resolution and refresh rate.
     Set {
-        width: u32,
-        height: u32,
+        /// Pixel width; `None` keeps the current width.
+        width: Option<u32>,
+        /// Pixel height; `None` keeps the current height.
+        height: Option<u32>,
         refresh: Refresh,
         /// Which display to target; `:*` = every monitor.
         target: Target,
@@ -92,17 +94,42 @@ pub fn parse() -> Result<Command, String> {
 /// Returns `Err` with a human-readable message for unknown commands,
 /// invalid numbers, or unexpected trailing arguments.
 pub fn parse_from<I: Iterator<Item = String>>(args: I) -> Result<Command, String> {
-    let mut args = args.skip(1);
-    let Some(cmd) = args.next() else {
+    let args: Vec<String> = args.skip(1).collect();
+    let Some(cmd) = args.first() else {
         return Ok(Command::Help { topic: None });
     };
     let command = match cmd.as_str() {
-        "-h" | "--help" => Command::Help { topic: None },
-        "-V" | "--version" => Command::Version,
-        "ls" => parse_tail("ls", args.next(), Command::List, HelpTopic::List, false)?,
+        "-h" => {
+            if args.get(1).is_some_and(|t| t.parse::<u32>().is_ok()) {
+                return parse_flags(&args);
+            }
+            return match args.get(1) {
+                None => Ok(Command::Help { topic: None }),
+                Some(extra) => Err(format!("unexpected argument '{extra}'")),
+            };
+        }
+        "--help" => {
+            return match args.get(1) {
+                None => Ok(Command::Help { topic: None }),
+                Some(extra) => Err(format!("unexpected argument '{extra}'")),
+            };
+        }
+        "-V" | "--version" => {
+            return match args.get(1) {
+                None => Ok(Command::Version),
+                Some(extra) => Err(format!("unexpected argument '{extra}'")),
+            };
+        }
+        "ls" => parse_tail(
+            "ls",
+            args.get(1).cloned(),
+            Command::List,
+            HelpTopic::List,
+            false,
+        )?,
         "max" => parse_tail(
             "max",
-            args.next(),
+            args.get(1).cloned(),
             Command::Max {
                 target: Target::Primary,
                 yes: false,
@@ -112,7 +139,7 @@ pub fn parse_from<I: Iterator<Item = String>>(args: I) -> Result<Command, String
         )?,
         "caps" => parse_tail(
             "caps",
-            args.next(),
+            args.get(1).cloned(),
             Command::Caps {
                 target: Target::Primary,
             },
@@ -120,28 +147,29 @@ pub fn parse_from<I: Iterator<Item = String>>(args: I) -> Result<Command, String
             false,
         )?,
         _ if cmd.starts_with("max:") => {
-            let target = parse_monitor(&cmd[4..], &cmd)?;
+            let target = parse_monitor(&cmd[4..], cmd)?;
             parse_tail(
                 "max",
-                args.next(),
+                args.get(1).cloned(),
                 Command::Max { target, yes: false },
                 HelpTopic::Max,
                 true,
             )?
         }
         _ if cmd.starts_with("caps:") => {
-            let target = parse_monitor(&cmd[5..], &cmd)?;
+            let target = parse_monitor(&cmd[5..], cmd)?;
             parse_tail(
                 "caps",
-                args.next(),
+                args.get(1).cloned(),
                 Command::Caps { target },
                 HelpTopic::Caps,
                 false,
             )?
         }
-        _ => parse_set(&cmd, args.next())?,
+        _ if cmd.starts_with('-') => return parse_flags(&args),
+        _ => parse_set(cmd, args.get(1).cloned())?,
     };
-    if let Some(extra) = args.next() {
+    if let Some(extra) = args.get(2) {
         return Err(format!("unexpected argument '{extra}'"));
     }
     Ok(command)
@@ -189,12 +217,14 @@ fn parse_set(cmd: &str, tail: Option<String>) -> Result<Command, String> {
     };
     let (width, height) = match res.split_once('x') {
         Some((w, h)) => (
-            w.parse().map_err(|_| format!("invalid width in '{cmd}'"))?,
-            h.parse()
-                .map_err(|_| format!("invalid height in '{cmd}'"))?,
+            Some(w.parse().map_err(|_| format!("invalid width in '{cmd}'"))?),
+            Some(
+                h.parse()
+                    .map_err(|_| format!("invalid height in '{cmd}'"))?,
+            ),
         ),
         None => match PROFILES.iter().find(|(name, _, _)| *name == res) {
-            Some((_, w, h)) => (*w, *h),
+            Some((_, w, h)) => (Some(*w), Some(*h)),
             None => return Err(format!("unknown profile or invalid resolution '{cmd}'")),
         },
     };
@@ -241,6 +271,111 @@ fn parse_monitor(m: &str, cmd: &str) -> Result<Target, String> {
     }
 }
 
+/// Parses `-w`/`-h`/`-r`/`-m`/`-y` flag syntax into a set command.
+///
+/// Flags may appear in any order; repeated flags keep the last value.
+/// `-h` is contextual: a following token that parses as a height keeps it,
+/// otherwise (missing, non-numeric, or flag-like) the set help page wins.
+///
+/// # Errors
+/// Returns `Err` for missing or invalid flag values, unknown flags, or
+/// when no dimension/refresh flag was given.
+fn parse_flags(args: &[String]) -> Result<Command, String> {
+    let mut width: Option<u32> = None;
+    let mut height: Option<u32> = None;
+    let mut refresh: Option<Refresh> = None;
+    let mut target = Target::Primary;
+    let mut yes = false;
+    let mut i = 0;
+    while i < args.len() {
+        let flag = args[i].as_str();
+        i += 1;
+        match flag {
+            "-w" | "--width" => {
+                let Some(value) = args.get(i) else {
+                    return Err("missing value for -w".to_string());
+                };
+                i += 1;
+                width = Some(
+                    value
+                        .parse()
+                        .map_err(|_| format!("invalid width in '-w {value}'"))?,
+                );
+            }
+            "-h" | "--height" => {
+                let Some(value) = args.get(i) else {
+                    return Ok(Command::Help {
+                        topic: Some(HelpTopic::Set),
+                    });
+                };
+                match value.parse::<u32>() {
+                    Ok(h) => {
+                        i += 1;
+                        height = Some(h);
+                    }
+                    Err(_) => {
+                        return Ok(Command::Help {
+                            topic: Some(HelpTopic::Set),
+                        });
+                    }
+                }
+            }
+            "-r" | "--refresh" => {
+                let Some(value) = args.get(i) else {
+                    return Err("missing value for -r".to_string());
+                };
+                i += 1;
+                refresh = Some(match value.as_str() {
+                    "max" => Refresh::Max,
+                    "keep" => Refresh::Keep,
+                    _ => value
+                        .parse()
+                        .map(Refresh::Fixed)
+                        .map_err(|_| format!("invalid refresh in '-r {value}'"))?,
+                });
+            }
+            "-m" | "--monitor" => {
+                let Some(value) = args.get(i) else {
+                    return Err("missing value for -m".to_string());
+                };
+                i += 1;
+                target = if value == "*" {
+                    Target::All
+                } else {
+                    value
+                        .parse()
+                        .map(Target::Index)
+                        .map_err(|_| format!("invalid monitor id in '-m {value}'"))?
+                };
+            }
+            "-y" | "--yes" => yes = true,
+            "--help" => {
+                return Ok(Command::Help {
+                    topic: Some(HelpTopic::Set),
+                });
+            }
+            other => return Err(format!("unknown argument '{other}'")),
+        }
+    }
+    if width.is_none() && height.is_none() && refresh.is_none() {
+        return Err("nothing to set".to_string());
+    }
+    if width.is_some() != height.is_some() {
+        return Err(if width.is_some() {
+            "-w requires -h".to_string()
+        } else {
+            "-h requires -w".to_string()
+        });
+    }
+    Ok(Command::Set {
+        width,
+        height,
+        refresh: refresh.unwrap_or(Refresh::Keep),
+        target,
+        yes,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,8 +386,8 @@ mod tests {
 
     fn set(width: u32, height: u32, refresh: Refresh, target: Target) -> Command {
         Command::Set {
-            width,
-            height,
+            width: Some(width),
+            height: Some(height),
             refresh,
             target,
             yes: false,
@@ -261,8 +396,8 @@ mod tests {
 
     fn set_yes(width: u32, height: u32, refresh: Refresh, target: Target) -> Command {
         Command::Set {
-            width,
-            height,
+            width: Some(width),
+            height: Some(height),
             refresh,
             target,
             yes: true,
@@ -744,5 +879,270 @@ mod tests {
     fn command_with_monitor_suffix_is_error() {
         assert!(parse(&["ls:2"]).is_err());
         assert!(parse(&["ls:"]).is_err());
+    }
+
+    #[test]
+    fn flags_full_spec() {
+        assert_eq!(
+            parse(&["-w", "1920", "-h", "1080", "-r", "144", "-m", "2", "-y"]),
+            Ok(Command::Set {
+                width: Some(1920),
+                height: Some(1080),
+                refresh: Refresh::Fixed(144),
+                target: Target::Index(2),
+                yes: true,
+            })
+        );
+    }
+
+    #[test]
+    fn flags_long_names() {
+        assert_eq!(
+            parse(&[
+                "--width",
+                "1920",
+                "--height",
+                "1080",
+                "--refresh",
+                "144",
+                "--monitor",
+                "2",
+                "--yes",
+            ]),
+            Ok(Command::Set {
+                width: Some(1920),
+                height: Some(1080),
+                refresh: Refresh::Fixed(144),
+                target: Target::Index(2),
+                yes: true,
+            })
+        );
+    }
+
+    #[test]
+    fn flags_order_independent() {
+        assert_eq!(
+            parse(&["-m", "2", "-r", "144", "-h", "1080", "-w", "1920", "-y"]),
+            Ok(Command::Set {
+                width: Some(1920),
+                height: Some(1080),
+                refresh: Refresh::Fixed(144),
+                target: Target::Index(2),
+                yes: true,
+            })
+        );
+    }
+
+    #[test]
+    fn flags_repeated_last_wins() {
+        assert_eq!(
+            parse(&["-w", "100", "-h", "200", "-w", "1920", "-h", "1080"]),
+            Ok(Command::Set {
+                width: Some(1920),
+                height: Some(1080),
+                refresh: Refresh::Keep,
+                target: Target::Primary,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn flags_width_and_height_keep_current_refresh() {
+        assert_eq!(
+            parse(&["-w", "1920", "-h", "1080"]),
+            Ok(Command::Set {
+                width: Some(1920),
+                height: Some(1080),
+                refresh: Refresh::Keep,
+                target: Target::Primary,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn flags_refresh_only() {
+        assert_eq!(
+            parse(&["-r", "144"]),
+            Ok(Command::Set {
+                width: None,
+                height: None,
+                refresh: Refresh::Fixed(144),
+                target: Target::Primary,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn flags_refresh_max() {
+        assert_eq!(
+            parse(&["-r", "max"]),
+            Ok(Command::Set {
+                width: None,
+                height: None,
+                refresh: Refresh::Max,
+                target: Target::Primary,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn flags_refresh_keep() {
+        assert_eq!(
+            parse(&["-r", "keep"]),
+            Ok(Command::Set {
+                width: None,
+                height: None,
+                refresh: Refresh::Keep,
+                target: Target::Primary,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn flags_monitor_all() {
+        assert_eq!(
+            parse(&["-w", "1920", "-h", "1080", "-m", "*"]),
+            Ok(Command::Set {
+                width: Some(1920),
+                height: Some(1080),
+                refresh: Refresh::Keep,
+                target: Target::All,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn flags_monitor_zero_parses() {
+        assert_eq!(
+            parse(&["-w", "1920", "-h", "1080", "-m", "0"]),
+            Ok(Command::Set {
+                width: Some(1920),
+                height: Some(1080),
+                refresh: Refresh::Keep,
+                target: Target::Index(0),
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn flags_height_first_then_width() {
+        assert_eq!(
+            parse(&["-h", "1080", "-w", "1920"]),
+            Ok(Command::Set {
+                width: Some(1920),
+                height: Some(1080),
+                refresh: Refresh::Keep,
+                target: Target::Primary,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn flags_height_first_requires_width() {
+        let err = parse(&["-h", "1080"]).unwrap_err();
+        assert_eq!(err, "-h requires -w");
+    }
+
+    #[test]
+    fn flags_width_requires_height() {
+        let err = parse(&["-w", "1920"]).unwrap_err();
+        assert_eq!(err, "-w requires -h");
+    }
+
+    #[test]
+    fn flags_trailing_h_is_help() {
+        assert_eq!(parse(&["-w", "1920", "-h"]), Ok(help(Some(HelpTopic::Set))));
+    }
+
+    #[test]
+    fn flags_h_with_bad_value_is_help() {
+        assert_eq!(
+            parse(&["-w", "1920", "-h", "abc"]),
+            Ok(help(Some(HelpTopic::Set)))
+        );
+    }
+
+    #[test]
+    fn flags_h_before_other_flag_is_help() {
+        assert_eq!(
+            parse(&["-w", "1920", "-h", "-r", "60"]),
+            Ok(help(Some(HelpTopic::Set)))
+        );
+    }
+
+    #[test]
+    fn flags_help_flag_in_flag_mode() {
+        assert_eq!(
+            parse(&["-w", "1920", "-h", "1080", "--help"]),
+            Ok(help(Some(HelpTopic::Set)))
+        );
+    }
+
+    #[test]
+    fn flags_missing_width_value() {
+        let err = parse(&["-w"]).unwrap_err();
+        assert_eq!(err, "missing value for -w");
+    }
+
+    #[test]
+    fn flags_missing_refresh_value() {
+        let err = parse(&["-r"]).unwrap_err();
+        assert_eq!(err, "missing value for -r");
+    }
+
+    #[test]
+    fn flags_missing_monitor_value() {
+        let err = parse(&["-m"]).unwrap_err();
+        assert_eq!(err, "missing value for -m");
+    }
+
+    #[test]
+    fn flags_invalid_width() {
+        let err = parse(&["-w", "abc"]).unwrap_err();
+        assert_eq!(err, "invalid width in '-w abc'");
+    }
+
+    #[test]
+    fn flags_invalid_refresh() {
+        let err = parse(&["-r", "abc"]).unwrap_err();
+        assert_eq!(err, "invalid refresh in '-r abc'");
+    }
+
+    #[test]
+    fn flags_invalid_monitor_id() {
+        let err = parse(&["-m", "abc"]).unwrap_err();
+        assert_eq!(err, "invalid monitor id in '-m abc'");
+    }
+
+    #[test]
+    fn flags_yes_alone_is_nothing_to_set() {
+        let err = parse(&["-y"]).unwrap_err();
+        assert_eq!(err, "nothing to set");
+    }
+
+    #[test]
+    fn flags_monitor_alone_is_nothing_to_set() {
+        let err = parse(&["-m", "2"]).unwrap_err();
+        assert_eq!(err, "nothing to set");
+    }
+
+    #[test]
+    fn flags_unknown_argument() {
+        let err = parse(&["-x"]).unwrap_err();
+        assert_eq!(err, "unknown argument '-x'");
+    }
+
+    #[test]
+    fn flags_positional_after_flags_is_error() {
+        let err = parse(&["-w", "1920", "-h", "1080", "extra"]).unwrap_err();
+        assert_eq!(err, "unknown argument 'extra'");
     }
 }

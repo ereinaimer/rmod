@@ -75,14 +75,15 @@ fn outcome_of(monitor: u32, display: String, mode: Mode, previous: Mode) -> Appl
 /// rejects.
 pub fn set(
     monitor: Option<u32>,
-    width: u32,
-    height: u32,
+    width: Option<u32>,
+    height: Option<u32>,
     refresh: Refresh,
 ) -> Result<ApplyOutcome, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
     let display = query::display_label(&name, index as u32 + 1);
     let base = query::current_mode(&name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
+    let (width, height) = resolve_dims(width, height, &base);
     let modes = capabilities::enumerate_modes(&name);
     let refresh = resolve_refresh(
         refresh,
@@ -142,7 +143,11 @@ pub fn max(monitor: Option<u32>) -> Result<ApplyOutcome, String> {
 ///
 /// # Errors
 /// No displays found, a mode no display supports, or preflight failures.
-pub fn set_all(width: u32, height: u32, refresh: Refresh) -> Result<Vec<ApplyOutcome>, String> {
+pub fn set_all(
+    width: Option<u32>,
+    height: Option<u32>,
+    refresh: Refresh,
+) -> Result<Vec<ApplyOutcome>, String> {
     let names = query::enumerate_devices();
     let targets = query::resolve_all(&names)?;
     apply_all(plan_set(&targets, width, height, refresh)?)
@@ -296,16 +301,27 @@ struct Planned {
     outcome: ApplyOutcome,
 }
 
+/// Resolves optional dimensions against a display's current mode.
+///
+/// `None` keeps the corresponding current value from `base`.
+fn resolve_dims(width: Option<u32>, height: Option<u32>, base: &DevmodeW) -> (u32, u32) {
+    (
+        width.unwrap_or(base.dm_pels_width),
+        height.unwrap_or(base.dm_pels_height),
+    )
+}
+
 fn plan_set(
     targets: &[(usize, String)],
-    width: u32,
-    height: u32,
+    width: Option<u32>,
+    height: Option<u32>,
     policy: Refresh,
 ) -> Result<Vec<Planned>, String> {
     let mut planned = Vec::new();
     for (index, name) in targets {
         let display = query::display_label(name, *index as u32 + 1);
         let base = query::current_mode(name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
+        let (width, height) = resolve_dims(width, height, &base);
         let modes = capabilities::enumerate_modes(name);
         let refresh = resolve_refresh(
             policy,
@@ -791,5 +807,37 @@ mod tests {
         assert!(
             err.contains("does not support 1x1@1Hz") || err.contains("the display change failed")
         );
+    }
+
+    #[test]
+    fn resolve_dims_none_none_uses_current() {
+        let mut base: DevmodeW = unsafe { std::mem::zeroed() };
+        base.dm_pels_width = 1920;
+        base.dm_pels_height = 1080;
+        assert_eq!(resolve_dims(None, None, &base), (1920, 1080));
+    }
+
+    #[test]
+    fn resolve_dims_width_only_keeps_current_height() {
+        let mut base: DevmodeW = unsafe { std::mem::zeroed() };
+        base.dm_pels_width = 1920;
+        base.dm_pels_height = 1080;
+        assert_eq!(resolve_dims(Some(2560), None, &base), (2560, 1080));
+    }
+
+    #[test]
+    fn resolve_dims_height_only_keeps_current_width() {
+        let mut base: DevmodeW = unsafe { std::mem::zeroed() };
+        base.dm_pels_width = 1920;
+        base.dm_pels_height = 1080;
+        assert_eq!(resolve_dims(None, Some(1440), &base), (1920, 1440));
+    }
+
+    #[test]
+    fn resolve_dims_both_passthrough() {
+        let mut base: DevmodeW = unsafe { std::mem::zeroed() };
+        base.dm_pels_width = 1920;
+        base.dm_pels_height = 1080;
+        assert_eq!(resolve_dims(Some(2560), Some(1440), &base), (2560, 1440));
     }
 }
