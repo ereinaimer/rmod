@@ -1,12 +1,22 @@
+//! Supported-mode enumeration and normalization.
+//!
+//! Walks the mode list Windows exposes for a device and produces the
+//! deduplicated, ascending-ordered list shown by the caps command.
+
 use super::bindings::{encode_wide, DEVMODEW, EnumDisplaySettingsW};
 
+/// A resolution and refresh-rate combination a display supports.
 #[derive(Debug, PartialEq)]
 pub struct Mode {
+    /// Pixel width.
     pub width: u32,
+    /// Pixel height.
     pub height: u32,
+    /// Refresh rate in Hz.
     pub refresh: u32,
 }
 
+/// Enumerates every mode a device reports, unsorted and undeduplicated.
 pub(crate) fn enumerate_modes(name: &str) -> Vec<Mode> {
     let name_wide = encode_wide(name);
     let mut modes = Vec::new();
@@ -27,6 +37,7 @@ pub(crate) fn enumerate_modes(name: &str) -> Vec<Mode> {
     modes
 }
 
+/// Sorts ascending by width, height, refresh and removes exact duplicates.
 pub(crate) fn normalize_modes(mut modes: Vec<Mode>) -> Vec<Mode> {
     modes.sort_by_key(|m| (m.width, m.height, m.refresh));
     modes.dedup_by(|a, b| a.width == b.width && a.height == b.height && a.refresh == b.refresh);

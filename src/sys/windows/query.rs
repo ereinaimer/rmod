@@ -1,17 +1,30 @@
+//! Device enumeration and current-state queries.
+//!
+//! Everything here reads what is connected right now: device names,
+//! friendly names, current mode, and the primary-display designation.
+
 use super::bindings::{
     encode_wide, wide_to_string, DEVMODEW, DISPLAY_DEVICEW, EnumDisplayDevicesW,
     EnumDisplaySettingsW, DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, ENUM_CURRENT_SETTINGS,
 };
 
+/// A display attached to the desktop and its current settings.
 pub struct Monitor {
+    /// 1-based monitor number matching the `:N` command suffix.
     pub number: u32,
+    /// Friendly name, falling back to the device name when unavailable.
     pub name: String,
+    /// True when this display is the primary (origin 0,0).
     pub is_primary: bool,
+    /// Current pixel width.
     pub width: u32,
+    /// Current pixel height.
     pub height: u32,
+    /// Current refresh rate in Hz.
     pub refresh: u32,
 }
 
+/// Enumerates the device names of every display attached to the desktop.
 pub(crate) fn enumerate_devices() -> Vec<String> {
     let mut names = Vec::new();
     let mut index = 0u32;
@@ -30,6 +43,7 @@ pub(crate) fn enumerate_devices() -> Vec<String> {
     names
 }
 
+/// Reads the currently applied mode for a device name.
 pub(crate) fn current_mode(name: &str) -> Option<DEVMODEW> {
     let name_wide = encode_wide(name);
     let mut mode: DEVMODEW = unsafe { std::mem::zeroed() };
@@ -41,6 +55,7 @@ pub(crate) fn current_mode(name: &str) -> Option<DEVMODEW> {
     }
 }
 
+/// Queries the friendly name of the monitor attached to a device.
 pub(crate) fn friendly_name(device: &[u16]) -> Option<String> {
     let mut monitor: DISPLAY_DEVICEW = unsafe { std::mem::zeroed() };
     monitor.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
@@ -51,6 +66,8 @@ pub(crate) fn friendly_name(device: &[u16]) -> Option<String> {
     Some(wide_to_string(&monitor.device_string))
 }
 
+/// Builds a [`Monitor`] for a device: friendly name (falling back to the
+/// raw device name) and current mode; primary is determined by origin 0,0.
 pub(crate) fn describe(index: usize, name: &str) -> Monitor {
     let mode = current_mode(name);
     Monitor {
@@ -65,6 +82,8 @@ pub(crate) fn describe(index: usize, name: &str) -> Monitor {
     }
 }
 
+/// Resolves `:N` to a device; `None` selects the primary display. Numbers
+/// are 1-based; `0` or an out-of-range value is an error.
 pub(crate) fn resolve_device(
     monitor: Option<u32>,
     names: &[String],

@@ -1,3 +1,5 @@
+//! Platform abstraction for display access.
+
 #[cfg(windows)]
 pub mod windows;
 #[cfg(not(windows))]

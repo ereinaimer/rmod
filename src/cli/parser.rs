@@ -1,29 +1,65 @@
+//! Command-line grammar: commands, `:N` monitor suffix, profiles.
+//!
+//! A single [`Command`] is produced from argv; any trailing or malformed
+//! argument is rejected with an `Err(String)` describing the problem.
+
 use std::env;
 
+/// Refresh rate handling for the set command.
 #[derive(Debug, PartialEq)]
 pub enum Refresh {
+    /// Leave the refresh rate unchanged.
     Keep,
+    /// Use the highest refresh rate supported at the requested resolution.
     Max,
+    /// Use an explicit refresh rate.
     Fixed(u32),
 }
 
+/// Help topics reachable via the command-specific `-h`/`--help` flags.
 #[derive(Debug, PartialEq)]
 pub enum HelpTopic {
+    /// `rmod ls -h`
     List,
+    /// `rmod max -h`
     Max,
+    /// `rmod caps -h`
     Caps,
 }
 
+/// Every top-level command rmod accepts.
 #[derive(Debug, PartialEq)]
 pub enum Command {
+    /// `ls` — list displays and their current settings.
     List,
-    Max { monitor: Option<u32> },
-    Caps { monitor: Option<u32> },
-    Set { width: u32, height: u32, refresh: Refresh, monitor: Option<u32> },
-    Help { topic: Option<HelpTopic> },
+    /// `max[:N]` — apply the highest supported resolution/refresh.
+    Max {
+        /// Monitor number; `None` = primary display.
+        monitor: Option<u32>,
+    },
+    /// `caps[:N]` — list supported modes.
+    Caps {
+        /// Monitor number; `None` = primary display.
+        monitor: Option<u32>,
+    },
+    /// `WxH@R[:N]` — set resolution and refresh rate.
+    Set {
+        width: u32,
+        height: u32,
+        refresh: Refresh,
+        /// Monitor number; `None` = primary display.
+        monitor: Option<u32>,
+    },
+    /// `help [ls|max|caps]` or `-h`/`--help`.
+    Help {
+        /// Optional per-command topic.
+        topic: Option<HelpTopic>,
+    },
+    /// `-V`/`--version` — print the version.
     Version,
 }
 
+/// Named resolution presets (`720`, `1080`, `1440`, `4k`, `8k`).
 pub(crate) const PROFILES: &[(&str, u32, u32)] = &[
     ("720", 1280, 720),
     ("1080", 1920, 1080),
@@ -32,10 +68,21 @@ pub(crate) const PROFILES: &[(&str, u32, u32)] = &[
     ("8k", 7680, 4320),
 ];
 
+/// Parses the process arguments into a [`Command`].
+///
+/// # Errors
+/// Returns `Err` with a human-readable message for unknown commands,
+/// invalid numbers, or unexpected trailing arguments.
 pub fn parse() -> Result<Command, String> {
     parse_from(env::args())
 }
 
+/// Parses a command from an argument iterator; the first item is argv[0]
+/// and is skipped. Split out from [`parse`] for testability.
+///
+/// # Errors
+/// Returns `Err` with a human-readable message for unknown commands,
+/// invalid numbers, or unexpected trailing arguments.
 pub fn parse_from<I: Iterator<Item = String>>(args: I) -> Result<Command, String> {
     let mut args = args.skip(1);
     let Some(cmd) = args.next() else {

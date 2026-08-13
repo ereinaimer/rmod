@@ -1,3 +1,9 @@
+//! Rendering of help and version output.
+//!
+//! Each function returns the complete text for one page; the dispatcher in
+//! `main` prints it and exits.
+
+/// Top-level help page: usage, profiles, and examples.
 pub fn help() -> String {
     format!(
         "rmod {}
@@ -33,6 +39,7 @@ Options:
     )
 }
 
+/// Help page for the `ls` command.
 pub fn ls() -> String {
     format!(
         "rmod ls
@@ -52,6 +59,7 @@ Options:
     )
 }
 
+/// Help page for the `max` command.
 pub fn max() -> String {
     format!(
         "rmod max
@@ -74,6 +82,7 @@ Options:
     )
 }
 
+/// Help page for the `caps` command.
 pub fn caps() -> String {
     format!(
         "rmod caps
@@ -96,6 +105,7 @@ Options:
     )
 }
 
+/// Version string, e.g. `rmod 0.1.0`.
 pub fn version() -> String {
     format!("rmod {}", env!("CARGO_PKG_VERSION"))
 }

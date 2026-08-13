@@ -1,3 +1,9 @@
+//! Raw Win32 FFI bindings: structs, externs, and string marshalling.
+//!
+//! `DEVMODEW`/`DISPLAY_DEVICEW` layouts and offsets are pinned by tests;
+//! do not reorder fields. Used by [`super::query`] and
+//! [`super::capabilities`].
+
 pub(crate) const ENUM_CURRENT_SETTINGS: u32 = 0xFFFF_FFFF;
 pub(crate) const DISPLAY_DEVICE_ATTACHED_TO_DESKTOP: u32 = 0x1;
 

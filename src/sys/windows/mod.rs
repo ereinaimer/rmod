@@ -1,3 +1,9 @@
+//! Windows backend: public query API over the Win32 display functions.
+//!
+//! [`list`] reports every attached display, [`caps`] returns the modes a
+//! display supports. Raw FFI lives in [`bindings`]; device querying in
+//! [`query`]; mode enumeration in [`capabilities`].
+
 mod bindings;
 mod capabilities;
 mod query;
@@ -5,6 +11,12 @@ mod query;
 pub use capabilities::Mode;
 pub use query::Monitor;
 
+/// Lists every display attached to the desktop with its current settings.
+///
+/// Monitor numbers are 1-based and match the `:N` suffix on other commands.
+///
+/// # Errors
+/// Returns `Err` when no displays are attached.
 pub fn list() -> Result<Vec<Monitor>, String> {
     let names = query::enumerate_devices();
     let monitors: Vec<Monitor> = names
@@ -18,6 +30,15 @@ pub fn list() -> Result<Vec<Monitor>, String> {
     Ok(monitors)
 }
 
+/// Returns the supported modes for a monitor, sorted ascending by
+/// resolution then refresh rate.
+///
+/// `monitor` is the 1-based number from [`list`]; `None` selects the
+/// primary display.
+///
+/// # Errors
+/// Returns `Err` for an unknown monitor number or when the display reports
+/// no supported modes.
 pub fn caps(monitor: Option<u32>) -> Result<(Monitor, Vec<Mode>), String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
