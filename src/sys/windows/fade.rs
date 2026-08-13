@@ -7,21 +7,43 @@
 
 use super::bindings::DevmodeW;
 
-pub(crate) const FADE_OUT_MS: u32 = 200;
-pub(crate) const FADE_IN_MS: u32 = 400;
+pub(crate) const FADE_OUT_MS: u32 = 400;
+pub(crate) const FADE_IN_MS: u32 = 600;
 pub(crate) const FRAME_MS: u32 = 16;
 
-/// Linear alpha steps from `from` to `to` over `duration_ms`, one step per
-/// `frame_ms`; the final step is always `to`. At least one step is
-/// returned.
-pub(crate) fn alpha_steps(duration_ms: u32, frame_ms: u32, from: u8, to: u8) -> Vec<u8> {
+/// The easing curve applied to alpha steps.
+#[derive(Clone, Copy)]
+pub(crate) enum Ease {
+    /// Gentle start and finish; used for the fade-in.
+    InOut,
+    /// Immediate darkening with a slow finish; used for the fade-out.
+    Out,
+}
+
+/// Alpha steps from `from` to `to` over `duration_ms`, one step per
+/// `frame_ms`, eased with the given curve; the final step is always `to`.
+/// At least one step is returned.
+pub(crate) fn alpha_steps(
+    duration_ms: u32,
+    frame_ms: u32,
+    from: u8,
+    to: u8,
+    ease: Ease,
+) -> Vec<u8> {
     let count = (duration_ms / frame_ms).max(1);
     if count == 1 {
         return vec![to];
     }
     let delta = to as i32 - from as i32;
     (0..count)
-        .map(|i| (from as i32 + delta * i as i32 / (count - 1) as i32) as u8)
+        .map(|i| {
+            let t = i as f64 / (count - 1) as f64;
+            let eased = match ease {
+                Ease::InOut => t * t * (3.0 - 2.0 * t),
+                Ease::Out => 1.0 - (1.0 - t).powi(3),
+            };
+            (from as f64 + delta as f64 * eased).round() as u8
+        })
         .collect()
 }
 
@@ -79,7 +101,7 @@ pub(crate) const CLASS_NAME_W: &[u16] = &[114, 109, 111, 100, 95, 102, 97, 100, 
 /// Holds the overlay opaque for this long after the device reports the
 /// target mode, so DWM and the window manager finish re-scaling and
 /// re-aligning windows before the reveal begins.
-pub(crate) const SETTLE_GRACE_MS: u64 = 400;
+pub(crate) const SETTLE_GRACE_MS: u64 = 800;
 
 /// Registers the overlay window class once per process; subsequent calls
 /// return the first result.
@@ -188,8 +210,8 @@ fn sleep_pump(ms: u64) {
 }
 
 /// Animates the overlay alpha from `from` to `to`.
-fn animate(overlay: &Overlay, duration_ms: u32, from: u8, to: u8) {
-    for alpha in alpha_steps(duration_ms, FRAME_MS, from, to) {
+fn animate(overlay: &Overlay, duration_ms: u32, from: u8, to: u8, ease: Ease) {
+    for alpha in alpha_steps(duration_ms, FRAME_MS, from, to, ease) {
         overlay.fade_to(alpha);
         sleep_pump(FRAME_MS as u64);
     }
@@ -218,7 +240,7 @@ pub(crate) fn transition<T>(name: &str, target: &DevmodeW, apply: impl FnOnce() 
     let Some(overlay) = Overlay::new(covered) else {
         return apply();
     };
-    animate(&overlay, FADE_OUT_MS, 0, 255);
+    animate(&overlay, FADE_OUT_MS, 0, 255, Ease::Out);
     let result = apply();
     settle(name, target);
     sleep_pump(SETTLE_GRACE_MS);
@@ -228,7 +250,7 @@ pub(crate) fn transition<T>(name: &str, target: &DevmodeW, apply: impl FnOnce() 
             overlay.set_rect(fresh);
         }
     }
-    animate(&overlay, FADE_IN_MS, 255, 0);
+    animate(&overlay, FADE_IN_MS, 255, 0, Ease::InOut);
     result
 }
 
@@ -245,7 +267,7 @@ pub(crate) fn transition_all<T>(apply: impl FnOnce() -> T) -> T {
     let Some(overlay) = Overlay::new(rect) else {
         return apply();
     };
-    animate(&overlay, FADE_OUT_MS, 0, 255);
+    animate(&overlay, FADE_OUT_MS, 0, 255, Ease::Out);
     let result = apply();
     sleep_pump(SETTLE_BATCH_MS / 2);
     let fresh = (
@@ -258,7 +280,7 @@ pub(crate) fn transition_all<T>(apply: impl FnOnce() -> T) -> T {
         overlay.set_rect(fresh);
     }
     sleep_pump(SETTLE_BATCH_MS / 2);
-    animate(&overlay, FADE_IN_MS, 255, 0);
+    animate(&overlay, FADE_IN_MS, 255, 0, Ease::InOut);
     result
 }
 
@@ -301,32 +323,63 @@ mod tests {
     }
 
     #[test]
+    fn alpha_steps_out_darkens_fast_then_creeps() {
+        let steps = alpha_steps(400, 16, 0, 255, Ease::Out);
+        assert!(
+            steps[1] > 15,
+            "fade-out must darken immediately, got {}",
+            steps[1]
+        );
+        let n = steps.len();
+        assert!(
+            255 - steps[n - 2] < 10,
+            "fade-out must creep to black, got {}",
+            steps[n - 2]
+        );
+    }
+
+    #[test]
+    fn alpha_steps_starts_gently_and_ends_gently() {
+        let steps = alpha_steps(400, 16, 0, 255, Ease::InOut);
+        assert!(steps[1] < 10, "early step must be eased, got {}", steps[1]);
+        let n = steps.len();
+        assert!(
+            255 - steps[n - 2] < 10,
+            "late step must be eased, got {}",
+            steps[n - 2]
+        );
+    }
+
+    #[test]
     fn alpha_steps_counts_duration_over_frame() {
-        assert_eq!(alpha_steps(FADE_OUT_MS, FRAME_MS, 0, 255).len(), 12);
+        assert_eq!(
+            alpha_steps(FADE_OUT_MS, FRAME_MS, 0, 255, Ease::InOut).len(),
+            25
+        );
     }
 
     #[test]
     fn alpha_steps_fade_out_starts_transparent_ends_opaque() {
-        let steps = alpha_steps(FADE_OUT_MS, FRAME_MS, 0, 255);
+        let steps = alpha_steps(FADE_OUT_MS, FRAME_MS, 0, 255, Ease::InOut);
         assert_eq!(*steps.first().unwrap(), 0);
         assert_eq!(*steps.last().unwrap(), 255);
     }
 
     #[test]
     fn alpha_steps_fade_in_starts_opaque_ends_transparent() {
-        let steps = alpha_steps(FADE_IN_MS, FRAME_MS, 255, 0);
+        let steps = alpha_steps(FADE_IN_MS, FRAME_MS, 255, 0, Ease::InOut);
         assert_eq!(*steps.first().unwrap(), 255);
         assert_eq!(*steps.last().unwrap(), 0);
     }
 
     #[test]
     fn alpha_steps_short_duration_is_single_step_to_target() {
-        assert_eq!(alpha_steps(10, 16, 0, 255), vec![255]);
+        assert_eq!(alpha_steps(10, 16, 0, 255, Ease::InOut), vec![255]);
     }
 
     #[test]
     fn alpha_steps_zero_duration_is_single_step_to_target() {
-        assert_eq!(alpha_steps(0, 16, 0, 255), vec![255]);
+        assert_eq!(alpha_steps(0, 16, 0, 255, Ease::InOut), vec![255]);
     }
 
     #[test]
