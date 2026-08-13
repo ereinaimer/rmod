@@ -34,7 +34,8 @@ Examples:
 
 Options:
   -h, --help              print help
-  -V, --version           print version",
+  -V, --version           print version
+  -y, --yes               skip the confirmation prompt",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -73,12 +74,19 @@ Usage:
 
   :N = monitor number from `rmod ls`; omit = primary display.
 
+  After applying, rmod asks whether to keep the change:
+    keep changes? [N/y]
+  Answer y to keep; anything else — or no answer within 5
+  seconds — reverts to the previous mode. Use -y to apply
+  without asking.
+
 Examples:
   rmod max
   rmod max:2
 
 Options:
-  -h, --help              print help"
+  -h, --help              print help
+  -y, --yes               skip the confirmation prompt"
     )
 }
 
@@ -121,6 +129,12 @@ Usage:
 
   :N = monitor number from `rmod ls`; omit = primary display.
 
+  After applying, rmod asks whether to keep the change:
+    keep changes? [N/y]
+  Answer y to keep; anything else — or no answer within 5
+  seconds — reverts to the previous mode. Use -y to apply
+  without asking.
+
 Profiles:
   720       1280x720
   1080      1920x1080
@@ -135,7 +149,8 @@ Examples:
   rmod 1440@max
 
 Options:
-  -h, --help              print help"
+  -h, --help              print help
+  -y, --yes               skip the confirmation prompt"
     )
 }
 

@@ -3,8 +3,10 @@
 //! [`parser`] turns argv into a [`Command`]; [`help`] renders the usage
 //! pages for the top-level help and per-command topics.
 
+mod confirm;
 mod help;
 mod parser;
 
+pub use confirm::{confirm_keep, Confirm};
 pub use help::{caps, help, ls, max, set, version};
 pub use parser::{parse, Command, HelpTopic};

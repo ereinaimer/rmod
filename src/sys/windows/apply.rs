@@ -24,6 +24,15 @@ pub enum Refresh {
     Fixed(u32),
 }
 
+/// A display change: the applied mode and the mode it replaced.
+#[derive(Debug, PartialEq)]
+pub struct Change {
+    /// The mode that was applied.
+    pub mode: Mode,
+    /// The mode in effect before the change.
+    pub previous: Mode,
+}
+
 /// Applies a resolution and refresh policy to a display.
 ///
 /// `monitor` is the 1-based number from `ls`; `None` selects the primary.
@@ -31,7 +40,7 @@ pub enum Refresh {
 /// # Errors
 /// Unknown monitor, no matching mode for `@max`, or a mode the display
 /// rejects.
-pub fn set(monitor: Option<u32>, width: u32, height: u32, refresh: Refresh) -> Result<Mode, String> {
+pub fn set(monitor: Option<u32>, width: u32, height: u32, refresh: Refresh) -> Result<Change, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
     let display = query::display_label(&name, index as u32 + 1);
@@ -39,12 +48,13 @@ pub fn set(monitor: Option<u32>, width: u32, height: u32, refresh: Refresh) -> R
     let modes = capabilities::enumerate_modes(&name);
     let refresh = resolve_refresh(refresh, &modes, width, height, base.dm_display_frequency, &display)?;
     let mode = Mode { width, height, refresh };
+    let previous = mode_of(&base);
     let devmode = build_devmode(&mode, &base);
     apply_mode(&name, &display, &devmode)?;
-    Ok(mode)
+    Ok(Change { mode, previous })
 }
 
-/// Applies the best supported mode to a monitor and returns it.
+/// Applies the best supported mode to a monitor and returns the change.
 ///
 /// `monitor` is the 1-based number from [`super::list`]; `None` selects the
 /// primary display. The mode is validated with `CDS_TEST` before being
@@ -53,16 +63,37 @@ pub fn set(monitor: Option<u32>, width: u32, height: u32, refresh: Refresh) -> R
 /// # Errors
 /// Returns `Err` for an unknown monitor number, no supported modes, or a
 /// rejected display change.
-pub fn max(monitor: Option<u32>) -> Result<Mode, String> {
+pub fn max(monitor: Option<u32>) -> Result<Change, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
     let display = query::display_label(&name, index as u32 + 1);
     let best = best_mode(capabilities::enumerate_modes(&name))
         .ok_or_else(|| format!("{display} has no supported modes"))?;
     let base = query::current_mode(&name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
+    let previous = mode_of(&base);
     let devmode = build_devmode(&best, &base);
     apply_mode(&name, &display, &devmode)?;
-    Ok(best)
+    Ok(Change { mode: best, previous })
+}
+
+/// Re-applies a previously captured mode to undo a display change.
+///
+/// `monitor` is the 1-based number from `ls`; `None` selects the primary.
+/// `previous` is the `previous` field of the [`Change`] returned when the
+/// mode was applied; it is applied over the current settings and returned
+/// on success.
+///
+/// # Errors
+/// Unknown monitor or a mode the display rejects.
+#[allow(dead_code)]
+pub fn revert(monitor: Option<u32>, previous: Mode) -> Result<Mode, String> {
+    let names = query::enumerate_devices();
+    let (index, name) = query::resolve_device(monitor, &names)?;
+    let display = query::display_label(&name, index as u32 + 1);
+    let base = query::current_mode(&name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
+    let devmode = build_devmode(&previous, &base);
+    apply_mode(&name, &display, &devmode)?;
+    Ok(previous)
 }
 
 /// Validates a mode with a dry run, then applies and persists it.
@@ -111,6 +142,14 @@ fn describe_change_result(code: i32) -> String {
             "invalid parameters".to_string()
         }
         _ => format!("unknown error ({code})"),
+    }
+}
+
+fn mode_of(devmode: &DEVMODEW) -> Mode {
+    Mode {
+        width: devmode.dm_pels_width,
+        height: devmode.dm_pels_height,
+        refresh: devmode.dm_display_frequency,
     }
 }
 

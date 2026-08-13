@@ -29,6 +29,8 @@ pub enum Command {
     Max {
         /// Monitor number; `None` = primary display.
         monitor: Option<u32>,
+        /// `-y`/`--yes` — skip the confirmation prompt.
+        yes: bool,
     },
     /// `caps[:N]` — list supported modes.
     Caps {
@@ -42,6 +44,8 @@ pub enum Command {
         refresh: Refresh,
         /// Monitor number; `None` = primary display.
         monitor: Option<u32>,
+        /// `-y`/`--yes` — skip the confirmation prompt.
+        yes: bool,
     },
     /// `help [ls|max|caps|WxH@R]` or `-h`/`--help`.
     Help {
@@ -84,12 +88,24 @@ pub fn parse_from<I: Iterator<Item = String>>(args: I) -> Result<Command, String
     let command = match cmd.as_str() {
         "-h" | "--help" => Command::Help { topic: None },
         "-V" | "--version" => Command::Version,
-        "ls" => parse_tail("ls", args.next(), Command::List, HelpTopic::List)?,
-        "max" => parse_tail("max", args.next(), Command::Max { monitor: None }, HelpTopic::Max)?,
-        "caps" => parse_tail("caps", args.next(), Command::Caps { monitor: None }, HelpTopic::Caps)?,
+        "ls" => parse_tail("ls", args.next(), Command::List, HelpTopic::List, false)?,
+        "max" => parse_tail(
+            "max",
+            args.next(),
+            Command::Max { monitor: None, yes: false },
+            HelpTopic::Max,
+            true,
+        )?,
+        "caps" => parse_tail("caps", args.next(), Command::Caps { monitor: None }, HelpTopic::Caps, false)?,
         _ if cmd.starts_with("max:") => {
             let monitor = parse_monitor(&cmd[4..], &cmd)?;
-            Command::Max { monitor: Some(monitor) }
+            parse_tail(
+                "max",
+                args.next(),
+                Command::Max { monitor: Some(monitor), yes: false },
+                HelpTopic::Max,
+                true,
+            )?
         }
         _ if cmd.starts_with("caps:") => {
             let monitor = parse_monitor(&cmd[5..], &cmd)?;
@@ -108,9 +124,17 @@ fn parse_tail(
     tail: Option<String>,
     cmd: Command,
     topic: HelpTopic,
+    allow_yes: bool,
 ) -> Result<Command, String> {
     match tail.as_deref() {
         Some("-h" | "--help") => Ok(Command::Help { topic: Some(topic) }),
+        Some("-y" | "--yes") if allow_yes => Ok(match cmd {
+            Command::Max { monitor, .. } => Command::Max { monitor, yes: true },
+            Command::Set { width, height, refresh, monitor, .. } => {
+                Command::Set { width, height, refresh, monitor, yes: true }
+            }
+            other => other,
+        }),
         Some(other) => Err(format!("unknown argument '{other}' for '{name}'")),
         None => Ok(cmd),
     }
@@ -135,16 +159,12 @@ fn parse_set(cmd: &str, tail: Option<String>) -> Result<Command, String> {
             None => return Err(format!("unknown profile or invalid resolution '{cmd}'")),
         },
     };
-    let command = Command::Set {
-        width,
-        height,
-        refresh: refresh.unwrap_or(Refresh::Keep),
-        monitor,
-    };
+    let refresh = refresh.unwrap_or(Refresh::Keep);
     match tail.as_deref() {
         Some("-h" | "--help") => Ok(Command::Help { topic: Some(HelpTopic::Set) }),
+        Some("-y" | "--yes") => Ok(Command::Set { width, height, refresh, monitor, yes: true }),
         Some(other) => Err(format!("unexpected argument '{other}'")),
-        None => Ok(command),
+        None => Ok(Command::Set { width, height, refresh, monitor, yes: false }),
     }
 }
 
@@ -173,7 +193,11 @@ mod tests {
     }
 
     fn set(width: u32, height: u32, refresh: Refresh, monitor: Option<u32>) -> Command {
-        Command::Set { width, height, refresh, monitor }
+        Command::Set { width, height, refresh, monitor, yes: false }
+    }
+
+    fn set_yes(width: u32, height: u32, refresh: Refresh, monitor: Option<u32>) -> Command {
+        Command::Set { width, height, refresh, monitor, yes: true }
     }
 
     fn help(topic: Option<HelpTopic>) -> Command {
@@ -214,13 +238,35 @@ mod tests {
     }
 
     #[test]
+    fn ls_yes_flag_is_error() {
+        let err = parse(&["ls", "-y"]).unwrap_err();
+        assert!(err.contains("unknown argument '-y' for 'ls'"), "{err}");
+    }
+
+    #[test]
     fn max_command() {
-        assert_eq!(parse(&["max"]), Ok(Command::Max { monitor: None }));
+        assert_eq!(parse(&["max"]), Ok(Command::Max { monitor: None, yes: false }));
     }
 
     #[test]
     fn max_with_monitor() {
-        assert_eq!(parse(&["max:2"]), Ok(Command::Max { monitor: Some(2) }));
+        assert_eq!(parse(&["max:2"]), Ok(Command::Max { monitor: Some(2), yes: false }));
+    }
+
+    #[test]
+    fn max_yes_flag() {
+        assert_eq!(
+            parse(&["max", "-y"]),
+            Ok(Command::Max { monitor: None, yes: true })
+        );
+    }
+
+    #[test]
+    fn max_yes_flag_with_monitor() {
+        assert_eq!(
+            parse(&["max:2", "-y"]),
+            Ok(Command::Max { monitor: Some(2), yes: true })
+        );
     }
 
     #[test]
@@ -233,6 +279,7 @@ mod tests {
     fn max_help_flags() {
         assert_eq!(parse(&["max", "-h"]), Ok(help(Some(HelpTopic::Max))));
         assert_eq!(parse(&["max", "--help"]), Ok(help(Some(HelpTopic::Max))));
+        assert_eq!(parse(&["max:2", "-h"]), Ok(help(Some(HelpTopic::Max))));
     }
 
     #[test]
@@ -258,6 +305,12 @@ mod tests {
     }
 
     #[test]
+    fn caps_yes_flag_is_error() {
+        let err = parse(&["caps", "-y"]).unwrap_err();
+        assert!(err.contains("unknown argument '-y' for 'caps'"), "{err}");
+    }
+
+    #[test]
     fn set_help_flags() {
         assert_eq!(parse(&["1920x1080@60", "-h"]), Ok(help(Some(HelpTopic::Set))));
         assert_eq!(parse(&["4k", "--help"]), Ok(help(Some(HelpTopic::Set))));
@@ -275,6 +328,27 @@ mod tests {
     #[test]
     fn set_unknown_argument_is_error() {
         assert!(parse(&["1920x1080@60", "foo"]).is_err());
+    }
+
+    #[test]
+    fn set_yes_flag() {
+        assert_eq!(
+            parse(&["1920x1080@60", "-y"]),
+            Ok(set_yes(1920, 1080, Refresh::Fixed(60), None))
+        );
+    }
+
+    #[test]
+    fn set_yes_flag_long() {
+        assert_eq!(
+            parse(&["1920x1080@60", "--yes"]),
+            Ok(set_yes(1920, 1080, Refresh::Fixed(60), None))
+        );
+    }
+
+    #[test]
+    fn set_yes_extra_argument_is_error() {
+        assert!(parse(&["1920x1080@60", "-y", "extra"]).is_err());
     }
 
     #[test]
@@ -398,7 +472,7 @@ mod tests {
 
     #[test]
     fn trailing_argument_after_monitor_command_is_error() {
-        assert!(parse(&["max:2", "-h"]).is_err());
+        assert!(parse(&["max:2", "extra"]).is_err());
         assert!(parse(&["caps:2", "extra"]).is_err());
     }
 

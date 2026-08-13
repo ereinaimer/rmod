@@ -10,6 +10,7 @@ mod sys;
 
 const GREEN: &str = "\x1b[92m";
 const RESET: &str = "\x1b[0m";
+const CONFIRM_TIMEOUT_SECS: u64 = 5;
 
 fn main() {
     let code = match cli::parse() {
@@ -111,21 +112,69 @@ fn main() {
                 2
             }
         },
-        Ok(cli::Command::Max { monitor }) => match sys::windows::max(monitor) {
-            Ok(mode) => {
-                println!("applied {}x{} @ {}Hz", mode.width, mode.height, mode.refresh);
-                0
+        Ok(cli::Command::Max { monitor, yes }) => match sys::windows::max(monitor) {
+            Ok(change) => {
+                println!(
+                    "applied {}x{} @ {}Hz",
+                    change.mode.width, change.mode.height, change.mode.refresh
+                );
+                if yes {
+                    0
+                } else {
+                    match cli::confirm_keep(std::time::Duration::from_secs(CONFIRM_TIMEOUT_SECS)) {
+                        cli::Confirm::Keep => 0,
+                        cli::Confirm::Revert => {
+                            match sys::windows::revert(monitor, change.previous) {
+                                Ok(mode) => {
+                                    println!(
+                                        "reverted to {}x{} @ {}Hz",
+                                        mode.width, mode.height, mode.refresh
+                                    );
+                                    0
+                                }
+                                Err(e) => {
+                                    eprintln!("error: {e}");
+                                    2
+                                }
+                            }
+                        }
+                    }
+                }
             }
             Err(e) => {
                 eprintln!("error: {e}");
                 2
             }
         },
-        Ok(cli::Command::Set { width, height, refresh, monitor }) => {
+        Ok(cli::Command::Set { width, height, refresh, monitor, yes }) => {
             match sys::windows::set(monitor, width, height, refresh) {
-                Ok(mode) => {
-                    println!("applied {}x{} @ {}Hz", mode.width, mode.height, mode.refresh);
-                    0
+                Ok(change) => {
+                    println!(
+                        "applied {}x{} @ {}Hz",
+                        change.mode.width, change.mode.height, change.mode.refresh
+                    );
+                    if yes {
+                        0
+                    } else {
+                        match cli::confirm_keep(std::time::Duration::from_secs(CONFIRM_TIMEOUT_SECS)) {
+                            cli::Confirm::Keep => 0,
+                            cli::Confirm::Revert => {
+                                match sys::windows::revert(monitor, change.previous) {
+                                    Ok(mode) => {
+                                        println!(
+                                            "reverted to {}x{} @ {}Hz",
+                                            mode.width, mode.height, mode.refresh
+                                        );
+                                        0
+                                    }
+                                    Err(e) => {
+                                        eprintln!("error: {e}");
+                                        2
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 Err(e) => {
                     eprintln!("error: {e}");

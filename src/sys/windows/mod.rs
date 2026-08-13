@@ -10,7 +10,8 @@ mod bindings;
 mod capabilities;
 mod query;
 
-pub use apply::{max, set};
+#[allow(unused_imports)]
+pub use apply::{max, revert, set, Change};
 pub use capabilities::Mode;
 pub use query::Monitor;
 
