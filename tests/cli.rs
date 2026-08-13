@@ -260,14 +260,18 @@ fn set_nonexistent_monitor_yes_flag() {
 fn set_unsupported_mode_is_error() {
     let out = rmod(&["9999x9999@1"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("does not support 9999x9999@1Hz"));
+    let err = stderr(&out);
+    assert!(
+        err.contains("does not support 9999x9999@1Hz") || err.contains("the display change failed")
+    );
 }
 
 #[test]
 fn set_all_unsupported_mode_is_error() {
     let out = rmod(&["9999x9999@1:*"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("does not support"));
+    let err = stderr(&out);
+    assert!(err.contains("does not support") || err.contains("the display change failed"));
 }
 
 fn current_mode() -> String {

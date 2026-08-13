@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  validate:
+    name: Validate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          # To make rmod cross-platform in the future, uncomment the lines below:
+          # - ubuntu-latest
+          # - macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Disable Windows Defender real-time scanning
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $status = Get-MpComputerStatus -ErrorAction SilentlyContinue
+          if ($status.RealTimeProtectionEnabled) {
+            Set-MpPreference -DisableRealtimeScanning $true
+          }
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: "v2-no-sccache"
+
+      - name: Run Clippy
+        run: cargo clippy --locked --workspace --no-deps --all-targets --all-features -- -D warnings
+
+  test:
+    name: Test (${{ matrix.os }})
+    needs: [lint, validate]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          # To make rmod cross-platform in the future, uncomment the lines below:
+          # - ubuntu-latest
+          # - macos-latest
+
+    env:
+      RUST_BACKTRACE: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+
+      - name: Disable Windows Defender real-time scanning
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $status = Get-MpComputerStatus -ErrorAction SilentlyContinue
+          if ($status.RealTimeProtectionEnabled) {
+            Set-MpPreference -DisableRealtimeScanning $true
+          }
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad # v2.85.10
+        with:
+          tool: nextest
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: "v2-no-sccache"
+
+      - name: Run tests (nextest)
+        run: cargo nextest run --locked --workspace --all-features
+
+      - name: Run doc tests (cargo test)
+        run: cargo test --doc --locked --workspace --all-features
