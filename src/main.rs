@@ -149,7 +149,11 @@ fn main() {
                             )) {
                                 cli::Confirm::Keep => 0,
                                 cli::Confirm::Revert => {
-                                    match sys::windows::revert(monitor, change.previous) {
+                                    match sys::windows::revert(
+                                        monitor,
+                                        change.previous,
+                                        change.previous_orientation,
+                                    ) {
                                         Ok(mode) => {
                                             println!(
                                                 "reverted to {}x{} @ {}Hz",
@@ -209,6 +213,7 @@ fn main() {
                                     match sys::windows::revert(
                                         Some(change.monitor),
                                         change.previous,
+                                        change.previous_orientation,
                                     ) {
                                         Ok(mode) => println!(
                                             "reverted {} to {}x{} @ {}Hz",
@@ -235,6 +240,7 @@ fn main() {
             width,
             height,
             refresh,
+            orientation,
             target,
             yes,
         }) => match target {
@@ -244,19 +250,40 @@ fn main() {
                     cli::Target::Index(n) => Some(n),
                     cli::Target::All => unreachable!(),
                 };
-                match sys::windows::set(monitor, width, height, refresh) {
+                match sys::windows::set(monitor, width, height, refresh, orientation) {
                     Ok(sys::windows::ApplyOutcome::Unchanged(change)) => {
-                        println!(
-                            "already at {}x{} @ {}Hz",
-                            change.mode.width, change.mode.height, change.mode.refresh
-                        );
+                        let mode_requested = width.is_some()
+                            || height.is_some()
+                            || refresh != sys::windows::Refresh::Keep;
+                        match (mode_requested, change.orientation) {
+                            (false, Some(angle)) => println!("already rotated {angle}°"),
+                            _ => {
+                                let mut message = format!(
+                                    "already at {}x{} @ {}Hz",
+                                    change.mode.width, change.mode.height, change.mode.refresh
+                                );
+                                if let Some(angle) = change.orientation {
+                                    message.push_str(&format!(", rotated {angle}°"));
+                                }
+                                println!("{message}");
+                            }
+                        }
                         0
                     }
                     Ok(sys::windows::ApplyOutcome::Applied(change)) => {
-                        println!(
-                            "applied {}x{} @ {}Hz",
-                            change.mode.width, change.mode.height, change.mode.refresh
-                        );
+                        match (change.mode == change.previous, change.orientation) {
+                            (true, Some(angle)) => println!("rotated {angle}°"),
+                            _ => {
+                                let mut message = format!(
+                                    "applied {}x{} @ {}Hz",
+                                    change.mode.width, change.mode.height, change.mode.refresh
+                                );
+                                if let Some(angle) = change.orientation {
+                                    message.push_str(&format!(", rotated {angle}°"));
+                                }
+                                println!("{message}");
+                            }
+                        }
                         if yes {
                             0
                         } else {
@@ -265,12 +292,22 @@ fn main() {
                             )) {
                                 cli::Confirm::Keep => 0,
                                 cli::Confirm::Revert => {
-                                    match sys::windows::revert(monitor, change.previous) {
+                                    let previous = change.previous;
+                                    let previous_orientation = change.previous_orientation;
+                                    match sys::windows::revert(
+                                        monitor,
+                                        previous,
+                                        previous_orientation,
+                                    ) {
                                         Ok(mode) => {
-                                            println!(
+                                            let mut message = format!(
                                                 "reverted to {}x{} @ {}Hz",
                                                 mode.width, mode.height, mode.refresh
                                             );
+                                            if let Some(prev) = previous_orientation {
+                                                message.push_str(&format!(", rotated {prev}°"));
+                                            }
+                                            println!("{message}");
                                             0
                                         }
                                         Err(e) => {
@@ -288,26 +325,53 @@ fn main() {
                     }
                 }
             }
-            cli::Target::All => match sys::windows::set_all(width, height, refresh) {
+            cli::Target::All => match sys::windows::set_all(width, height, refresh, orientation) {
                 Ok(outcomes) => {
                     let mut applied = Vec::new();
                     for outcome in outcomes {
                         match outcome {
-                            sys::windows::ApplyOutcome::Unchanged(change) => println!(
-                                "{} is already at {}x{} @ {}Hz",
-                                change.display,
-                                change.mode.width,
-                                change.mode.height,
-                                change.mode.refresh
-                            ),
+                            sys::windows::ApplyOutcome::Unchanged(change) => {
+                                let mode_requested = width.is_some()
+                                    || height.is_some()
+                                    || refresh != sys::windows::Refresh::Keep;
+                                match (mode_requested, change.orientation) {
+                                    (false, Some(angle)) => {
+                                        println!("{} is already rotated {angle}°", change.display)
+                                    }
+                                    _ => {
+                                        let mut message = format!(
+                                            "{} is already at {}x{} @ {}Hz",
+                                            change.display,
+                                            change.mode.width,
+                                            change.mode.height,
+                                            change.mode.refresh
+                                        );
+                                        if let Some(angle) = change.orientation {
+                                            message.push_str(&format!(", rotated {angle}°"));
+                                        }
+                                        println!("{message}");
+                                    }
+                                }
+                            }
                             sys::windows::ApplyOutcome::Applied(change) => {
-                                println!(
-                                    "applied {}x{} @ {}Hz to {}",
-                                    change.mode.width,
-                                    change.mode.height,
-                                    change.mode.refresh,
-                                    change.display
-                                );
+                                match (change.mode == change.previous, change.orientation) {
+                                    (true, Some(angle)) => {
+                                        println!("rotated {} to {angle}°", change.display)
+                                    }
+                                    _ => {
+                                        let mut message = format!(
+                                            "applied {}x{} @ {}Hz to {}",
+                                            change.mode.width,
+                                            change.mode.height,
+                                            change.mode.refresh,
+                                            change.display
+                                        );
+                                        if let Some(angle) = change.orientation {
+                                            message.push_str(&format!(", rotated {angle}°"));
+                                        }
+                                        println!("{message}");
+                                    }
+                                }
                                 applied.push(change);
                             }
                         }
@@ -325,11 +389,21 @@ fn main() {
                                     match sys::windows::revert(
                                         Some(change.monitor),
                                         change.previous,
+                                        change.previous_orientation,
                                     ) {
-                                        Ok(mode) => println!(
-                                            "reverted {} to {}x{} @ {}Hz",
-                                            change.display, mode.width, mode.height, mode.refresh
-                                        ),
+                                        Ok(mode) => {
+                                            let mut message = format!(
+                                                "reverted {} to {}x{} @ {}Hz",
+                                                change.display,
+                                                mode.width,
+                                                mode.height,
+                                                mode.refresh
+                                            );
+                                            if let Some(prev) = change.previous_orientation {
+                                                message.push_str(&format!(", rotated {prev}°"));
+                                            }
+                                            println!("{message}");
+                                        }
                                         Err(e) => {
                                             eprintln!("error: {e}");
                                             failed = true;

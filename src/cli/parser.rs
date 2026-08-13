@@ -37,13 +37,15 @@ pub enum Command {
         /// Which display to target; `:*` = every monitor.
         target: Target,
     },
-    /// `WxH@R[:N]` — set resolution and refresh rate.
+    /// `WxH@R[:N][/angle]` — set resolution, refresh rate and rotation.
     Set {
         /// Pixel width; `None` keeps the current width.
         width: Option<u32>,
         /// Pixel height; `None` keeps the current height.
         height: Option<u32>,
         refresh: Refresh,
+        /// Rotation angle in degrees; `None` keeps the current orientation.
+        orientation: Option<u32>,
         /// Which display to target; `:*` = every monitor.
         target: Target,
         /// `-y`/`--yes` — skip the confirmation prompt.
@@ -190,12 +192,14 @@ fn parse_tail(
                 width,
                 height,
                 refresh,
+                orientation,
                 target,
                 ..
             } => Command::Set {
                 width,
                 height,
                 refresh,
+                orientation,
                 target,
                 yes: true,
             },
@@ -207,9 +211,13 @@ fn parse_tail(
 }
 
 fn parse_set(cmd: &str, tail: Option<String>) -> Result<Command, String> {
-    let (spec, target) = match cmd.split_once(':') {
+    let (spec, orientation) = match cmd.split_once('/') {
+        Some((spec, angle)) => (spec, Some(parse_orientation(angle, cmd)?)),
+        None => (cmd, None),
+    };
+    let (spec, target) = match spec.split_once(':') {
         Some((spec, m)) => (spec, parse_monitor(m, cmd)?),
-        None => (cmd, Target::Primary),
+        None => (spec, Target::Primary),
     };
     let (res, refresh) = match spec.split_once('@') {
         Some((res, r)) => (res, Some(parse_refresh(r, cmd)?)),
@@ -237,6 +245,7 @@ fn parse_set(cmd: &str, tail: Option<String>) -> Result<Command, String> {
             width,
             height,
             refresh,
+            orientation,
             target,
             yes: true,
         }),
@@ -245,9 +254,21 @@ fn parse_set(cmd: &str, tail: Option<String>) -> Result<Command, String> {
             width,
             height,
             refresh,
+            orientation,
             target,
             yes: false,
         }),
+    }
+}
+
+/// Parses a rotation angle token; names are matched case-insensitively.
+fn parse_orientation(token: &str, cmd: &str) -> Result<u32, String> {
+    match token.to_lowercase().as_str() {
+        "0" | "l" | "landscape" => Ok(0),
+        "90" | "p" | "portrait" => Ok(90),
+        "180" | "lf" => Ok(180),
+        "270" | "pf" => Ok(270),
+        _ => Err(format!("invalid orientation in '{cmd}'")),
     }
 }
 
@@ -271,7 +292,7 @@ fn parse_monitor(m: &str, cmd: &str) -> Result<Target, String> {
     }
 }
 
-/// Parses `-w`/`-h`/`-r`/`-m`/`-y` flag syntax into a set command.
+/// Parses `-w`/`-h`/`-r`/`-o`/`-m`/`-y` flag syntax into a set command.
 ///
 /// Flags may appear in any order; repeated flags keep the last value.
 /// `-h` is contextual: a following token that parses as a height keeps it,
@@ -284,6 +305,7 @@ fn parse_flags(args: &[String]) -> Result<Command, String> {
     let mut width: Option<u32> = None;
     let mut height: Option<u32> = None;
     let mut refresh: Option<Refresh> = None;
+    let mut orientation: Option<u32> = None;
     let mut target = Target::Primary;
     let mut yes = false;
     let mut i = 0;
@@ -348,6 +370,13 @@ fn parse_flags(args: &[String]) -> Result<Command, String> {
                         .map_err(|_| format!("invalid monitor id in '-m {value}'"))?
                 };
             }
+            "-o" | "--orientation" => {
+                let Some(value) = args.get(i) else {
+                    return Err("missing value for -o".to_string());
+                };
+                i += 1;
+                orientation = Some(parse_orientation(value, &format!("-o {value}"))?);
+            }
             "-y" | "--yes" => yes = true,
             "--help" => {
                 return Ok(Command::Help {
@@ -357,7 +386,7 @@ fn parse_flags(args: &[String]) -> Result<Command, String> {
             other => return Err(format!("unknown argument '{other}'")),
         }
     }
-    if width.is_none() && height.is_none() && refresh.is_none() {
+    if width.is_none() && height.is_none() && refresh.is_none() && orientation.is_none() {
         return Err("nothing to set".to_string());
     }
     if width.is_some() != height.is_some() {
@@ -371,6 +400,7 @@ fn parse_flags(args: &[String]) -> Result<Command, String> {
         width,
         height,
         refresh: refresh.unwrap_or(Refresh::Keep),
+        orientation,
         target,
         yes,
     })
@@ -389,6 +419,7 @@ mod tests {
             width: Some(width),
             height: Some(height),
             refresh,
+            orientation: None,
             target,
             yes: false,
         }
@@ -399,8 +430,26 @@ mod tests {
             width: Some(width),
             height: Some(height),
             refresh,
+            orientation: None,
             target,
             yes: true,
+        }
+    }
+
+    fn set_rotated(
+        width: u32,
+        height: u32,
+        refresh: Refresh,
+        orientation: u32,
+        target: Target,
+    ) -> Command {
+        Command::Set {
+            width: Some(width),
+            height: Some(height),
+            refresh,
+            orientation: Some(orientation),
+            target,
+            yes: false,
         }
     }
 
@@ -889,6 +938,7 @@ mod tests {
                 width: Some(1920),
                 height: Some(1080),
                 refresh: Refresh::Fixed(144),
+                orientation: None,
                 target: Target::Index(2),
                 yes: true,
             })
@@ -913,6 +963,7 @@ mod tests {
                 width: Some(1920),
                 height: Some(1080),
                 refresh: Refresh::Fixed(144),
+                orientation: None,
                 target: Target::Index(2),
                 yes: true,
             })
@@ -927,6 +978,7 @@ mod tests {
                 width: Some(1920),
                 height: Some(1080),
                 refresh: Refresh::Fixed(144),
+                orientation: None,
                 target: Target::Index(2),
                 yes: true,
             })
@@ -941,6 +993,7 @@ mod tests {
                 width: Some(1920),
                 height: Some(1080),
                 refresh: Refresh::Keep,
+                orientation: None,
                 target: Target::Primary,
                 yes: false,
             })
@@ -955,6 +1008,7 @@ mod tests {
                 width: Some(1920),
                 height: Some(1080),
                 refresh: Refresh::Keep,
+                orientation: None,
                 target: Target::Primary,
                 yes: false,
             })
@@ -969,6 +1023,7 @@ mod tests {
                 width: None,
                 height: None,
                 refresh: Refresh::Fixed(144),
+                orientation: None,
                 target: Target::Primary,
                 yes: false,
             })
@@ -983,6 +1038,7 @@ mod tests {
                 width: None,
                 height: None,
                 refresh: Refresh::Max,
+                orientation: None,
                 target: Target::Primary,
                 yes: false,
             })
@@ -997,6 +1053,7 @@ mod tests {
                 width: None,
                 height: None,
                 refresh: Refresh::Keep,
+                orientation: None,
                 target: Target::Primary,
                 yes: false,
             })
@@ -1011,6 +1068,7 @@ mod tests {
                 width: Some(1920),
                 height: Some(1080),
                 refresh: Refresh::Keep,
+                orientation: None,
                 target: Target::All,
                 yes: false,
             })
@@ -1025,6 +1083,7 @@ mod tests {
                 width: Some(1920),
                 height: Some(1080),
                 refresh: Refresh::Keep,
+                orientation: None,
                 target: Target::Index(0),
                 yes: false,
             })
@@ -1039,6 +1098,7 @@ mod tests {
                 width: Some(1920),
                 height: Some(1080),
                 refresh: Refresh::Keep,
+                orientation: None,
                 target: Target::Primary,
                 yes: false,
             })
@@ -1144,5 +1204,246 @@ mod tests {
     fn flags_positional_after_flags_is_error() {
         let err = parse(&["-w", "1920", "-h", "1080", "extra"]).unwrap_err();
         assert_eq!(err, "unknown argument 'extra'");
+    }
+
+    #[test]
+    fn compact_angle_suffix_parses() {
+        assert_eq!(
+            parse(&["1920x1080/90"]),
+            Ok(set_rotated(1920, 1080, Refresh::Keep, 90, Target::Primary))
+        );
+        assert_eq!(
+            parse(&["1920x1080@60:1/270"]),
+            Ok(set_rotated(
+                1920,
+                1080,
+                Refresh::Fixed(60),
+                270,
+                Target::Index(1)
+            ))
+        );
+        assert_eq!(
+            parse(&["1920x1080:2/portrait"]),
+            Ok(set_rotated(1920, 1080, Refresh::Keep, 90, Target::Index(2)))
+        );
+    }
+
+    #[test]
+    fn compact_angle_aliases() {
+        for (token, angle) in [
+            ("0", 0),
+            ("l", 0),
+            ("landscape", 0),
+            ("90", 90),
+            ("p", 90),
+            ("portrait", 90),
+            ("180", 180),
+            ("lf", 180),
+            ("270", 270),
+            ("pf", 270),
+        ] {
+            assert_eq!(
+                parse(&[&format!("1920x1080/{token}")]),
+                Ok(set_rotated(
+                    1920,
+                    1080,
+                    Refresh::Keep,
+                    angle,
+                    Target::Primary
+                )),
+                "angle '{token}'"
+            );
+        }
+    }
+
+    #[test]
+    fn compact_angle_aliases_case_insensitive() {
+        assert_eq!(
+            parse(&["1920x1080/Portrait"]),
+            Ok(set_rotated(1920, 1080, Refresh::Keep, 90, Target::Primary))
+        );
+        assert_eq!(
+            parse(&["1920x1080/PF"]),
+            Ok(set_rotated(1920, 1080, Refresh::Keep, 270, Target::Primary))
+        );
+        assert_eq!(
+            parse(&["1920x1080/LF"]),
+            Ok(set_rotated(1920, 1080, Refresh::Keep, 180, Target::Primary))
+        );
+        assert_eq!(
+            parse(&["1920x1080/L"]),
+            Ok(set_rotated(1920, 1080, Refresh::Keep, 0, Target::Primary))
+        );
+    }
+
+    #[test]
+    fn compact_angle_with_all_monitors() {
+        assert_eq!(
+            parse(&["1920x1080:*/pf"]),
+            Ok(set_rotated(1920, 1080, Refresh::Keep, 270, Target::All))
+        );
+    }
+
+    #[test]
+    fn compact_angle_with_yes_flag() {
+        assert_eq!(
+            parse(&["1920x1080:2/90", "-y"]),
+            Ok(Command::Set {
+                width: Some(1920),
+                height: Some(1080),
+                refresh: Refresh::Keep,
+                orientation: Some(90),
+                target: Target::Index(2),
+                yes: true,
+            })
+        );
+    }
+
+    #[test]
+    fn compact_invalid_angle_is_error() {
+        assert_eq!(
+            parse(&["1920x1080:2/45"]),
+            Err("invalid orientation in '1920x1080:2/45'".to_string())
+        );
+    }
+
+    #[test]
+    fn compact_multiple_slashes_is_error() {
+        assert_eq!(
+            parse(&["1920x1080/90/180"]),
+            Err("invalid orientation in '1920x1080/90/180'".to_string())
+        );
+    }
+
+    #[test]
+    fn compact_empty_angle_is_error() {
+        assert_eq!(
+            parse(&["1920x1080:2/"]),
+            Err("invalid orientation in '1920x1080:2/'".to_string())
+        );
+    }
+
+    #[test]
+    fn flags_orientation() {
+        assert_eq!(
+            parse(&["-o", "90"]),
+            Ok(Command::Set {
+                width: None,
+                height: None,
+                refresh: Refresh::Keep,
+                orientation: Some(90),
+                target: Target::Primary,
+                yes: false,
+            })
+        );
+        assert_eq!(
+            parse(&["--orientation", "portrait"]),
+            Ok(Command::Set {
+                width: None,
+                height: None,
+                refresh: Refresh::Keep,
+                orientation: Some(90),
+                target: Target::Primary,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn flags_orientation_aliases() {
+        for (token, angle) in [
+            ("0", 0),
+            ("l", 0),
+            ("landscape", 0),
+            ("90", 90),
+            ("p", 90),
+            ("portrait", 90),
+            ("180", 180),
+            ("lf", 180),
+            ("270", 270),
+            ("pf", 270),
+        ] {
+            assert_eq!(
+                parse(&["-o", token]),
+                Ok(Command::Set {
+                    width: None,
+                    height: None,
+                    refresh: Refresh::Keep,
+                    orientation: Some(angle),
+                    target: Target::Primary,
+                    yes: false,
+                }),
+                "angle '{token}'"
+            );
+        }
+    }
+
+    #[test]
+    fn flags_orientation_repeated_last_wins() {
+        assert_eq!(
+            parse(&["-o", "0", "-o", "90"]),
+            Ok(Command::Set {
+                width: None,
+                height: None,
+                refresh: Refresh::Keep,
+                orientation: Some(90),
+                target: Target::Primary,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn flags_orientation_invalid_is_error() {
+        assert_eq!(
+            parse(&["-o", "45"]),
+            Err("invalid orientation in '-o 45'".to_string())
+        );
+    }
+
+    #[test]
+    fn flags_orientation_missing_value_is_error() {
+        assert_eq!(parse(&["-o"]), Err("missing value for -o".to_string()));
+    }
+
+    #[test]
+    fn flags_orientation_with_dimensions() {
+        assert_eq!(
+            parse(&["-w", "1920", "-h", "1080", "-o", "90"]),
+            Ok(Command::Set {
+                width: Some(1920),
+                height: Some(1080),
+                refresh: Refresh::Keep,
+                orientation: Some(90),
+                target: Target::Primary,
+                yes: false,
+            })
+        );
+        assert_eq!(
+            parse(&["-o", "90", "-r", "144"]),
+            Ok(Command::Set {
+                width: None,
+                height: None,
+                refresh: Refresh::Fixed(144),
+                orientation: Some(90),
+                target: Target::Primary,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn flags_orientation_with_monitor() {
+        assert_eq!(
+            parse(&["-o", "90", "-m", "2"]),
+            Ok(Command::Set {
+                width: None,
+                height: None,
+                refresh: Refresh::Keep,
+                orientation: Some(90),
+                target: Target::Index(2),
+                yes: false,
+            })
+        );
     }
 }

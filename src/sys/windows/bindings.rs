@@ -11,6 +11,7 @@ pub(crate) const CDS_TEST: u32 = 0x2;
 pub(crate) const DM_PELSWIDTH: u32 = 0x0008_0000;
 pub(crate) const DM_PELSHEIGHT: u32 = 0x0010_0000;
 pub(crate) const DM_DISPLAYFREQUENCY: u32 = 0x0040_0000;
+pub(crate) const DM_DISPLAYORIENTATION: u32 = 0x0000_0080;
 pub(crate) const DISP_CHANGE_SUCCESSFUL: i32 = 0;
 pub(crate) const DISP_CHANGE_RESTART: i32 = 1;
 pub(crate) const DISP_CHANGE_FAILED: i32 = -1;
@@ -114,6 +115,7 @@ mod tests {
         assert_eq!(DM_PELSWIDTH, 0x0008_0000);
         assert_eq!(DM_PELSHEIGHT, 0x0010_0000);
         assert_eq!(DM_DISPLAYFREQUENCY, 0x0040_0000);
+        assert_eq!(DM_DISPLAYORIENTATION, 0x0000_0080);
         assert_eq!(DISP_CHANGE_SUCCESSFUL, 0);
         assert_eq!(DISP_CHANGE_RESTART, 1);
         assert_eq!(DISP_CHANGE_FAILED, -1);

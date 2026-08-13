@@ -9,7 +9,7 @@ use super::bindings::{
     CDS_TEST, CDS_UPDATEREGISTRY, ChangeDisplaySettingsExW, DISP_CHANGE_BADDUALVIEW,
     DISP_CHANGE_BADFLAGS, DISP_CHANGE_BADMODE, DISP_CHANGE_BADPARAM, DISP_CHANGE_FAILED,
     DISP_CHANGE_NOTUPDATED, DISP_CHANGE_RESTART, DISP_CHANGE_SUCCESSFUL, DM_DISPLAYFREQUENCY,
-    DM_PELSHEIGHT, DM_PELSWIDTH, DevmodeW, encode_wide,
+    DM_DISPLAYORIENTATION, DM_PELSHEIGHT, DM_PELSWIDTH, DevmodeW, encode_wide,
 };
 use super::capabilities::{self, Mode};
 use super::query;
@@ -37,6 +37,12 @@ pub struct Change {
     pub mode: Mode,
     /// The mode in effect before the change.
     pub previous: Mode,
+    /// The requested rotation angle in degrees; `None` when the change
+    /// does not include an orientation request.
+    pub orientation: Option<u32>,
+    /// The rotation angle in degrees in effect before the change;
+    /// `None` when the change does not include an orientation request.
+    pub previous_orientation: Option<u32>,
 }
 
 /// The result of applying a mode policy to a display.
@@ -48,27 +54,68 @@ pub enum ApplyOutcome {
     Unchanged(Change),
 }
 
-/// Builds the outcome for an attempted change; identical modes produce
-/// [`ApplyOutcome::Unchanged`].
-fn outcome_of(monitor: u32, display: String, mode: Mode, previous: Mode) -> ApplyOutcome {
+/// Builds the outcome for an attempted change; identical modes and a
+/// matching orientation produce [`ApplyOutcome::Unchanged`].
+fn outcome_of(
+    monitor: u32,
+    display: String,
+    mode: Mode,
+    previous: Mode,
+    orientation: Option<u32>,
+    previous_orientation: Option<u32>,
+) -> ApplyOutcome {
     let change = Change {
         monitor,
         display,
         mode,
         previous,
+        orientation,
+        previous_orientation,
     };
-    if change.mode == change.previous {
+    let orientation_matches = match (change.orientation, change.previous_orientation) {
+        (Some(angle), Some(previous_angle)) => dmdo(angle) == dmdo(previous_angle),
+        _ => true,
+    };
+    if change.mode == change.previous && orientation_matches {
         ApplyOutcome::Unchanged(change)
     } else {
         ApplyOutcome::Applied(change)
     }
 }
 
-/// Applies a resolution and refresh policy to a display.
+/// Maps a rotation angle in degrees to its display orientation value.
+fn dmdo(angle: u32) -> u32 {
+    match angle {
+        0 => 0,
+        90 => 1,
+        180 => 2,
+        270 => 3,
+        _ => unreachable!(),
+    }
+}
+
+/// Maps a display orientation value back to its angle in degrees.
+fn angle_of(orientation: u32) -> u32 {
+    match orientation {
+        0 => 0,
+        1 => 90,
+        2 => 180,
+        _ => 270,
+    }
+}
+
+/// The display orientation value in effect for a device mode.
+fn orientation_of(devmode: &DevmodeW) -> u32 {
+    devmode.dm_display_orientation
+}
+
+/// Applies a resolution, refresh and rotation policy to a display.
 ///
 /// `monitor` is the 1-based number from `ls`; `None` selects the primary.
-/// Returns [`ApplyOutcome::Unchanged`] when the requested mode is already
-/// active.
+/// `orientation` is a rotation angle in degrees (0/90/180/270); `None`
+/// leaves the current orientation untouched. Returns
+/// [`ApplyOutcome::Unchanged`] when the requested mode and orientation are
+/// already active.
 ///
 /// # Errors
 /// Unknown monitor, no matching mode for `@max`, or a mode the display
@@ -78,12 +125,13 @@ pub fn set(
     width: Option<u32>,
     height: Option<u32>,
     refresh: Refresh,
+    orientation: Option<u32>,
 ) -> Result<ApplyOutcome, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
     let display = query::display_label(&name, index as u32 + 1);
     let base = query::current_mode(&name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
-    let (width, height) = resolve_dims(width, height, &base);
+    let (width, height) = effective_dims(width, height, orientation, &base);
     let modes = capabilities::enumerate_modes(&name);
     let refresh = resolve_refresh(
         refresh,
@@ -99,9 +147,17 @@ pub fn set(
         refresh,
     };
     let previous = mode_of(&base);
-    let result = outcome_of(index as u32 + 1, display, mode, previous);
+    let previous_orientation = orientation.map(|_| angle_of(orientation_of(&base)));
+    let result = outcome_of(
+        index as u32 + 1,
+        display,
+        mode,
+        previous,
+        orientation,
+        previous_orientation,
+    );
     if let ApplyOutcome::Applied(change) = &result {
-        let devmode = build_devmode(&change.mode, &base);
+        let devmode = build_devmode(&change.mode, &base, change.orientation);
         apply_mode(&name, &change.display, &devmode)?;
     }
     Ok(result)
@@ -126,20 +182,21 @@ pub fn max(monitor: Option<u32>) -> Result<ApplyOutcome, String> {
         .ok_or_else(|| format!("{display} has no supported modes"))?;
     let base = query::current_mode(&name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
     let previous = mode_of(&base);
-    let result = outcome_of(index as u32 + 1, display, best, previous);
+    let result = outcome_of(index as u32 + 1, display, best, previous, None, None);
     if let ApplyOutcome::Applied(change) = &result {
-        let devmode = build_devmode(&change.mode, &base);
+        let devmode = build_devmode(&change.mode, &base, None);
         apply_mode(&name, &change.display, &devmode)?;
     }
     Ok(result)
 }
 
-/// Applies a resolution and refresh policy to every attached display.
+/// Applies a resolution, refresh and rotation policy to every attached
+/// display.
 ///
 /// Every monitor is dry-run validated before anything is applied; when any
 /// display rejects the mode, nothing changes and the failures are listed.
-/// Monitors already at the requested mode are reported as unchanged and
-/// left untouched.
+/// Monitors already at the requested mode and orientation are reported as
+/// unchanged and left untouched.
 ///
 /// # Errors
 /// No displays found, a mode no display supports, or preflight failures.
@@ -147,10 +204,11 @@ pub fn set_all(
     width: Option<u32>,
     height: Option<u32>,
     refresh: Refresh,
+    orientation: Option<u32>,
 ) -> Result<Vec<ApplyOutcome>, String> {
     let names = query::enumerate_devices();
     let targets = query::resolve_all(&names)?;
-    apply_all(plan_set(&targets, width, height, refresh)?)
+    apply_all(plan_set(&targets, width, height, refresh, orientation)?)
 }
 
 /// Applies the best supported mode to every attached display.
@@ -174,17 +232,22 @@ pub fn max_all() -> Result<Vec<ApplyOutcome>, String> {
 /// `monitor` is the 1-based number from `ls`; `None` selects the primary.
 /// `previous` is the `previous` field of the [`Change`] returned when the
 /// mode was applied; it is applied over the current settings and returned
-/// on success.
+/// on success. `previous_orientation`, when `Some`, is the rotation angle
+/// in effect before the change and is restored along with the mode.
 ///
 /// # Errors
 /// Unknown monitor or a mode the display rejects.
 #[allow(dead_code)]
-pub fn revert(monitor: Option<u32>, previous: Mode) -> Result<Mode, String> {
+pub fn revert(
+    monitor: Option<u32>,
+    previous: Mode,
+    previous_orientation: Option<u32>,
+) -> Result<Mode, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
     let display = query::display_label(&name, index as u32 + 1);
     let base = query::current_mode(&name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
-    let devmode = build_devmode(&previous, &base);
+    let devmode = build_devmode(&previous, &base, previous_orientation);
     apply_mode(&name, &display, &devmode)?;
     Ok(previous)
 }
@@ -254,12 +317,16 @@ fn mode_of(devmode: &DevmodeW) -> Mode {
     }
 }
 
-fn build_devmode(mode: &Mode, current: &DevmodeW) -> DevmodeW {
+fn build_devmode(mode: &Mode, current: &DevmodeW, orientation: Option<u32>) -> DevmodeW {
     let mut devmode = *current;
     devmode.dm_pels_width = mode.width;
     devmode.dm_pels_height = mode.height;
     devmode.dm_display_frequency = mode.refresh;
     devmode.dm_fields |= DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
+    if let Some(angle) = orientation {
+        devmode.dm_display_orientation = dmdo(angle);
+        devmode.dm_fields |= DM_DISPLAYORIENTATION;
+    }
     devmode.dm_size = std::mem::size_of::<DevmodeW>() as u16;
     devmode.dm_driver_extra = 0;
     devmode
@@ -304,6 +371,7 @@ struct Planned {
 /// Resolves optional dimensions against a display's current mode.
 ///
 /// `None` keeps the corresponding current value from `base`.
+#[cfg(test)]
 fn resolve_dims(width: Option<u32>, height: Option<u32>, base: &DevmodeW) -> (u32, u32) {
     (
         width.unwrap_or(base.dm_pels_width),
@@ -311,17 +379,41 @@ fn resolve_dims(width: Option<u32>, height: Option<u32>, base: &DevmodeW) -> (u3
     )
 }
 
+/// The effective dimensions for an orientation request.
+///
+/// Dimensions are resolved against the display's physical panel size
+/// (the current mode rotated back to landscape) and then swapped when
+/// the request rotates the display 90° or 270°.
+fn effective_dims(
+    width: Option<u32>,
+    height: Option<u32>,
+    orientation: Option<u32>,
+    base: &DevmodeW,
+) -> (u32, u32) {
+    let (w, h) = match base.dm_display_orientation {
+        1 | 3 => (base.dm_pels_height, base.dm_pels_width),
+        _ => (base.dm_pels_width, base.dm_pels_height),
+    };
+    let w = width.unwrap_or(w);
+    let h = height.unwrap_or(h);
+    match orientation {
+        Some(90 | 270) => (h, w),
+        _ => (w, h),
+    }
+}
+
 fn plan_set(
     targets: &[(usize, String)],
     width: Option<u32>,
     height: Option<u32>,
     policy: Refresh,
+    orientation: Option<u32>,
 ) -> Result<Vec<Planned>, String> {
     let mut planned = Vec::new();
     for (index, name) in targets {
         let display = query::display_label(name, *index as u32 + 1);
         let base = query::current_mode(name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
-        let (width, height) = resolve_dims(width, height, &base);
+        let (width, height) = effective_dims(width, height, orientation, &base);
         let modes = capabilities::enumerate_modes(name);
         let refresh = resolve_refresh(
             policy,
@@ -337,8 +429,16 @@ fn plan_set(
             refresh,
         };
         let previous = mode_of(&base);
-        let devmode = build_devmode(&mode, &base);
-        let outcome = outcome_of(*index as u32 + 1, display, mode, previous);
+        let previous_orientation = orientation.map(|_| angle_of(orientation_of(&base)));
+        let devmode = build_devmode(&mode, &base, orientation);
+        let outcome = outcome_of(
+            *index as u32 + 1,
+            display,
+            mode,
+            previous,
+            orientation,
+            previous_orientation,
+        );
         planned.push(Planned {
             name: name.clone(),
             devmode,
@@ -359,8 +459,8 @@ fn plan_max(targets: &[(usize, String)]) -> Result<Vec<Planned>, String> {
         };
         let base = query::current_mode(name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
         let previous = mode_of(&base);
-        let devmode = build_devmode(&mode, &base);
-        let outcome = outcome_of(*index as u32 + 1, display, mode, previous);
+        let devmode = build_devmode(&mode, &base, None);
+        let outcome = outcome_of(*index as u32 + 1, display, mode, previous, None, None);
         planned.push(Planned {
             name: name.clone(),
             devmode,
@@ -440,6 +540,7 @@ mod tests {
                 refresh: 1,
             },
             &unsafe { std::mem::zeroed() },
+            None,
         );
         assert_eq!(
             describe_change_failure(DISP_CHANGE_BADMODE, "Generic PnP Monitor [:1]", &devmode),
@@ -456,6 +557,7 @@ mod tests {
                 refresh: 120,
             },
             &unsafe { std::mem::zeroed() },
+            None,
         );
         assert_eq!(
             describe_change_failure(DISP_CHANGE_RESTART, "Generic PnP Monitor [:1]", &devmode),
@@ -484,7 +586,9 @@ mod tests {
                     width: 1920,
                     height: 1080,
                     refresh: 120,
-                }
+                },
+                None,
+                None,
             ),
             ApplyOutcome::Unchanged(Change {
                 monitor: 1,
@@ -499,6 +603,8 @@ mod tests {
                     height: 1080,
                     refresh: 120,
                 },
+                orientation: None,
+                previous_orientation: None,
             })
         );
     }
@@ -516,7 +622,14 @@ mod tests {
             refresh: 120,
         };
         assert_eq!(
-            outcome_of(1, "Generic PnP Monitor [:1]".to_string(), mode, previous),
+            outcome_of(
+                1,
+                "Generic PnP Monitor [:1]".to_string(),
+                mode,
+                previous,
+                None,
+                None
+            ),
             ApplyOutcome::Applied(Change {
                 monitor: 1,
                 display: "Generic PnP Monitor [:1]".to_string(),
@@ -530,6 +643,8 @@ mod tests {
                     height: 720,
                     refresh: 120,
                 },
+                orientation: None,
+                previous_orientation: None,
             })
         );
     }
@@ -543,7 +658,7 @@ mod tests {
         };
         let mut current: DevmodeW = unsafe { std::mem::zeroed() };
         current.dm_position = Pointl { x: -1, y: -1 };
-        let devmode = build_devmode(&mode, &current);
+        let devmode = build_devmode(&mode, &current, None);
         assert_eq!(devmode.dm_pels_width, 3840);
         assert_eq!(devmode.dm_pels_height, 2160);
         assert_eq!(devmode.dm_display_frequency, 144);
@@ -800,6 +915,7 @@ mod tests {
                 refresh: 1,
             },
             &base,
+            None,
         );
         let result = apply_mode(&names[0], &query::display_label(&names[0], 1), &devmode);
         assert!(result.is_err());
@@ -839,5 +955,265 @@ mod tests {
         base.dm_pels_width = 1920;
         base.dm_pels_height = 1080;
         assert_eq!(resolve_dims(Some(2560), Some(1440), &base), (2560, 1440));
+    }
+
+    #[test]
+    fn effective_dims_no_orientation_matches_resolve_dims() {
+        let mut base: DevmodeW = unsafe { std::mem::zeroed() };
+        base.dm_pels_width = 1920;
+        base.dm_pels_height = 1080;
+        assert_eq!(effective_dims(None, None, None, &base), (1920, 1080));
+    }
+
+    #[test]
+    fn effective_dims_landscape_base_rotates_90() {
+        let mut base: DevmodeW = unsafe { std::mem::zeroed() };
+        base.dm_pels_width = 1920;
+        base.dm_pels_height = 1080;
+        assert_eq!(effective_dims(None, None, Some(90), &base), (1080, 1920));
+    }
+
+    #[test]
+    fn effective_dims_landscape_base_rotates_270() {
+        let mut base: DevmodeW = unsafe { std::mem::zeroed() };
+        base.dm_pels_width = 1920;
+        base.dm_pels_height = 1080;
+        assert_eq!(effective_dims(None, None, Some(270), &base), (1080, 1920));
+    }
+
+    #[test]
+    fn effective_dims_landscape_base_stays_for_0_and_180() {
+        let mut base: DevmodeW = unsafe { std::mem::zeroed() };
+        base.dm_pels_width = 1920;
+        base.dm_pels_height = 1080;
+        assert_eq!(effective_dims(None, None, Some(0), &base), (1920, 1080));
+        assert_eq!(effective_dims(None, None, Some(180), &base), (1920, 1080));
+    }
+
+    #[test]
+    fn effective_dims_rotated_base_keeps_effective_for_90() {
+        let mut base: DevmodeW = unsafe { std::mem::zeroed() };
+        base.dm_pels_width = 1080;
+        base.dm_pels_height = 1920;
+        base.dm_display_orientation = 1;
+        assert_eq!(effective_dims(None, None, Some(90), &base), (1080, 1920));
+    }
+
+    #[test]
+    fn effective_dims_rotated_base_restores_landscape_for_0() {
+        let mut base: DevmodeW = unsafe { std::mem::zeroed() };
+        base.dm_pels_width = 1080;
+        base.dm_pels_height = 1920;
+        base.dm_display_orientation = 1;
+        assert_eq!(effective_dims(None, None, Some(0), &base), (1920, 1080));
+    }
+
+    #[test]
+    fn effective_dims_rotated_base_restores_landscape_for_180() {
+        let mut base: DevmodeW = unsafe { std::mem::zeroed() };
+        base.dm_pels_width = 1080;
+        base.dm_pels_height = 1920;
+        base.dm_display_orientation = 3;
+        assert_eq!(effective_dims(None, None, Some(180), &base), (1920, 1080));
+    }
+
+    #[test]
+    fn effective_dims_explicit_dims_are_panel_dims() {
+        let mut base: DevmodeW = unsafe { std::mem::zeroed() };
+        base.dm_pels_width = 1920;
+        base.dm_pels_height = 1080;
+        assert_eq!(
+            effective_dims(Some(1920), Some(1080), Some(90), &base),
+            (1080, 1920)
+        );
+    }
+
+    #[test]
+    fn dmdo_maps_angles() {
+        assert_eq!(dmdo(0), 0);
+        assert_eq!(dmdo(90), 1);
+        assert_eq!(dmdo(180), 2);
+        assert_eq!(dmdo(270), 3);
+    }
+
+    #[test]
+    fn orientation_of_reads_devmode() {
+        let mut devmode: DevmodeW = unsafe { std::mem::zeroed() };
+        devmode.dm_display_orientation = 2;
+        assert_eq!(orientation_of(&devmode), 2);
+    }
+
+    #[test]
+    fn outcome_of_same_mode_and_matching_orientation_is_unchanged() {
+        let mode = Mode {
+            width: 1920,
+            height: 1080,
+            refresh: 120,
+        };
+        assert_eq!(
+            outcome_of(
+                1,
+                "Generic PnP Monitor [:1]".to_string(),
+                mode,
+                Mode {
+                    width: 1920,
+                    height: 1080,
+                    refresh: 120,
+                },
+                Some(90),
+                Some(90),
+            ),
+            ApplyOutcome::Unchanged(Change {
+                monitor: 1,
+                display: "Generic PnP Monitor [:1]".to_string(),
+                mode: Mode {
+                    width: 1920,
+                    height: 1080,
+                    refresh: 120,
+                },
+                previous: Mode {
+                    width: 1920,
+                    height: 1080,
+                    refresh: 120,
+                },
+                orientation: Some(90),
+                previous_orientation: Some(90),
+            })
+        );
+    }
+
+    #[test]
+    fn outcome_of_same_mode_different_orientation_is_applied() {
+        let mode = Mode {
+            width: 1920,
+            height: 1080,
+            refresh: 120,
+        };
+        assert_eq!(
+            outcome_of(
+                1,
+                "Generic PnP Monitor [:1]".to_string(),
+                mode,
+                Mode {
+                    width: 1920,
+                    height: 1080,
+                    refresh: 120,
+                },
+                Some(90),
+                Some(0),
+            ),
+            ApplyOutcome::Applied(Change {
+                monitor: 1,
+                display: "Generic PnP Monitor [:1]".to_string(),
+                mode: Mode {
+                    width: 1920,
+                    height: 1080,
+                    refresh: 120,
+                },
+                previous: Mode {
+                    width: 1920,
+                    height: 1080,
+                    refresh: 120,
+                },
+                orientation: Some(90),
+                previous_orientation: Some(0),
+            })
+        );
+    }
+
+    #[test]
+    fn outcome_of_mode_difference_with_orientation_is_applied() {
+        let mode = Mode {
+            width: 2560,
+            height: 1440,
+            refresh: 144,
+        };
+        let previous = Mode {
+            width: 1920,
+            height: 1080,
+            refresh: 120,
+        };
+        assert_eq!(
+            outcome_of(
+                1,
+                "Generic PnP Monitor [:1]".to_string(),
+                mode,
+                previous,
+                Some(90),
+                Some(0),
+            ),
+            ApplyOutcome::Applied(Change {
+                monitor: 1,
+                display: "Generic PnP Monitor [:1]".to_string(),
+                mode: Mode {
+                    width: 2560,
+                    height: 1440,
+                    refresh: 144,
+                },
+                previous: Mode {
+                    width: 1920,
+                    height: 1080,
+                    refresh: 120,
+                },
+                orientation: Some(90),
+                previous_orientation: Some(0),
+            })
+        );
+    }
+
+    #[test]
+    fn build_devmode_sets_orientation_when_present() {
+        let mode = Mode {
+            width: 3840,
+            height: 2160,
+            refresh: 144,
+        };
+        let mut current: DevmodeW = unsafe { std::mem::zeroed() };
+        current.dm_display_orientation = 1;
+        let devmode = build_devmode(&mode, &current, Some(270));
+        assert_eq!(devmode.dm_display_orientation, 3);
+        assert_ne!(devmode.dm_fields & DM_DISPLAYORIENTATION, 0);
+    }
+
+    #[test]
+    fn build_devmode_leaves_orientation_when_absent() {
+        let mode = Mode {
+            width: 3840,
+            height: 2160,
+            refresh: 144,
+        };
+        let mut current: DevmodeW = unsafe { std::mem::zeroed() };
+        current.dm_display_orientation = 1;
+        let devmode = build_devmode(&mode, &current, None);
+        assert_eq!(devmode.dm_display_orientation, 1);
+        assert_eq!(devmode.dm_fields & DM_DISPLAYORIENTATION, 0);
+    }
+
+    #[test]
+    fn revert_with_previous_orientation_restores_it() {
+        let previous = Mode {
+            width: 1920,
+            height: 1080,
+            refresh: 60,
+        };
+        let mut base: DevmodeW = unsafe { std::mem::zeroed() };
+        base.dm_display_orientation = 2;
+        let devmode = build_devmode(&previous, &base, Some(270));
+        assert_eq!(devmode.dm_display_orientation, 3);
+        assert_ne!(devmode.dm_fields & DM_DISPLAYORIENTATION, 0);
+    }
+
+    #[test]
+    fn revert_without_previous_orientation_keeps_current() {
+        let previous = Mode {
+            width: 1920,
+            height: 1080,
+            refresh: 60,
+        };
+        let mut base: DevmodeW = unsafe { std::mem::zeroed() };
+        base.dm_display_orientation = 2;
+        let devmode = build_devmode(&previous, &base, None);
+        assert_eq!(devmode.dm_display_orientation, 2);
+        assert_eq!(devmode.dm_fields & DM_DISPLAYORIENTATION, 0);
     }
 }

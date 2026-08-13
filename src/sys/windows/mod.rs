@@ -11,7 +11,7 @@ mod capabilities;
 mod query;
 
 #[allow(unused_imports)]
-pub use apply::{ApplyOutcome, Change, max, max_all, revert, set, set_all};
+pub use apply::{ApplyOutcome, Change, Refresh, max, max_all, revert, set, set_all};
 pub use capabilities::Mode;
 pub use query::Monitor;
 

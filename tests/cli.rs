@@ -389,3 +389,38 @@ fn set_flags_help() {
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert!(stdout(&out).contains("Flags"));
 }
+
+#[test]
+fn orientation_invalid_compact_is_error() {
+    let out = rmod(&["1920x1080:2/45"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("invalid orientation"));
+}
+
+#[test]
+fn orientation_invalid_flag_is_error() {
+    let out = rmod(&["-o", "45"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("invalid orientation"));
+}
+
+#[test]
+fn orientation_missing_value_is_error() {
+    let out = rmod(&["-o"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("missing value for -o"));
+}
+
+#[test]
+fn orientation_flag_help() {
+    let out = rmod(&["-o", "90", "--help"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("Angle options"));
+}
+
+#[test]
+fn orientation_compact_help() {
+    let out = rmod(&["1920x1080:2/90", "-h"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("Angle options"));
+}

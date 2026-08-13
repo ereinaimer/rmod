@@ -13,7 +13,7 @@ Usage:
   rmod ls                     list displays
   rmod max[:N|:*] [-y]        max resolution (primary, or monitor N; :* = every monitor)
   rmod caps[:N|:*]            list supported resolutions (primary, or monitor N; :* = every monitor)
-  rmod WxH@R[:N|:*] [-y]      set resolution and refresh rate (primary, or monitor N; :* = every monitor)
+  rmod WxH@R[:N|:*][/angle] [-y]      set resolution and refresh rate (primary, or monitor N; :* = every monitor)
 
   :N = monitor number from 'rmod ls'; omit = primary display.
   :* = every monitor.
@@ -124,12 +124,18 @@ pub fn set() -> String {
 Apply a resolution and refresh rate to a display
 
 Usage:
-  rmod WxH@R[:N|:*]       set resolution and refresh rate (primary, or monitor N; :* = every monitor)
+  rmod WxH@R[:N|:*][/angle]       set resolution and refresh rate (primary, or monitor N; :* = every monitor)
 
   R options:
     @60                   fixed refresh rate
     @max                  highest refresh rate at that resolution
     omit @R               keep the current refresh rate
+
+  Angle options (/angle or -o):
+    0, l, landscape     landscape
+    90, p, portrait     portrait (90°)
+    180, lf             landscape flipped
+    270, pf             portrait flipped (270°)
 
   :N = monitor number from `rmod ls`; omit = primary display.
   :* = every monitor.
@@ -152,6 +158,8 @@ Examples:
   rmod 4k
   rmod 1920x1080@144
   rmod 1920x1080@60:2
+  rmod 1920x1080:2/90
+  rmod -o 90
   rmod 1920x1080@60:*
   rmod 1440@max
   rmod -w 1920 -h 1080 -r 144 -m 2
@@ -162,6 +170,7 @@ Flags:
   -h, --height H      pixel height (default: current)
   -r, --refresh R     refresh rate: 144 | max | keep (default: keep)
   -m, --monitor N     monitor number from `rmod ls`; * = every monitor (default: primary)
+  -o, --orientation O   display rotation: 0 | 90 | 180 | 270 | l | lf | p | portrait | pf | landscape (default: none)
   -y, --yes           skip the confirmation prompt
   --help              print help
 
@@ -186,7 +195,7 @@ mod tests {
         assert!(h.contains("rmod ls"));
         assert!(h.contains("rmod max[:N|:*] [-y]"));
         assert!(h.contains("rmod caps[:N|:*]"));
-        assert!(h.contains("rmod WxH@R[:N|:*] [-y]"));
+        assert!(h.contains("rmod WxH@R[:N|:*][/angle] [-y]"));
     }
 
     #[test]
@@ -257,6 +266,16 @@ mod tests {
         assert!(h.contains("-m, --monitor N"));
         assert!(h.contains("rmod -w 1920 -h 1080 -r 144 -m 2"));
         assert!(h.contains("is equivalent to `rmod 1920x1080@144:2`"));
+        assert!(h.contains("rmod WxH@R[:N|:*][/angle]"));
+        assert!(h.contains("Angle options (/angle or -o):"));
+        assert!(h.contains("0, l, landscape"));
+        assert!(h.contains("90, p, portrait"));
+        assert!(h.contains("180, lf"));
+        assert!(h.contains("270, pf"));
+        assert!(h.contains("portrait flipped (270°)"));
+        assert!(h.contains("-o, --orientation O"));
+        assert!(h.contains("rmod 1920x1080:2/90"));
+        assert!(h.contains("rmod -o 90"));
     }
 
     #[test]
