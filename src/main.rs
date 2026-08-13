@@ -14,6 +14,10 @@ fn main() {
             println!("{}", cli::max());
             0
         }
+        Ok(cli::Command::Help { topic: Some(cli::HelpTopic::Caps) }) => {
+            println!("{}", cli::caps());
+            0
+        }
         Ok(cli::Command::Version) => {
             println!("{}", cli::version());
             0

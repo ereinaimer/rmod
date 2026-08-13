@@ -6,6 +6,7 @@ Resolution modifier
 Usage:
   rmod ls                 list displays
   rmod max[:N]            max resolution (primary display, or monitor N)
+  rmod caps[:N]           list supported resolutions (primary, or monitor N)
   rmod WxH@R[:N]          set resolution and refresh rate (primary, or monitor N)
 
   :N = monitor number from 'rmod ls'; omit = primary display.
@@ -20,6 +21,7 @@ Profiles:
 Examples:
   rmod max
   rmod max:2
+  rmod caps
   rmod 4k
   rmod 1920x1080@144
   rmod 1920x1080@60:2
@@ -66,6 +68,28 @@ Usage:
 Examples:
   rmod max
   rmod max:2
+
+Options:
+  -h, --help              print help"
+    )
+}
+
+pub fn caps() -> String {
+    format!(
+        "rmod caps
+List all supported resolutions and refresh rates
+
+Usage:
+  rmod caps[:N]
+
+  Prints every resolution and refresh rate supported by the display.
+  Without :N, applies to the primary display.
+
+  :N = monitor number from `rmod ls`; omit = primary display.
+
+Examples:
+  rmod caps
+  rmod caps:2
 
 Options:
   -h, --help              print help"

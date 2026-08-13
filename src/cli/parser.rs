@@ -9,11 +9,13 @@ pub enum Refresh {
 pub enum HelpTopic {
     List,
     Max,
+    Caps,
 }
 
 pub enum Command {
     List,
     Max { monitor: Option<u32> },
+    Caps { monitor: Option<u32> },
     Set { width: u32, height: u32, refresh: Refresh, monitor: Option<u32> },
     Help { topic: Option<HelpTopic> },
     Version,
@@ -37,9 +39,14 @@ pub fn parse() -> Result<Command, String> {
         "-V" | "--version" => Ok(Command::Version),
         "ls" => parse_tail("ls", args.next().as_deref(), Command::List, HelpTopic::List),
         "max" => parse_tail("max", args.next().as_deref(), Command::Max { monitor: None }, HelpTopic::Max),
+        "caps" => parse_tail("caps", args.next().as_deref(), Command::Caps { monitor: None }, HelpTopic::Caps),
         _ if cmd.starts_with("max:") => {
             let monitor = parse_monitor(&cmd[4..], &cmd)?;
             Ok(Command::Max { monitor: Some(monitor) })
+        }
+        _ if cmd.starts_with("caps:") => {
+            let monitor = parse_monitor(&cmd[5..], &cmd)?;
+            Ok(Command::Caps { monitor: Some(monitor) })
         }
         _ => parse_set(&cmd),
     }
