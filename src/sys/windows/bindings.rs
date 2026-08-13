@@ -1,19 +1,34 @@
 //! Raw Win32 FFI bindings: structs, externs, and string marshalling.
 //!
 //! `DEVMODEW`/`DISPLAY_DEVICEW` layouts and offsets are pinned by tests;
-//! do not reorder fields. Used by [`super::query`] and
-//! [`super::capabilities`].
+//! do not reorder fields. Used by [`super::query`], [`super::capabilities`],
+//! and [`super::apply`].
 
 pub(crate) const ENUM_CURRENT_SETTINGS: u32 = 0xFFFF_FFFF;
 pub(crate) const DISPLAY_DEVICE_ATTACHED_TO_DESKTOP: u32 = 0x1;
+pub(crate) const CDS_UPDATEREGISTRY: u32 = 0x1;
+pub(crate) const CDS_TEST: u32 = 0x2;
+pub(crate) const DM_PELSWIDTH: u32 = 0x0008_0000;
+pub(crate) const DM_PELSHEIGHT: u32 = 0x0010_0000;
+pub(crate) const DM_DISPLAYFREQUENCY: u32 = 0x0040_0000;
+pub(crate) const DISP_CHANGE_SUCCESSFUL: i32 = 0;
+pub(crate) const DISP_CHANGE_RESTART: i32 = 1;
+pub(crate) const DISP_CHANGE_FAILED: i32 = -1;
+pub(crate) const DISP_CHANGE_BADMODE: i32 = -2;
+pub(crate) const DISP_CHANGE_NOTUPDATED: i32 = -3;
+pub(crate) const DISP_CHANGE_BADFLAGS: i32 = -4;
+pub(crate) const DISP_CHANGE_BADPARAM: i32 = -5;
+pub(crate) const DISP_CHANGE_BADDUALVIEW: i32 = -6;
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub(crate) struct POINTL {
     pub x: i32,
     pub y: i32,
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub(crate) struct DEVMODEW {
     pub dm_device_name: [u16; 32],
     pub dm_spec_version: u16,
@@ -69,6 +84,13 @@ unsafe extern "system" {
         i_mode_num: u32,
         lp_dev_mode: *mut DEVMODEW,
     ) -> i32;
+    pub(crate) fn ChangeDisplaySettingsExW(
+        lpsz_device_name: *const u16,
+        lp_dev_mode: *const DEVMODEW,
+        hwnd: usize,
+        dw_flags: u32,
+        l_param: *const (),
+    ) -> i32;
 }
 
 pub(crate) fn encode_wide(s: &str) -> Vec<u16> {
@@ -84,6 +106,23 @@ pub(crate) fn wide_to_string(w: &[u16]) -> String {
 mod tests {
     use super::*;
     use std::mem::offset_of;
+
+    #[test]
+    fn display_change_constants() {
+        assert_eq!(CDS_UPDATEREGISTRY, 0x1);
+        assert_eq!(CDS_TEST, 0x2);
+        assert_eq!(DM_PELSWIDTH, 0x0008_0000);
+        assert_eq!(DM_PELSHEIGHT, 0x0010_0000);
+        assert_eq!(DM_DISPLAYFREQUENCY, 0x0040_0000);
+        assert_eq!(DISP_CHANGE_SUCCESSFUL, 0);
+        assert_eq!(DISP_CHANGE_RESTART, 1);
+        assert_eq!(DISP_CHANGE_FAILED, -1);
+        assert_eq!(DISP_CHANGE_BADMODE, -2);
+        assert_eq!(DISP_CHANGE_NOTUPDATED, -3);
+        assert_eq!(DISP_CHANGE_BADFLAGS, -4);
+        assert_eq!(DISP_CHANGE_BADPARAM, -5);
+        assert_eq!(DISP_CHANGE_BADDUALVIEW, -6);
+    }
 
     #[test]
     fn devmode_layout_is_220_bytes() {

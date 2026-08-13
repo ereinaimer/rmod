@@ -185,3 +185,26 @@ fn caps_zero_monitor_exits_2() {
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("monitor 0 not found"));
 }
+
+#[test]
+fn max_help_lists_usage() {
+    let out = rmod(&["max", "-h"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let stdout = stdout(&out);
+    assert!(stdout.contains("Apply the highest supported resolution"));
+    assert!(stdout.contains("rmod max[:N]"));
+}
+
+#[test]
+fn max_nonexistent_monitor_is_error() {
+    let out = rmod(&["max:99"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("monitor 99 not found"));
+}
+
+#[test]
+fn max_zero_monitor_is_error() {
+    let out = rmod(&["max:0"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("monitor 0 not found"));
+}

@@ -107,6 +107,16 @@ fn main() {
                 2
             }
         },
+        Ok(cli::Command::Max { monitor }) => match sys::windows::max(monitor) {
+            Ok(mode) => {
+                println!("applied {}x{} @ {}Hz", mode.width, mode.height, mode.refresh);
+                0
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                2
+            }
+        },
         Ok(_) => {
             eprintln!("error: command not implemented yet");
             2

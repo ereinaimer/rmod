@@ -1,13 +1,16 @@
-//! Windows backend: public query API over the Win32 display functions.
+//! Windows backend: query and apply display settings via Win32 functions.
 //!
 //! [`list`] reports every attached display, [`caps`] returns the modes a
-//! display supports. Raw FFI lives in [`bindings`]; device querying in
-//! [`query`]; mode enumeration in [`capabilities`].
+//! display supports, [`max`] applies the best supported mode. Raw FFI lives
+//! in [`bindings`]; device querying in [`query`]; mode enumeration in
+//! [`capabilities`]; mode application in [`apply`].
 
+mod apply;
 mod bindings;
 mod capabilities;
 mod query;
 
+pub use apply::max;
 pub use capabilities::Mode;
 pub use query::Monitor;
 
