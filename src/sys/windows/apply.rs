@@ -12,6 +12,7 @@ use super::bindings::{
     DM_DISPLAYORIENTATION, DM_PELSHEIGHT, DM_PELSWIDTH, DevmodeW, encode_wide,
 };
 use super::capabilities::{self, Mode};
+use super::fade;
 use super::query;
 
 /// Refresh rate handling for the set command.
@@ -158,7 +159,9 @@ pub fn set(
     );
     if let ApplyOutcome::Applied(change) = &result {
         let devmode = build_devmode(&change.mode, &base, change.orientation);
-        apply_mode(&name, &change.display, &devmode)?;
+        fade::transition(&name, &devmode, || {
+            apply_mode(&name, &change.display, &devmode)
+        })?;
     }
     Ok(result)
 }
@@ -185,7 +188,9 @@ pub fn max(monitor: Option<u32>) -> Result<ApplyOutcome, String> {
     let result = outcome_of(index as u32 + 1, display, best, previous, None, None);
     if let ApplyOutcome::Applied(change) = &result {
         let devmode = build_devmode(&change.mode, &base, None);
-        apply_mode(&name, &change.display, &devmode)?;
+        fade::transition(&name, &devmode, || {
+            apply_mode(&name, &change.display, &devmode)
+        })?;
     }
     Ok(result)
 }
@@ -248,7 +253,7 @@ pub fn revert(
     let display = query::display_label(&name, index as u32 + 1);
     let base = query::current_mode(&name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
     let devmode = build_devmode(&previous, &base, previous_orientation);
-    apply_mode(&name, &display, &devmode)?;
+    fade::transition(&name, &devmode, || apply_mode(&name, &display, &devmode))?;
     Ok(previous)
 }
 
@@ -474,6 +479,25 @@ fn plan_max(targets: &[(usize, String)]) -> Result<Vec<Planned>, String> {
     }
 }
 
+/// True when a plan contains at least one mode to apply; a batch with no
+/// changes must not fade.
+fn has_applied(planned: &[Planned]) -> bool {
+    planned
+        .iter()
+        .any(|p| matches!(p.outcome, ApplyOutcome::Applied(_)))
+}
+
+fn apply_planned(planned: Vec<Planned>) -> Result<Vec<ApplyOutcome>, String> {
+    let mut outcomes = Vec::with_capacity(planned.len());
+    for p in planned {
+        if let ApplyOutcome::Applied(change) = &p.outcome {
+            apply_mode(&p.name, &change.display, &p.devmode)?;
+        }
+        outcomes.push(p.outcome);
+    }
+    Ok(outcomes)
+}
+
 fn apply_all(planned: Vec<Planned>) -> Result<Vec<ApplyOutcome>, String> {
     let mut failures = Vec::new();
     for p in &planned {
@@ -487,14 +511,11 @@ fn apply_all(planned: Vec<Planned>) -> Result<Vec<ApplyOutcome>, String> {
     if !failures.is_empty() {
         return Err(failures.join("\n"));
     }
-    let mut outcomes = Vec::with_capacity(planned.len());
-    for p in planned {
-        if let ApplyOutcome::Applied(change) = &p.outcome {
-            apply_mode(&p.name, &change.display, &p.devmode)?;
-        }
-        outcomes.push(p.outcome);
+    if has_applied(&planned) {
+        fade::transition_all(|| apply_planned(planned))
+    } else {
+        apply_planned(planned)
     }
-    Ok(outcomes)
 }
 
 #[cfg(test)]
@@ -1215,5 +1236,47 @@ mod tests {
         let devmode = build_devmode(&previous, &base, None);
         assert_eq!(devmode.dm_display_orientation, 2);
         assert_eq!(devmode.dm_fields & DM_DISPLAYORIENTATION, 0);
+    }
+
+    #[test]
+    fn has_applied_false_for_empty_plan() {
+        assert!(!has_applied(&[]));
+    }
+
+    #[test]
+    fn has_applied_false_when_all_unchanged() {
+        let planned = vec![planned_unchanged(), planned_unchanged()];
+        assert!(!has_applied(&planned));
+    }
+
+    #[test]
+    fn has_applied_true_when_any_applied() {
+        let planned = vec![planned_unchanged(), planned_applied()];
+        assert!(has_applied(&planned));
+    }
+
+    fn planned_unchanged() -> Planned {
+        let base = query::current_mode("").unwrap_or_else(|| unsafe { std::mem::zeroed() });
+        let mode = mode_of(&base);
+        Planned {
+            name: String::new(),
+            devmode: base,
+            outcome: outcome_of(1, String::new(), mode, mode_of(&base), None, None),
+        }
+    }
+
+    fn planned_applied() -> Planned {
+        let base = query::current_mode("").unwrap_or_else(|| unsafe { std::mem::zeroed() });
+        let previous = mode_of(&base);
+        let mode = Mode {
+            width: previous.width + 1,
+            height: previous.height + 1,
+            refresh: previous.refresh,
+        };
+        Planned {
+            name: String::new(),
+            devmode: base,
+            outcome: outcome_of(1, String::new(), mode, previous, None, None),
+        }
     }
 }

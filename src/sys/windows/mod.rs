@@ -8,6 +8,7 @@
 pub(crate) mod apply;
 mod bindings;
 mod capabilities;
+mod fade;
 mod query;
 
 #[allow(unused_imports)]

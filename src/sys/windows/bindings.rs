@@ -20,6 +20,21 @@ pub(crate) const DISP_CHANGE_NOTUPDATED: i32 = -3;
 pub(crate) const DISP_CHANGE_BADFLAGS: i32 = -4;
 pub(crate) const DISP_CHANGE_BADPARAM: i32 = -5;
 pub(crate) const DISP_CHANGE_BADDUALVIEW: i32 = -6;
+pub(crate) const WS_POPUP: u32 = 0x8000_0000;
+pub(crate) const WS_EX_LAYERED: u32 = 0x0008_0000;
+pub(crate) const WS_EX_TOPMOST: u32 = 0x0000_0008;
+pub(crate) const WS_EX_TOOLWINDOW: u32 = 0x0000_0080;
+pub(crate) const WS_EX_NOACTIVATE: u32 = 0x0800_0000;
+pub(crate) const LWA_ALPHA: u32 = 0x2;
+pub(crate) const SM_XVIRTUALSCREEN: i32 = 76;
+pub(crate) const SM_YVIRTUALSCREEN: i32 = 77;
+pub(crate) const SM_CXVIRTUALSCREEN: i32 = 78;
+pub(crate) const SM_CYVIRTUALSCREEN: i32 = 79;
+pub(crate) const BLACK_BRUSH: i32 = 4;
+pub(crate) const SWP_NOACTIVATE: u32 = 0x0010;
+pub(crate) const SWP_SHOWWINDOW: u32 = 0x0040;
+pub(crate) const HWND_TOPMOST: isize = -1;
+pub(crate) const PM_REMOVE: u32 = 0x1;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -72,6 +87,34 @@ pub(crate) struct DISPLAY_DEVICEW {
     pub device_key: [u16; 128],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct Msg {
+    pub hwnd: isize,
+    pub message: u32,
+    pub w_param: usize,
+    pub l_param: isize,
+    pub time: u32,
+    pub pt: Pointl,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct WndClassExW {
+    pub cb_size: u32,
+    pub style: u32,
+    pub lpfn_wnd_proc: usize,
+    pub cb_cls_extra: i32,
+    pub cb_wnd_extra: i32,
+    pub h_instance: usize,
+    pub h_icon: usize,
+    pub h_cursor: usize,
+    pub h_background: usize,
+    pub lpsz_menu_name: *const u16,
+    pub lpsz_class_name: *const u16,
+    pub h_icon_sm: usize,
+}
+
 #[link(name = "user32")]
 unsafe extern "system" {
     pub(crate) fn EnumDisplayDevicesW(
@@ -92,6 +135,58 @@ unsafe extern "system" {
         dw_flags: u32,
         l_param: *const (),
     ) -> i32;
+    pub(crate) fn RegisterClassExW(lp_wnd_class: *const WndClassExW) -> u16;
+    pub(crate) fn CreateWindowExW(
+        dw_ex_style: u32,
+        lp_class_name: *const u16,
+        lp_window_name: *const u16,
+        dw_style: u32,
+        x: i32,
+        y: i32,
+        n_width: i32,
+        n_height: i32,
+        h_wnd_parent: usize,
+        h_menu: usize,
+        h_instance: usize,
+        lp_param: *const (),
+    ) -> usize;
+    pub(crate) fn DestroyWindow(h_wnd: usize) -> i32;
+    pub(crate) fn DefWindowProcW(h_wnd: usize, msg: u32, w_param: usize, l_param: isize) -> isize;
+    pub(crate) fn SetLayeredWindowAttributes(
+        h_wnd: usize,
+        cr_key: u32,
+        b_alpha: u8,
+        dw_flags: u32,
+    ) -> i32;
+    pub(crate) fn GetSystemMetrics(n_index: i32) -> i32;
+    pub(crate) fn SetWindowPos(
+        h_wnd: usize,
+        h_wnd_insert_after: isize,
+        x: i32,
+        y: i32,
+        cx: i32,
+        cy: i32,
+        u_flags: u32,
+    ) -> i32;
+    pub(crate) fn PeekMessageW(
+        lp_msg: *mut Msg,
+        h_wnd: usize,
+        w_msg_filter_min: u32,
+        w_msg_filter_max: u32,
+        w_remove_msg: u32,
+    ) -> i32;
+    pub(crate) fn TranslateMessage(lp_msg: *const Msg) -> i32;
+    pub(crate) fn DispatchMessageW(lp_msg: *const Msg) -> isize;
+}
+
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    pub(crate) fn GetModuleHandleW(lp_module_name: *const u16) -> usize;
+}
+
+#[link(name = "gdi32")]
+unsafe extern "system" {
+    pub(crate) fn GetStockObject(i: i32) -> usize;
 }
 
 pub(crate) fn encode_wide(s: &str) -> Vec<u16> {
@@ -178,5 +273,43 @@ mod tests {
     fn wide_to_string_lone_surrogate_is_replacement_char() {
         let w = [0xD800, 0];
         assert_eq!(wide_to_string(&w), "\u{FFFD}");
+    }
+
+    #[test]
+    fn fade_window_constants() {
+        assert_eq!(WS_POPUP, 0x8000_0000);
+        assert_eq!(WS_EX_LAYERED, 0x0008_0000);
+        assert_eq!(WS_EX_TOPMOST, 0x0000_0008);
+        assert_eq!(WS_EX_TOOLWINDOW, 0x0000_0080);
+        assert_eq!(WS_EX_NOACTIVATE, 0x0800_0000);
+        assert_eq!(LWA_ALPHA, 0x2);
+        assert_eq!(SM_XVIRTUALSCREEN, 76);
+        assert_eq!(SM_YVIRTUALSCREEN, 77);
+        assert_eq!(SM_CXVIRTUALSCREEN, 78);
+        assert_eq!(SM_CYVIRTUALSCREEN, 79);
+        assert_eq!(BLACK_BRUSH, 4);
+        assert_eq!(SWP_NOACTIVATE, 0x0010);
+        assert_eq!(SWP_SHOWWINDOW, 0x0040);
+        assert_eq!(HWND_TOPMOST, -1);
+        assert_eq!(PM_REMOVE, 0x1);
+    }
+
+    #[test]
+    fn msg_layout_is_48_bytes_on_x64() {
+        assert_eq!(std::mem::size_of::<Msg>(), 48);
+    }
+
+    #[test]
+    fn wnd_class_layout_is_80_bytes_on_x64() {
+        assert_eq!(std::mem::size_of::<WndClassExW>(), 80);
+    }
+
+    #[test]
+    fn wnd_class_field_offsets() {
+        assert_eq!(offset_of!(WndClassExW, cb_size), 0);
+        assert_eq!(offset_of!(WndClassExW, lpfn_wnd_proc), 8);
+        assert_eq!(offset_of!(WndClassExW, h_background), 48);
+        assert_eq!(offset_of!(WndClassExW, lpsz_class_name), 64);
+        assert_eq!(offset_of!(WndClassExW, h_icon_sm), 72);
     }
 }
