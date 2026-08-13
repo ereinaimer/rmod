@@ -7,18 +7,20 @@
 
 mod caps;
 mod ls;
+mod main;
 mod max;
 mod set;
 
 // Import via `crate::cli`, not `crate::cli::help`, so the `pub use help::{...}` re-exports in `crate::cli` stay referenced (direct imports would dead-code them and trip clippy).
 use crate::cli::{
     Command, Confirm, HelpTopic, Target, caps as caps_help, confirm_keep, help, ls as ls_help,
-    max as max_help, set as set_help, version,
+    main_help, max as max_help, set as set_help, version,
 };
 use crate::sys::windows::{self, Change, Mode};
 
 use caps::run_caps;
 use ls::run_list;
+use main::run_main;
 use max::run_max;
 use set::run_set;
 
@@ -56,6 +58,12 @@ pub fn run(command: Command) -> i32 {
             println!("{}", set_help());
             0
         }
+        Command::Help {
+            topic: Some(HelpTopic::Main),
+        } => {
+            println!("{}", main_help());
+            0
+        }
         Command::Version => {
             println!("{}", version());
             0
@@ -63,6 +71,7 @@ pub fn run(command: Command) -> i32 {
         Command::List => run_list(),
         Command::Caps { target } => run_caps(target),
         Command::Max { target, yes } => run_max(target, yes),
+        Command::Main { target, yes } => run_main(target, yes),
         Command::Set {
             width,
             height,

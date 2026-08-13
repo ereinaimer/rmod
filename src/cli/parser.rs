@@ -18,6 +18,8 @@ pub enum HelpTopic {
     Caps,
     /// `rmod WxH@R -h`
     Set,
+    /// `rmod main:N -h`
+    Main,
 }
 
 /// Every top-level command rmod accepts.
@@ -58,6 +60,13 @@ pub enum Command {
     },
     /// `-V`/`--version` — print the version.
     Version,
+    /// `main:N` — make monitor N the main display.
+    Main {
+        /// Which display to target (must be :N, never :* or Primary).
+        target: Target,
+        /// `-y`/`--yes` — skip the confirmation prompt.
+        yes: bool,
+    },
 }
 
 /// Which display(s) a command targets.
@@ -139,6 +148,18 @@ pub fn parse_from<I: Iterator<Item = String>>(args: I) -> Result<Command, String
             HelpTopic::Max,
             true,
         )?,
+        "main" => {
+            let tail = args.get(1).cloned();
+            match tail.as_deref() {
+                Some("-h") | Some("--help") => Ok(Command::Help {
+                    topic: Some(HelpTopic::Main),
+                }),
+                Some("-y") | Some("--yes") | None => {
+                    Err("missing monitor number for 'main'".to_string())
+                }
+                Some(other) => Err(format!("unexpected argument '{other}'")),
+            }?
+        }
         "caps" => parse_tail(
             "caps",
             args.get(1).cloned(),
@@ -155,6 +176,22 @@ pub fn parse_from<I: Iterator<Item = String>>(args: I) -> Result<Command, String
                 args.get(1).cloned(),
                 Command::Max { target, yes: false },
                 HelpTopic::Max,
+                true,
+            )?
+        }
+        _ if cmd.starts_with("main:") => {
+            let target = parse_monitor(&cmd[5..], cmd)?;
+            if target == Target::All {
+                return Err("main does not accept :*".to_string());
+            }
+            if let Target::Index(0) = target {
+                return Err("invalid monitor id in 'main:0'".to_string());
+            }
+            parse_tail(
+                "main",
+                args.get(1).cloned(),
+                Command::Main { target, yes: false },
+                HelpTopic::Main,
                 true,
             )?
         }
@@ -203,9 +240,16 @@ fn parse_tail(
                 target,
                 yes: true,
             },
+            Command::Main { target, .. } => Command::Main { target, yes: true },
             other => other,
         }),
-        Some(other) => Err(format!("unknown argument '{other}' for '{name}'")),
+        Some(other) => {
+            if name == "main" {
+                Err(format!("unexpected argument '{other}'"))
+            } else {
+                Err(format!("unknown argument '{other}' for '{name}'"))
+            }
+        }
         None => Ok(cmd),
     }
 }
@@ -1445,5 +1489,85 @@ mod tests {
                 yes: false,
             })
         );
+    }
+
+    #[test]
+    fn main_with_monitor() {
+        assert_eq!(
+            parse(&["main:2"]),
+            Ok(Command::Main {
+                target: Target::Index(2),
+                yes: false
+            })
+        );
+    }
+
+    #[test]
+    fn main_with_monitor_yes() {
+        assert_eq!(
+            parse(&["main:2", "-y"]),
+            Ok(Command::Main {
+                target: Target::Index(2),
+                yes: true
+            })
+        );
+    }
+
+    #[test]
+    fn main_no_monitor_is_error() {
+        let err = parse(&["main"]).unwrap_err();
+        assert_eq!(err, "missing monitor number for 'main'");
+        let err = parse(&["main", "-y"]).unwrap_err();
+        assert_eq!(err, "missing monitor number for 'main'");
+    }
+
+    #[test]
+    fn main_help_flags() {
+        assert_eq!(parse(&["main", "-h"]), Ok(help(Some(HelpTopic::Main))));
+        assert_eq!(parse(&["main", "--help"]), Ok(help(Some(HelpTopic::Main))));
+    }
+
+    #[test]
+    fn main_with_monitor_help() {
+        assert_eq!(parse(&["main:2", "-h"]), Ok(help(Some(HelpTopic::Main))));
+        assert_eq!(
+            parse(&["main:2", "--help"]),
+            Ok(help(Some(HelpTopic::Main)))
+        );
+    }
+
+    #[test]
+    fn main_all_target_is_error() {
+        let err = parse(&["main:*"]).unwrap_err();
+        assert_eq!(err, "main does not accept :*");
+    }
+
+    #[test]
+    fn main_invalid_monitor_id() {
+        assert_eq!(
+            parse(&["main:"]).unwrap_err(),
+            "invalid monitor id in 'main:'"
+        );
+        assert_eq!(
+            parse(&["main:x"]).unwrap_err(),
+            "invalid monitor id in 'main:x'"
+        );
+        assert_eq!(
+            parse(&["main:0"]).unwrap_err(),
+            "invalid monitor id in 'main:0'"
+        );
+    }
+
+    #[test]
+    fn main_extra_argument_is_error() {
+        assert_eq!(
+            parse(&["main:2", "extra"]).unwrap_err(),
+            "unexpected argument 'extra'"
+        );
+    }
+
+    #[test]
+    fn main_monitor_overflow_is_error() {
+        assert!(parse(&["main:4294967296"]).is_err());
     }
 }

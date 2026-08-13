@@ -424,3 +424,45 @@ fn orientation_compact_help() {
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert!(stdout(&out).contains("Angle options"));
 }
+
+#[test]
+fn main_primary_is_noop() {
+    let out = rmod(&["main:1"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("already the main display"));
+    assert!(!stdout(&out).contains("keep changes"));
+    assert!(!stdout(&out).contains("applied"));
+}
+
+#[test]
+fn main_no_monitor_is_error() {
+    let out = rmod(&["main"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("missing monitor number for 'main'"));
+}
+
+#[test]
+fn main_all_target_is_error() {
+    let out = rmod(&["main:*"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("main does not accept"));
+}
+
+#[test]
+fn main_zero_monitor_is_error() {
+    let out = rmod(&["main:0"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("invalid monitor id"));
+}
+
+#[test]
+fn main_help_flag() {
+    assert!(rmod(&["main", "-h"]).status.success());
+    assert!(rmod(&["main", "--help"]).status.success());
+}
+
+#[test]
+fn main_with_monitor_help() {
+    assert!(rmod(&["main:2", "-h"]).status.success());
+    assert!(rmod(&["main:2", "--help"]).status.success());
+}

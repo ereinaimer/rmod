@@ -14,6 +14,7 @@ Usage:
   rmod max[:N|:*] [-y]        max resolution (primary, or monitor N; :* = every monitor)
   rmod caps[:N|:*]            list supported resolutions (primary, or monitor N; :* = every monitor)
   rmod WxH@R[:N|:*][/angle] [-y]      set resolution and refresh rate (primary, or monitor N; :* = every monitor)
+  rmod main:N [-y]            make monitor N the main display
 
   :N = monitor number from 'rmod ls'; omit = primary display.
   :* = every monitor.
@@ -32,6 +33,7 @@ Examples:
   rmod 4k
   rmod 1920x1080@144
   rmod 1920x1080@60:2
+  rmod main:2
 
 Options:
   -h, --help              print help
@@ -179,6 +181,26 @@ Options:
   -y, --yes               skip the confirmation prompt".to_string()
 }
 
+/// Help page for the `main` command.
+pub fn main_help() -> String {
+    "rmod main:N [-y]
+make monitor N the main display
+
+Usage:
+  rmod main:N [-y]
+
+  N = monitor number from rmod ls
+  :* is not accepted
+
+Examples:
+  rmod main:2
+
+Options:
+  -h, --help   print help
+  -y, --yes    skip confirmation"
+        .to_string()
+}
+
 /// Version string, e.g. `rmod 0.1.0`.
 pub fn version() -> String {
     format!("rmod {}", env!("CARGO_PKG_VERSION"))
@@ -276,6 +298,26 @@ mod tests {
         assert!(h.contains("-o, --orientation O"));
         assert!(h.contains("rmod 1920x1080:2/90"));
         assert!(h.contains("rmod -o 90"));
+    }
+
+    #[test]
+    fn main_help_page() {
+        let h = main_help();
+        assert!(h.contains("rmod main:N [-y]"));
+        assert!(h.contains("make monitor N the main display"));
+        assert!(h.contains("Usage:"));
+        assert!(h.contains("rmod main:N"));
+        assert!(h.contains("rmod main:2"));
+        assert!(h.contains("-h, --help"));
+        assert!(h.contains("-y, --yes"));
+    }
+
+    #[test]
+    fn top_help_lists_main_command() {
+        let h = help();
+        assert!(h.contains("rmod main:N [-y]"));
+        assert!(h.contains("make monitor N the main display"));
+        assert!(h.contains("rmod main:2"));
     }
 
     #[test]

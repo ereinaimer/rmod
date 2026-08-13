@@ -12,6 +12,7 @@ pub(crate) const DM_PELSWIDTH: u32 = 0x0008_0000;
 pub(crate) const DM_PELSHEIGHT: u32 = 0x0010_0000;
 pub(crate) const DM_DISPLAYFREQUENCY: u32 = 0x0040_0000;
 pub(crate) const DM_DISPLAYORIENTATION: u32 = 0x0000_0080;
+pub(crate) const DM_POSITION: u32 = 0x0000_0020;
 pub(crate) const DISP_CHANGE_SUCCESSFUL: i32 = 0;
 pub(crate) const DISP_CHANGE_RESTART: i32 = 1;
 pub(crate) const DISP_CHANGE_FAILED: i32 = -1;
@@ -37,14 +38,14 @@ pub(crate) const HWND_TOPMOST: isize = -1;
 pub(crate) const PM_REMOVE: u32 = 0x1;
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Pointl {
     pub x: i32,
     pub y: i32,
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct DevmodeW {
     pub dm_device_name: [u16; 32],
     pub dm_spec_version: u16,
@@ -211,6 +212,7 @@ mod tests {
         assert_eq!(DM_PELSHEIGHT, 0x0010_0000);
         assert_eq!(DM_DISPLAYFREQUENCY, 0x0040_0000);
         assert_eq!(DM_DISPLAYORIENTATION, 0x0000_0080);
+        assert_eq!(DM_POSITION, 0x0000_0020);
         assert_eq!(DISP_CHANGE_SUCCESSFUL, 0);
         assert_eq!(DISP_CHANGE_RESTART, 1);
         assert_eq!(DISP_CHANGE_FAILED, -1);

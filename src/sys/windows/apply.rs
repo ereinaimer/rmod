@@ -1,15 +1,16 @@
-//! Mode-application backend for the `max` and `set` commands.
+//! Mode-application backend for the `max`, `set` and `main` commands.
 //!
 //! Picks the highest-resolution supported mode (`max`) or applies a
 //! requested resolution/refresh (`set`), tests it with a dry run, then
 //! applies it and persists it to the registry. A mode that is already
-//! active is reported as unchanged and never re-applied.
+//! active is reported as unchanged and never re-applied. `main` swaps
+//! desktop positions so a display becomes the primary (origin 0,0).
 
 use super::bindings::{
     CDS_TEST, CDS_UPDATEREGISTRY, ChangeDisplaySettingsExW, DISP_CHANGE_BADDUALVIEW,
     DISP_CHANGE_BADFLAGS, DISP_CHANGE_BADMODE, DISP_CHANGE_BADPARAM, DISP_CHANGE_FAILED,
     DISP_CHANGE_NOTUPDATED, DISP_CHANGE_RESTART, DISP_CHANGE_SUCCESSFUL, DM_DISPLAYFREQUENCY,
-    DM_DISPLAYORIENTATION, DM_PELSHEIGHT, DM_PELSWIDTH, DevmodeW, encode_wide,
+    DM_DISPLAYORIENTATION, DM_PELSHEIGHT, DM_PELSWIDTH, DM_POSITION, DevmodeW, Pointl, encode_wide,
 };
 use super::capabilities::{self, Mode};
 use super::fade;
@@ -53,6 +54,31 @@ pub enum ApplyOutcome {
     Applied(Change),
     /// The requested mode was already active; nothing was applied.
     Unchanged(Change),
+}
+
+/// A display that is being promoted to main display.
+#[derive(Debug, PartialEq)]
+pub struct MainChange {
+    /// The 1-based monitor number of the promoted display.
+    pub monitor: u32,
+    /// The display label of the promoted display.
+    pub display: String,
+    /// The `(device, devmode)` pairs to apply, in order: the promoted
+    /// display moved to origin 0,0, then the old primary moved to the
+    /// promoted display's previous position.
+    pub applied: Vec<(String, DevmodeW)>,
+    /// The original devmodes for revert, in order: the old primary back
+    /// to origin 0,0, then the promoted display back to its old position.
+    pub previous: Vec<(String, DevmodeW)>,
+}
+
+/// The result of promoting a display to main display.
+#[derive(Debug, PartialEq)]
+pub enum MainOutcome {
+    /// The display was promoted and can be reverted with the change.
+    Applied(MainChange),
+    /// The display was already the main display; nothing was applied.
+    Unchanged(String),
 }
 
 /// Builds the outcome for an attempted change; identical modes and a
@@ -255,6 +281,100 @@ pub fn revert(
     let devmode = build_devmode(&previous, &base, previous_orientation);
     fade::transition(&name, &devmode, || apply_mode(&name, &display, &devmode))?;
     Ok(previous)
+}
+
+/// Makes the monitor with the 1-based number `monitor` the main display by
+/// swapping desktop positions with the current primary.
+///
+/// The promoted display's current mode is moved to origin 0,0 and the old
+/// primary takes its previous position; both changes are applied in that
+/// order and persisted to the registry. Returns
+/// [`MainOutcome::Unchanged`] when the display is already the main
+/// display.
+///
+/// # Errors
+/// Unknown monitor number or a rejected display change.
+#[allow(dead_code)]
+pub fn make_main(monitor: u32) -> Result<MainOutcome, String> {
+    let names = query::enumerate_devices();
+    let (target_index, target_name) = query::resolve_device(Some(monitor), &names)?;
+    let (_, partner_name) = query::resolve_device(None, &names)?;
+    let display = query::display_label(&target_name, target_index as u32 + 1);
+    let target_dev =
+        query::current_mode(&target_name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
+    let partner_dev =
+        query::current_mode(&partner_name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
+    if is_primary(&target_dev) {
+        return Ok(MainOutcome::Unchanged(display));
+    }
+    let (new_primary, new_partner) = build_swap(&target_dev, &partner_dev);
+    let applied = vec![
+        (target_name.clone(), new_primary),
+        (partner_name.clone(), new_partner),
+    ];
+    for (name, devmode) in &applied {
+        apply_position(name, devmode)?;
+    }
+    let previous = vec![(partner_name, partner_dev), (target_name, target_dev)];
+    Ok(MainOutcome::Applied(MainChange {
+        monitor,
+        display,
+        applied,
+        previous,
+    }))
+}
+
+/// Undoes a promotion by re-applying the original positions captured in a
+/// [`MainChange`]: the old primary back to origin 0,0, then the promoted
+/// display back to its previous position.
+///
+/// # Errors
+/// A rejected display change.
+#[allow(dead_code)]
+pub fn revert_main(change: &MainChange) -> Result<(), String> {
+    for (name, devmode) in &change.previous {
+        apply_position(name, devmode)?;
+    }
+    Ok(())
+}
+
+/// True when a device mode sits at desktop origin (0,0), the definition
+/// of the main display.
+fn is_primary(devmode: &DevmodeW) -> bool {
+    devmode.dm_position.x == 0 && devmode.dm_position.y == 0
+}
+
+/// Builds the two devmodes of a primary swap: the target moved to origin
+/// 0,0 and the current primary moved to the target's previous position.
+/// Both devmodes gain the `DM_POSITION` field flag; everything else is
+/// copied through unchanged and the inputs are not modified.
+fn build_swap(target: &DevmodeW, partner: &DevmodeW) -> (DevmodeW, DevmodeW) {
+    let mut new_primary = *target;
+    new_primary.dm_position = Pointl { x: 0, y: 0 };
+    new_primary.dm_fields |= DM_POSITION;
+    let mut new_partner = *partner;
+    new_partner.dm_position = target.dm_position;
+    new_partner.dm_fields |= DM_POSITION;
+    (new_primary, new_partner)
+}
+
+/// Applies a position change to a device and persists it; positions have
+/// no dry-run validation, so the change is applied directly.
+fn apply_position(name: &str, devmode: &DevmodeW) -> Result<(), String> {
+    let name_ptr = encode_wide(name);
+    let applied = unsafe {
+        ChangeDisplaySettingsExW(
+            name_ptr.as_ptr(),
+            devmode,
+            0,
+            CDS_UPDATEREGISTRY,
+            std::ptr::null(),
+        )
+    };
+    if applied != DISP_CHANGE_SUCCESSFUL {
+        return Err(describe_change_result(applied));
+    }
+    Ok(())
 }
 
 /// Validates a mode with a dry run, then applies and persists it.
@@ -1278,5 +1398,88 @@ mod tests {
             devmode: base,
             outcome: outcome_of(1, String::new(), mode, previous, None, None),
         }
+    }
+}
+
+#[cfg(test)]
+mod main_tests {
+    use super::super::bindings::Pointl;
+    use super::*;
+
+    fn devmode_at(x: i32, y: i32) -> DevmodeW {
+        let mut devmode: DevmodeW = unsafe { std::mem::zeroed() };
+        devmode.dm_position = Pointl { x, y };
+        devmode
+    }
+
+    #[test]
+    fn is_primary_origin_is_primary() {
+        assert!(is_primary(&devmode_at(0, 0)));
+    }
+
+    #[test]
+    fn is_primary_other_position_is_not_primary() {
+        assert!(!is_primary(&devmode_at(-1920, 0)));
+        assert!(!is_primary(&devmode_at(0, 1080)));
+        assert!(!is_primary(&devmode_at(1920, 1080)));
+    }
+
+    #[test]
+    fn build_swap_moves_target_to_origin() {
+        let target = devmode_at(1920, 0);
+        let partner = devmode_at(0, 0);
+        let (new_primary, new_partner) = build_swap(&target, &partner);
+        assert_eq!(new_primary.dm_position.x, 0);
+        assert_eq!(new_primary.dm_position.y, 0);
+        assert_eq!(new_partner.dm_position.x, 1920);
+        assert_eq!(new_partner.dm_position.y, 0);
+    }
+
+    #[test]
+    fn build_swap_marks_position_in_fields() {
+        let mut target = devmode_at(1920, 0);
+        target.dm_fields = DM_PELSWIDTH | DM_PELSHEIGHT;
+        let partner = devmode_at(0, 0);
+        let (new_primary, new_partner) = build_swap(&target, &partner);
+        assert_ne!(new_primary.dm_fields & DM_POSITION, 0);
+        assert_ne!(new_partner.dm_fields & DM_POSITION, 0);
+        assert_eq!(new_primary.dm_fields, target.dm_fields | DM_POSITION);
+        assert_eq!(new_partner.dm_fields, partner.dm_fields | DM_POSITION);
+    }
+
+    #[test]
+    fn build_swap_preserves_mode_fields() {
+        let mut target = devmode_at(1920, 0);
+        target.dm_pels_width = 1920;
+        target.dm_pels_height = 1080;
+        target.dm_display_frequency = 120;
+        target.dm_display_orientation = 1;
+        let mut partner = devmode_at(0, 0);
+        partner.dm_pels_width = 1920;
+        partner.dm_pels_height = 1080;
+        partner.dm_display_frequency = 60;
+        partner.dm_display_orientation = 0;
+        let (new_primary, new_partner) = build_swap(&target, &partner);
+        assert_eq!(new_primary.dm_pels_width, 1920);
+        assert_eq!(new_primary.dm_pels_height, 1080);
+        assert_eq!(new_primary.dm_display_frequency, 120);
+        assert_eq!(new_primary.dm_display_orientation, 1);
+        assert_eq!(new_partner.dm_pels_width, 1920);
+        assert_eq!(new_partner.dm_pels_height, 1080);
+        assert_eq!(new_partner.dm_display_frequency, 60);
+        assert_eq!(new_partner.dm_display_orientation, 0);
+    }
+
+    #[test]
+    fn build_swap_does_not_modify_inputs() {
+        let target = devmode_at(1920, 0);
+        let partner = devmode_at(0, 0);
+        let _ = build_swap(&target, &partner);
+        assert_eq!(target.dm_position.x, 1920);
+        assert_eq!(target.dm_position.y, 0);
+        assert_eq!(partner.dm_position.x, 0);
+        assert_eq!(partner.dm_position.y, 0);
+        assert_eq!(target.dm_fields, 0);
+        assert_eq!(partner.dm_fields, 0);
     }
 }

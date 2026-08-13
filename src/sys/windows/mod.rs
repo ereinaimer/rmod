@@ -12,7 +12,10 @@ mod fade;
 mod query;
 
 #[allow(unused_imports)]
-pub use apply::{ApplyOutcome, Change, Refresh, max, max_all, revert, set, set_all};
+pub use apply::{
+    ApplyOutcome, Change, MainChange, MainOutcome, Refresh, make_main, max, max_all, revert,
+    revert_main, set, set_all,
+};
 pub use capabilities::Mode;
 pub use query::Monitor;
 

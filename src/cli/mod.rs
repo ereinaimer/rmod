@@ -11,5 +11,5 @@ mod parser;
 
 pub use commands::run;
 pub use confirm::{Confirm, confirm_keep};
-pub use help::{caps, help, ls, max, set, version};
+pub use help::{caps, help, ls, main_help, max, set, version};
 pub use parser::{Command, HelpTopic, Target, parse};
