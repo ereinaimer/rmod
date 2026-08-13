@@ -5,16 +5,7 @@
 
 use std::env;
 
-/// Refresh rate handling for the set command.
-#[derive(Debug, PartialEq)]
-pub enum Refresh {
-    /// Leave the refresh rate unchanged.
-    Keep,
-    /// Use the highest refresh rate supported at the requested resolution.
-    Max,
-    /// Use an explicit refresh rate.
-    Fixed(u32),
-}
+pub use crate::sys::windows::apply::Refresh;
 
 /// Help topics reachable via the command-specific `-h`/`--help` flags.
 #[derive(Debug, PartialEq)]

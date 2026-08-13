@@ -5,12 +5,12 @@
 //! in [`bindings`]; device querying in [`query`]; mode enumeration in
 //! [`capabilities`]; mode application in [`apply`].
 
-mod apply;
+pub(crate) mod apply;
 mod bindings;
 mod capabilities;
 mod query;
 
-pub use apply::max;
+pub use apply::{max, set};
 pub use capabilities::Mode;
 pub use query::Monitor;
 

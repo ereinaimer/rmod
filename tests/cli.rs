@@ -208,3 +208,24 @@ fn max_zero_monitor_is_error() {
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("monitor 0 not found"));
 }
+
+#[test]
+fn set_nonexistent_monitor_is_error() {
+    let out = rmod(&["1920x1080@60:99"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("monitor 99 not found"));
+}
+
+#[test]
+fn set_zero_monitor_is_error() {
+    let out = rmod(&["1920x1080@60:0"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("monitor 0 not found"));
+}
+
+#[test]
+fn set_unsupported_mode_is_error() {
+    let out = rmod(&["9999x9999@1"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("failed to apply mode:"));
+}

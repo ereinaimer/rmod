@@ -117,9 +117,17 @@ fn main() {
                 2
             }
         },
-        Ok(_) => {
-            eprintln!("error: command not implemented yet");
-            2
+        Ok(cli::Command::Set { width, height, refresh, monitor }) => {
+            match sys::windows::set(monitor, width, height, refresh) {
+                Ok(mode) => {
+                    println!("applied {}x{} @ {}Hz", mode.width, mode.height, mode.refresh);
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    2
+                }
+            }
         }
         Err(e) => {
             eprintln!("error: {e}");

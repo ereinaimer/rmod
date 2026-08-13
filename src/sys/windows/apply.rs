@@ -1,7 +1,8 @@
-//! Mode-application backend for the `max` command.
+//! Mode-application backend for the `max` and `set` commands.
 //!
-//! Picks the highest-resolution supported mode, tests it with a dry run,
-//! then applies it and persists it to the registry.
+//! Picks the highest-resolution supported mode (`max`) or applies a
+//! requested resolution/refresh (`set`), tests it with a dry run, then
+//! applies it and persists it to the registry.
 
 use super::bindings::{
     encode_wide, ChangeDisplaySettingsExW, DEVMODEW, CDS_TEST, CDS_UPDATEREGISTRY,
@@ -11,6 +12,37 @@ use super::bindings::{
 };
 use super::capabilities::{self, Mode};
 use super::query;
+
+/// Refresh rate handling for the set command.
+#[derive(Debug, PartialEq)]
+pub enum Refresh {
+    /// Leave the refresh rate unchanged.
+    Keep,
+    /// Use the highest refresh rate supported at the requested resolution.
+    Max,
+    /// Use an explicit refresh rate.
+    Fixed(u32),
+}
+
+/// Applies a resolution and refresh policy to a display.
+///
+/// `monitor` is the 1-based number from `ls`; `None` selects the primary.
+///
+/// # Errors
+/// Unknown monitor, no matching mode for `@max`, or a mode the display
+/// rejects.
+pub fn set(monitor: Option<u32>, width: u32, height: u32, refresh: Refresh) -> Result<Mode, String> {
+    let names = query::enumerate_devices();
+    let (index, name) = query::resolve_device(monitor, &names)?;
+    let base = query::current_mode(&name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
+    let modes = capabilities::enumerate_modes(&name);
+    let refresh =
+        resolve_refresh(refresh, &modes, width, height, base.dm_display_frequency, index as u32 + 1)?;
+    let mode = Mode { width, height, refresh };
+    let devmode = build_devmode(&mode, &base);
+    apply_mode(&name, &devmode)?;
+    Ok(mode)
+}
 
 /// Applies the best supported mode to a monitor and returns it.
 ///
@@ -28,9 +60,15 @@ pub fn max(monitor: Option<u32>) -> Result<Mode, String> {
         .ok_or_else(|| format!("no supported modes found for monitor {}", index + 1))?;
     let base = query::current_mode(&name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
     let devmode = build_devmode(&best, &base);
-    let name_ptr = encode_wide(&name);
+    apply_mode(&name, &devmode)?;
+    Ok(best)
+}
+
+/// Validates a mode with a dry run, then applies and persists it.
+fn apply_mode(name: &str, devmode: &DEVMODEW) -> Result<(), String> {
+    let name_ptr = encode_wide(name);
     let test = unsafe {
-        ChangeDisplaySettingsExW(name_ptr.as_ptr(), &devmode, 0, CDS_TEST, std::ptr::null())
+        ChangeDisplaySettingsExW(name_ptr.as_ptr(), devmode, 0, CDS_TEST, std::ptr::null())
     };
     if test != DISP_CHANGE_SUCCESSFUL {
         return Err(format!("failed to apply mode: {}", describe_change_result(test)));
@@ -38,7 +76,7 @@ pub fn max(monitor: Option<u32>) -> Result<Mode, String> {
     let applied = unsafe {
         ChangeDisplaySettingsExW(
             name_ptr.as_ptr(),
-            &devmode,
+            devmode,
             0,
             CDS_UPDATEREGISTRY,
             std::ptr::null(),
@@ -50,7 +88,7 @@ pub fn max(monitor: Option<u32>) -> Result<Mode, String> {
             describe_change_result(applied)
         ));
     }
-    Ok(best)
+    Ok(())
 }
 
 fn describe_change_result(code: i32) -> String {
@@ -80,6 +118,30 @@ fn build_devmode(mode: &Mode, current: &DEVMODEW) -> DEVMODEW {
 
 fn best_mode(modes: Vec<Mode>) -> Option<Mode> {
     capabilities::normalize_modes(modes).pop()
+}
+
+fn best_refresh(modes: &[Mode], width: u32, height: u32) -> Option<u32> {
+    modes
+        .iter()
+        .filter(|m| m.width == width && m.height == height)
+        .map(|m| m.refresh)
+        .max()
+}
+
+fn resolve_refresh(
+    policy: Refresh,
+    modes: &[Mode],
+    width: u32,
+    height: u32,
+    current_refresh: u32,
+    monitor_number: u32,
+) -> Result<u32, String> {
+    match policy {
+        Refresh::Keep => Ok(current_refresh),
+        Refresh::Fixed(r) => Ok(r),
+        Refresh::Max => best_refresh(modes, width, height)
+            .ok_or_else(|| format!("monitor {monitor_number} does not support {width}x{height}")),
+    }
 }
 
 #[cfg(test)]
@@ -211,6 +273,94 @@ mod tests {
                 height: 768,
                 refresh: 60,
             })
+        );
+    }
+
+    #[test]
+    fn best_refresh_picks_highest_at_matching_resolution() {
+        let modes = vec![
+            Mode { width: 1920, height: 1080, refresh: 60 },
+            Mode { width: 1920, height: 1080, refresh: 120 },
+            Mode { width: 1920, height: 1080, refresh: 144 },
+            Mode { width: 2560, height: 1440, refresh: 240 },
+        ];
+        assert_eq!(best_refresh(&modes, 1920, 1080), Some(144));
+    }
+
+    #[test]
+    fn best_refresh_ignores_other_resolutions() {
+        let modes = vec![
+            Mode { width: 1920, height: 1080, refresh: 60 },
+            Mode { width: 2560, height: 1440, refresh: 240 },
+        ];
+        assert_eq!(best_refresh(&modes, 1920, 1080), Some(60));
+    }
+
+    #[test]
+    fn best_refresh_no_matching_resolution_returns_none() {
+        let modes = vec![Mode { width: 2560, height: 1440, refresh: 144 }];
+        assert_eq!(best_refresh(&modes, 1920, 1080), None);
+    }
+
+    #[test]
+    fn resolve_refresh_keep_returns_current_refresh() {
+        let modes = vec![Mode { width: 1920, height: 1080, refresh: 144 }];
+        assert_eq!(resolve_refresh(Refresh::Keep, &modes, 1920, 1080, 59, 1), Ok(59));
+    }
+
+    #[test]
+    fn resolve_refresh_fixed_returns_the_value() {
+        let modes = vec![Mode { width: 1920, height: 1080, refresh: 60 }];
+        assert_eq!(
+            resolve_refresh(Refresh::Fixed(75), &modes, 1920, 1080, 59, 1),
+            Ok(75)
+        );
+    }
+
+    #[test]
+    fn resolve_refresh_max_picks_best_matching_mode() {
+        let modes = vec![
+            Mode { width: 1920, height: 1080, refresh: 60 },
+            Mode { width: 1920, height: 1080, refresh: 144 },
+        ];
+        assert_eq!(resolve_refresh(Refresh::Max, &modes, 1920, 1080, 60, 1), Ok(144));
+    }
+
+    #[test]
+    fn resolve_refresh_max_no_matching_mode_is_error() {
+        let modes = vec![Mode { width: 2560, height: 1440, refresh: 60 }];
+        assert_eq!(
+            resolve_refresh(Refresh::Max, &modes, 320, 200, 60, 1),
+            Err("monitor 1 does not support 320x200".to_string())
+        );
+    }
+
+    #[test]
+    fn apply_mode_accepts_current_mode() {
+        let names = query::enumerate_devices();
+        if names.is_empty() {
+            return;
+        }
+        let Some(current) = query::current_mode(&names[0]) else {
+            return;
+        };
+        assert_eq!(apply_mode(&names[0], &current), Ok(()));
+    }
+
+    #[test]
+    fn apply_mode_rejects_unsupported_mode() {
+        let names = query::enumerate_devices();
+        if names.is_empty() {
+            return;
+        }
+        let base = query::current_mode(&names[0]).unwrap_or_else(|| unsafe { std::mem::zeroed() });
+        let devmode = build_devmode(
+            &Mode { width: 1, height: 1, refresh: 1 },
+            &base,
+        );
+        assert_eq!(
+            apply_mode(&names[0], &devmode),
+            Err("failed to apply mode: the display does not support this mode".to_string())
         );
     }
 }
