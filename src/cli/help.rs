@@ -105,6 +105,40 @@ Options:
     )
 }
 
+/// Help page for the `set` command (`WxH@R`).
+pub fn set() -> String {
+    format!(
+        "rmod WxH@R
+Apply a resolution and refresh rate to a display
+
+Usage:
+  rmod WxH@R[:N]          set resolution and refresh rate (primary, or monitor N)
+
+  R options:
+    @60                   fixed refresh rate
+    @max                  highest refresh rate at that resolution
+    omit @R               keep the current refresh rate
+
+  :N = monitor number from `rmod ls`; omit = primary display.
+
+Profiles:
+  720       1280x720
+  1080      1920x1080
+  1440      2560x1440
+  4k        3840x2160
+  8k        7680x4320
+
+Examples:
+  rmod 4k
+  rmod 1920x1080@144
+  rmod 1920x1080@60:2
+  rmod 1440@max
+
+Options:
+  -h, --help              print help"
+    )
+}
+
 /// Version string, e.g. `rmod 0.1.0`.
 pub fn version() -> String {
     format!("rmod {}", env!("CARGO_PKG_VERSION"))
@@ -172,6 +206,17 @@ mod tests {
         assert!(h.contains("rmod caps"));
         assert!(h.contains("Usage:"));
         assert!(h.contains("rmod caps:2"));
+        assert!(h.contains("-h, --help"));
+    }
+
+    #[test]
+    fn set_help() {
+        let h = set();
+        assert!(h.contains("rmod WxH@R"));
+        assert!(!h.contains("rmod set"));
+        assert!(h.contains("Usage:"));
+        assert!(h.contains("@max"));
+        assert!(h.contains("rmod 1920x1080@60:2"));
         assert!(h.contains("-h, --help"));
     }
 

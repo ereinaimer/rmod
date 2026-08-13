@@ -16,6 +16,8 @@ pub enum HelpTopic {
     Max,
     /// `rmod caps -h`
     Caps,
+    /// `rmod WxH@R -h`
+    Set,
 }
 
 /// Every top-level command rmod accepts.
@@ -41,7 +43,7 @@ pub enum Command {
         /// Monitor number; `None` = primary display.
         monitor: Option<u32>,
     },
-    /// `help [ls|max|caps]` or `-h`/`--help`.
+    /// `help [ls|max|caps|WxH@R]` or `-h`/`--help`.
     Help {
         /// Optional per-command topic.
         topic: Option<HelpTopic>,
@@ -93,7 +95,7 @@ pub fn parse_from<I: Iterator<Item = String>>(args: I) -> Result<Command, String
             let monitor = parse_monitor(&cmd[5..], &cmd)?;
             Command::Caps { monitor: Some(monitor) }
         }
-        _ => parse_set(&cmd)?,
+        _ => parse_set(&cmd, args.next())?,
     };
     if let Some(extra) = args.next() {
         return Err(format!("unexpected argument '{extra}'"));
@@ -114,7 +116,7 @@ fn parse_tail(
     }
 }
 
-fn parse_set(cmd: &str) -> Result<Command, String> {
+fn parse_set(cmd: &str, tail: Option<String>) -> Result<Command, String> {
     let (spec, monitor) = match cmd.split_once(':') {
         Some((spec, m)) => (spec, Some(parse_monitor(m, cmd)?)),
         None => (cmd, None),
@@ -133,12 +135,17 @@ fn parse_set(cmd: &str) -> Result<Command, String> {
             None => return Err(format!("unknown profile or invalid resolution '{cmd}'")),
         },
     };
-    Ok(Command::Set {
+    let command = Command::Set {
         width,
         height,
         refresh: refresh.unwrap_or(Refresh::Keep),
         monitor,
-    })
+    };
+    match tail.as_deref() {
+        Some("-h" | "--help") => Ok(Command::Help { topic: Some(HelpTopic::Set) }),
+        Some(other) => Err(format!("unexpected argument '{other}'")),
+        None => Ok(command),
+    }
 }
 
 fn parse_refresh(r: &str, cmd: &str) -> Result<Refresh, String> {
@@ -248,6 +255,26 @@ mod tests {
     fn caps_help_flags() {
         assert_eq!(parse(&["caps", "-h"]), Ok(help(Some(HelpTopic::Caps))));
         assert_eq!(parse(&["caps", "--help"]), Ok(help(Some(HelpTopic::Caps))));
+    }
+
+    #[test]
+    fn set_help_flags() {
+        assert_eq!(parse(&["1920x1080@60", "-h"]), Ok(help(Some(HelpTopic::Set))));
+        assert_eq!(parse(&["4k", "--help"]), Ok(help(Some(HelpTopic::Set))));
+        assert_eq!(
+            parse(&["1920x1080@60:2", "-h"]),
+            Ok(help(Some(HelpTopic::Set)))
+        );
+    }
+
+    #[test]
+    fn set_help_extra_argument_is_error() {
+        assert!(parse(&["1920x1080@60", "-h", "foo"]).is_err());
+    }
+
+    #[test]
+    fn set_unknown_argument_is_error() {
+        assert!(parse(&["1920x1080@60", "foo"]).is_err());
     }
 
     #[test]

@@ -29,6 +29,10 @@ fn main() {
             println!("{}", cli::caps());
             0
         }
+        Ok(cli::Command::Help { topic: Some(cli::HelpTopic::Set) }) => {
+            println!("{}", cli::set());
+            0
+        }
         Ok(cli::Command::Version) => {
             println!("{}", cli::version());
             0
