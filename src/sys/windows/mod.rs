@@ -12,10 +12,12 @@ mod bindings;
 mod capabilities;
 mod fake;
 mod fade;
+mod layout;
 pub(crate) mod query;
 
 pub use apply::{ApplyOutcome, Change, MainChange, MainOutcome, Refresh};
 pub use capabilities::Mode;
+pub use layout::{Direction, PlacementChange};
 pub use query::Monitor;
 
 /// Lists every display attached to the desktop with its current settings.
@@ -189,6 +191,44 @@ pub fn revert_main(change: &MainChange<'_>) -> Result<(), String> {
         fake::revert_main(change)
     } else {
         apply::revert_main(change)
+    }
+}
+
+/// Places a monitor on a side of another monitor, swapping positions when
+/// the landing spot is occupied.
+///
+/// `monitor` is the 1-based number from [`list`]; `reference` is the
+/// monitor to position relative to.
+///
+/// # Errors
+/// Unknown monitor, placing a monitor relative to itself, or a rejected
+/// position change.
+#[allow(dead_code)]
+pub fn apply_placement(
+    monitor: u32,
+    direction: Direction,
+    reference: u32,
+) -> Result<PlacementChange, String> {
+    if fake::enabled() {
+        fake::apply_placement(monitor, direction, reference)
+    } else {
+        let names = query::enumerate_devices();
+        layout::apply_placement(monitor, direction, reference, &names)
+    }
+}
+
+/// Undoes a placement by re-applying the original positions.
+///
+/// See [`layout::revert_placement`].
+///
+/// # Errors
+/// A rejected position change.
+#[allow(dead_code)]
+pub fn revert_placement(change: &PlacementChange) -> Result<(), String> {
+    if fake::enabled() {
+        fake::revert_placement(change)
+    } else {
+        layout::revert_placement(change)
     }
 }
 

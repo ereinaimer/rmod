@@ -9,7 +9,9 @@
 use std::sync::OnceLock;
 
 use super::apply::{ApplyOutcome, Change, MainChange, MainOutcome, Refresh};
+use super::bindings::{DM_POSITION, DevmodeW, Pointl};
 use super::capabilities::Mode;
+use super::layout::{self, Direction, PlacementChange};
 use super::query::Monitor;
 
 const MONITOR_1_NAME: &str = "RMOD Fake Monitor 1";
@@ -31,6 +33,8 @@ fn monitor(number: u32) -> Option<Monitor> {
             width: 1920,
             height: 1080,
             refresh: 60,
+            x: 0,
+            y: 0,
         }),
         2 => Some(Monitor {
             number: 2,
@@ -39,6 +43,8 @@ fn monitor(number: u32) -> Option<Monitor> {
             width: 1920,
             height: 1080,
             refresh: 60,
+            x: 1920,
+            y: 0,
         }),
         _ => None,
     }
@@ -211,6 +217,56 @@ pub(crate) fn revert_main(_change: &MainChange<'_>) -> Result<(), String> {
     Ok(())
 }
 
+/// The synthetic devmode of a fake monitor.
+#[allow(dead_code)]
+fn fake_devmode(monitor: &Monitor) -> DevmodeW {
+    let mut devmode: DevmodeW = unsafe { std::mem::zeroed() };
+    devmode.dm_position = Pointl { x: monitor.x, y: monitor.y };
+    devmode.dm_pels_width = monitor.width;
+    devmode.dm_pels_height = monitor.height;
+    devmode.dm_display_frequency = monitor.refresh;
+    devmode
+}
+
+/// Places a fake monitor relative to another using the real placement
+/// math; the two-monitor fake world has no landing-spot collisions.
+#[allow(dead_code)]
+pub(crate) fn apply_placement(
+    monitor: u32,
+    direction: Direction,
+    reference: u32,
+) -> Result<PlacementChange, String> {
+    let target = resolve(Some(monitor))?;
+    let reference_monitor = resolve(Some(reference))?;
+    if reference_monitor.number == target.number {
+        return Err(format!(
+            "cannot place monitor {} relative to itself",
+            target.number
+        ));
+    }
+    let target_dev = fake_devmode(&target);
+    let reference_dev = fake_devmode(&reference_monitor);
+    let landing = layout::landing_position(direction, &reference_dev, &target_dev);
+    let mut moved = target_dev;
+    moved.dm_position = landing;
+    moved.dm_fields |= DM_POSITION;
+    let names = enumerate_devices();
+    let target_name = names[target.number as usize - 1].clone();
+    Ok(PlacementChange {
+        display: display_label(&target),
+        reference_display: display_label(&reference_monitor),
+        swap_display: None,
+        applied: vec![(target_name.clone(), moved)],
+        previous: vec![(target_name, target_dev)],
+    })
+}
+
+/// Undoes a fake placement; the fake never persists anything.
+#[allow(dead_code)]
+pub(crate) fn revert_placement(_change: &PlacementChange) -> Result<(), String> {
+    Ok(())
+}
+
 /// The fake device names, mirroring the two-monitor world.
 pub(crate) fn enumerate_devices() -> Vec<String> {
     vec![r"\\.\DISPLAY1".to_string(), r"\\.\DISPLAY2".to_string()]
@@ -358,5 +414,53 @@ mod tests {
     #[test]
     fn make_main_unknown_is_error() {
         assert_eq!(make_main(99, &[]), Err("monitor 99 not found".to_string()));
+    }
+
+    #[test]
+    fn apply_placement_places_monitor_left_of_primary() {
+        let change = apply_placement(2, Direction::Left, 1).unwrap();
+        assert_eq!(change.display, "RMOD Fake Monitor 2 [:2]");
+        assert_eq!(change.reference_display, "RMOD Fake Monitor 1 [:1]");
+        assert_eq!(change.swap_display, None);
+        assert_eq!(change.applied.len(), 1);
+        assert_eq!(change.applied[0].0, r"\\.\DISPLAY2");
+        assert_eq!(change.applied[0].1.dm_position, Pointl { x: -1920, y: 0 });
+        assert_ne!(change.applied[0].1.dm_fields & DM_POSITION, 0);
+        assert_eq!(change.applied[0].1.dm_pels_width, 1920);
+        assert_eq!(change.previous.len(), 1);
+        assert_eq!(change.previous[0].1.dm_position, Pointl { x: 1920, y: 0 });
+    }
+
+    #[test]
+    fn apply_placement_below_explicit_reference() {
+        let change = apply_placement(2, Direction::Below, 1).unwrap();
+        assert_eq!(change.reference_display, "RMOD Fake Monitor 1 [:1]");
+        assert_eq!(change.applied[0].1.dm_position, Pointl { x: 0, y: 1080 });
+    }
+
+    #[test]
+    fn apply_placement_self_reference_is_error() {
+        assert_eq!(
+            apply_placement(1, Direction::Left, 1),
+            Err("cannot place monitor 1 relative to itself".to_string())
+        );
+        assert_eq!(
+            apply_placement(2, Direction::Left, 2),
+            Err("cannot place monitor 2 relative to itself".to_string())
+        );
+    }
+
+    #[test]
+    fn apply_placement_unknown_monitor_is_error() {
+        assert_eq!(
+            apply_placement(99, Direction::Left, 1),
+            Err("monitor 99 not found".to_string())
+        );
+    }
+
+    #[test]
+    fn revert_placement_restores_fake_positions() {
+        let change = apply_placement(2, Direction::Left, 1).unwrap();
+        assert_eq!(revert_placement(&change), Ok(()));
     }
 }

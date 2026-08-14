@@ -1,22 +1,22 @@
 //! Command dispatch and display-change reporting.
 //!
 //! [`run`] executes a parsed [`Command`]: the per-command runners in the
-//! `ls`, `main` and `set` submodules apply the change via
+//! `layout`, `ls` and `set` submodules apply the change via
 //! [`crate::sys::windows`], report the outcome, and run the shared
 //! keep-or-revert confirmation flow.
 
+mod layout;
 mod ls;
-mod main;
 mod set;
 
 use crate::cli::{
-    Command, Confirm, HelpTopic, MonitorTarget, confirm_keep, help, ls as ls_help, main_help,
-    set as set_help, version,
+    Command, Confirm, HelpTopic, MonitorTarget, confirm_keep, help, layout as layout_help,
+    ls as ls_help, set as set_help, version,
 };
 use crate::sys::windows::{self, Change, Mode};
 
+use layout::run_layout;
 use ls::run_list;
-use main::run_main;
 use set::run_set;
 
 const CONFIRM_TIMEOUT_SECS: u64 = 5;
@@ -42,9 +42,9 @@ pub fn run(command: Command) -> i32 {
             0
         }
         Command::Help {
-            topic: Some(HelpTopic::Main),
+            topic: Some(HelpTopic::Layout),
         } => {
-            println!("{}", main_help());
+            println!("{}", layout_help());
             0
         }
         Command::Version => {
@@ -52,7 +52,7 @@ pub fn run(command: Command) -> i32 {
             0
         }
         Command::List { caps, monitor } => run_list(caps, monitor),
-        Command::Main { monitor, yes } => run_main(monitor, yes),
+        Command::Layout { action, yes } => run_layout(action, yes),
         Command::Set {
             spec,
             monitor,

@@ -22,6 +22,12 @@ pub struct Monitor {
     pub height: u32,
     /// Current refresh rate in Hz.
     pub refresh: u32,
+    /// Desktop x coordinate from the current mode.
+    #[allow(dead_code)]
+    pub x: i32,
+    /// Desktop y coordinate from the current mode.
+    #[allow(dead_code)]
+    pub y: i32,
 }
 
 /// Enumerates the device names of every display attached to the desktop.
@@ -83,6 +89,8 @@ pub(crate) fn describe(index: usize, name: &str) -> Monitor {
         width: mode.as_ref().map_or(0, |m| m.dm_pels_width),
         height: mode.as_ref().map_or(0, |m| m.dm_pels_height),
         refresh: mode.as_ref().map_or(0, |m| m.dm_display_frequency),
+        x: mode.as_ref().map_or(0, |m| m.dm_position.x),
+        y: mode.as_ref().map_or(0, |m| m.dm_position.y),
     }
 }
 

@@ -1,10 +1,10 @@
-//! Mode-application backend for the `max`, `set` and `main` commands.
+//! Mode-application backend for the `set` command and layout promotion.
 //!
 //! Picks the highest-resolution supported mode (`max`) or applies a
 //! requested resolution/refresh (`set`), tests it with a dry run, then
 //! applies it and persists it to the registry. A mode that is already
-//! active is reported as unchanged and never re-applied. `main` swaps
-//! desktop positions so a display becomes the primary (origin 0,0).
+//! active is reported as unchanged and never re-applied. `make_main`
+//! swaps desktop positions so a display becomes the primary (origin 0,0).
 
 use super::bindings::{
     CDS_TEST, CDS_UPDATEREGISTRY, ChangeDisplaySettingsExW, DISP_CHANGE_BADDUALVIEW,
@@ -365,7 +365,7 @@ fn build_swap(target: &DevmodeW, partner: &DevmodeW) -> (DevmodeW, DevmodeW) {
 
 /// Applies a position change to a device and persists it; positions have
 /// no dry-run validation, so the change is applied directly.
-fn apply_position(name: &str, devmode: &DevmodeW) -> Result<(), String> {
+pub(crate) fn apply_position(name: &str, devmode: &DevmodeW) -> Result<(), String> {
     let name_ptr = encode_wide(name);
     let applied = unsafe {
         ChangeDisplaySettingsExW(
@@ -527,7 +527,7 @@ fn hw_tests_enabled() -> bool {
 /// Dimensions are resolved against the display's physical panel size
 /// (the current mode rotated back to landscape) and then swapped when
 /// the request rotates the display 90° or 270°.
-fn effective_dims(
+pub(crate) fn effective_dims(
     width: Option<u32>,
     height: Option<u32>,
     orientation: Option<u32>,

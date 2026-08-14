@@ -6,20 +6,29 @@
 use std::env;
 
 pub use crate::sys::windows::apply::Refresh;
+pub use crate::sys::windows::Direction;
 
 /// Help topics reachable via the command-specific `-h`/`--help` flags.
 #[derive(Debug, PartialEq)]
 pub enum HelpTopic {
     List,
     Set,
-    Main,
+    Layout,
+}
+
+/// What the `layout` command should do.
+#[derive(Debug, PartialEq)]
+pub enum LayoutAction {
+    Show,
+    Place { monitor: u32, direction: Direction, reference: u32 },
+    Primary { monitor: u32 },
 }
 
 /// Every top-level command rmod accepts.
 #[derive(Debug, PartialEq)]
 pub enum Command {
     List { caps: bool, monitor: MonitorTarget },
-    Main { monitor: u32, yes: bool },
+    Layout { action: LayoutAction, yes: bool },
     Set { spec: SetSpec, monitor: MonitorTarget, orientation: Option<u32>, yes: bool },
     Help { topic: Option<HelpTopic> },
     Version,
@@ -93,7 +102,8 @@ pub fn parse_from<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
             Ok(Command::Version)
         }
         "ls" | "list" => parse_ls(cmd_str, args),
-        "main" => parse_main(args),
+        "layout" => parse_layout(args),
+        "main" => Err("unknown command 'main', use 'rmod layout -m N --primary'".to_string()),
         "set" => parse_set(args),
         _ => Err(format!("unknown command '{}'", cmd_str)),
     }
@@ -133,39 +143,87 @@ fn parse_ls(cmd: &str, args: &[impl AsRef<str>]) -> Result<Command, String> {
     Ok(Command::List { caps, monitor })
 }
 
-fn parse_main(args: &[impl AsRef<str>]) -> Result<Command, String> {
+fn parse_layout(args: &[impl AsRef<str>]) -> Result<Command, String> {
     let mut monitor: Option<u32> = None;
+    let mut placement: Option<(Direction, u32)> = None;
+    let mut primary = false;
     let mut yes = false;
     let mut i = 1;
 
     while i < args.len() {
         let arg = args[i].as_ref();
         match arg {
-            "--help" => return Ok(Command::Help { topic: Some(HelpTopic::Main) }),
+            "--help" => return Ok(Command::Help { topic: Some(HelpTopic::Layout) }),
+            "-m" | "--monitor" => {
+                i += 1;
+                let Some(val) = args.get(i) else {
+                    return Err("missing value for -m".to_string());
+                };
+                monitor = Some(parse_monitor_number(val.as_ref())?);
+                i += 1;
+            }
+            "--left-of" | "--right-of" | "--above" | "--below" => {
+                if placement.is_some() {
+                    return Err("only one direction flag allowed for 'layout'".to_string());
+                }
+                let direction = match arg {
+                    "--left-of" => Direction::Left,
+                    "--right-of" => Direction::Right,
+                    "--above" => Direction::Above,
+                    _ => Direction::Below,
+                };
+                i += 1;
+                let Some(next) = args.get(i) else {
+                    return Err(format!("missing value for {arg}"));
+                };
+                let next = next.as_ref();
+                if next.starts_with('-') {
+                    return Err(format!("missing value for {arg}"));
+                }
+                placement = Some((direction, parse_monitor_number(next)?));
+                i += 1;
+            }
+            "--primary" => {
+                primary = true;
+                i += 1;
+            }
             "-y" | "--yes" => {
                 yes = true;
                 i += 1;
             }
-            _ if !arg.starts_with('-') => {
-                if monitor.is_some() {
-                    return Err(format!("unexpected argument '{}'", arg));
-                }
-                let n = arg.parse::<u32>().map_err(|_| format!("invalid monitor number '{}'", arg))?;
-                if n == 0 {
-                    return Err("monitor number must be >= 1".to_string());
-                }
-                monitor = Some(n);
-                i += 1;
-            }
-            other => return Err(format!("unexpected argument '{}' for 'main'", other)),
+            other => return Err(format!("unexpected argument '{}' for 'layout'", other)),
         }
     }
 
-    let Some(monitor) = monitor else {
-        return Err("missing monitor number for 'main'".to_string());
-    };
+    if primary {
+        if placement.is_some() {
+            return Err("cannot combine --primary with a direction flag".to_string());
+        }
+        let Some(monitor) = monitor else {
+            return Err("missing monitor for 'layout', e.g. 'rmod layout -m 2 --left-of 1'".to_string());
+        };
+        return Ok(Command::Layout { action: LayoutAction::Primary { monitor }, yes });
+    }
 
-    Ok(Command::Main { monitor, yes })
+    if let Some((direction, reference)) = placement {
+        let Some(monitor) = monitor else {
+            return Err("missing monitor for 'layout', e.g. 'rmod layout -m 2 --left-of 1'".to_string());
+        };
+        return Ok(Command::Layout {
+            action: LayoutAction::Place { monitor, direction, reference },
+            yes,
+        });
+    }
+
+    Ok(Command::Layout { action: LayoutAction::Show, yes })
+}
+
+fn parse_monitor_number(arg: &str) -> Result<u32, String> {
+    let n = arg.parse::<u32>().map_err(|_| format!("invalid monitor number '{}'", arg))?;
+    if n == 0 {
+        return Err("monitor number must be >= 1".to_string());
+    }
+    Ok(n)
 }
 
 fn parse_set(args: &[impl AsRef<str>]) -> Result<Command, String> {
@@ -487,46 +545,201 @@ mod tests {
     }
 
     #[test]
-    fn main_command() {
+    fn layout_no_args_is_show() {
         assert_eq!(
-            parse(&["main", "2"]),
-            Ok(Command::Main { monitor: 2, yes: false })
+            parse(&["layout"]),
+            Ok(Command::Layout { action: LayoutAction::Show, yes: false })
         );
     }
 
     #[test]
-    fn main_with_yes() {
+    fn layout_place_left_of_with_reference() {
+        assert_eq!(
+            parse(&["layout", "-m", "2", "--left-of", "1"]),
+            Ok(Command::Layout {
+                action: LayoutAction::Place {
+                    monitor: 2,
+                    direction: Direction::Left,
+                    reference: 1,
+                },
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn layout_place_with_explicit_reference() {
+        assert_eq!(
+            parse(&["layout", "-m", "3", "--above", "1"]),
+            Ok(Command::Layout {
+                action: LayoutAction::Place {
+                    monitor: 3,
+                    direction: Direction::Above,
+                    reference: 1,
+                },
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn layout_direction_flags_cover_all_four() {
+        for (flag, direction) in [
+            ("--left-of", Direction::Left),
+            ("--right-of", Direction::Right),
+            ("--above", Direction::Above),
+            ("--below", Direction::Below),
+        ] {
+            assert_eq!(
+                parse(&["layout", "-m", "2", flag, "1"]),
+                Ok(Command::Layout {
+                    action: LayoutAction::Place {
+                        monitor: 2,
+                        direction,
+                        reference: 1,
+                    },
+                    yes: false,
+                }),
+                "flag '{}'",
+                flag
+            );
+        }
+    }
+
+    #[test]
+    fn layout_missing_value_for_direction_is_error() {
+        for flag in ["--left-of", "--right-of", "--above", "--below"] {
+            assert_eq!(
+                parse(&["layout", "-m", "2", flag]),
+                Err(format!("missing value for {flag}")),
+                "flag '{}'",
+                flag
+            );
+            assert_eq!(
+                parse(&["layout", "-m", "2", flag, "--primary"]),
+                Err(format!("missing value for {flag}")),
+                "flag '{}'",
+                flag
+            );
+        }
+        assert_eq!(
+            parse(&["layout", "-m", "2", "--left-of", "0"]),
+            Err("monitor number must be >= 1".to_string())
+        );
+        assert_eq!(
+            parse(&["layout", "-m", "2", "--left-of", "x"]),
+            Err("invalid monitor number 'x'".to_string())
+        );
+    }
+
+    #[test]
+    fn layout_second_direction_flag_is_error() {
+        assert_eq!(
+            parse(&["layout", "-m", "2", "--left-of", "1", "--right-of", "1"]),
+            Err("only one direction flag allowed for 'layout'".to_string())
+        );
+    }
+
+    #[test]
+    fn layout_primary_with_direction_is_error() {
+        assert_eq!(
+            parse(&["layout", "-m", "2", "--primary", "--left-of", "1"]),
+            Err("cannot combine --primary with a direction flag".to_string())
+        );
+        assert_eq!(
+            parse(&["layout", "-m", "2", "--left-of", "1", "--primary"]),
+            Err("cannot combine --primary with a direction flag".to_string())
+        );
+    }
+
+    #[test]
+    fn layout_primary_with_monitor() {
+        for args in [
+            &["layout", "-m", "2", "--primary"][..],
+            &["layout", "--primary", "-m", "2"][..],
+        ] {
+            assert_eq!(
+                parse(args),
+                Ok(Command::Layout { action: LayoutAction::Primary { monitor: 2 }, yes: false })
+            );
+        }
+    }
+
+    #[test]
+    fn layout_primary_without_monitor_is_error() {
+        assert_eq!(
+            parse(&["layout", "--primary"]),
+            Err("missing monitor for 'layout', e.g. 'rmod layout -m 2 --left-of 1'".to_string())
+        );
+    }
+
+    #[test]
+    fn layout_direction_without_monitor_is_error() {
+        assert_eq!(
+            parse(&["layout", "--left-of", "1"]),
+            Err("missing monitor for 'layout', e.g. 'rmod layout -m 2 --left-of 1'".to_string())
+        );
+    }
+
+    #[test]
+    fn layout_yes_flag() {
+        for args in [
+            &["layout", "-y", "--left-of", "1", "-m", "2"][..],
+            &["layout", "--left-of", "1", "-y", "-m", "2"][..],
+        ] {
+            assert_eq!(
+                parse(args),
+                Ok(Command::Layout {
+                    action: LayoutAction::Place {
+                        monitor: 2,
+                        direction: Direction::Left,
+                        reference: 1,
+                    },
+                    yes: true,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn layout_help_flag() {
+        assert!(parse(&["layout", "-h"]).is_err());
+        assert_eq!(
+            parse(&["layout", "--help"]),
+            Ok(Command::Help { topic: Some(HelpTopic::Layout) })
+        );
+    }
+
+    #[test]
+    fn layout_unknown_argument_is_error() {
+        assert_eq!(
+            parse(&["layout", "foo"]),
+            Err("unexpected argument 'foo' for 'layout'".to_string())
+        );
+    }
+
+    #[test]
+    fn layout_invalid_monitor_is_error() {
+        assert_eq!(
+            parse(&["layout", "-m", "x"]),
+            Err("invalid monitor number 'x'".to_string())
+        );
+        assert_eq!(
+            parse(&["layout", "-m", "0"]),
+            Err("monitor number must be >= 1".to_string())
+        );
+    }
+
+    #[test]
+    fn main_command_now_errors_with_hint() {
+        assert_eq!(
+            parse(&["main"]),
+            Err("unknown command 'main', use 'rmod layout -m N --primary'".to_string())
+        );
         assert_eq!(
             parse(&["main", "2", "-y"]),
-            Ok(Command::Main { monitor: 2, yes: true })
+            Err("unknown command 'main', use 'rmod layout -m N --primary'".to_string())
         );
-        assert_eq!(
-            parse(&["main", "-y", "2"]),
-            Ok(Command::Main { monitor: 2, yes: true })
-        );
-    }
-
-    #[test]
-    fn main_no_monitor_is_error() {
-        assert!(parse(&["main"]).is_err());
-        assert!(parse(&["main", "-y"]).is_err());
-    }
-
-    #[test]
-    fn main_invalid_monitor_is_error() {
-        assert!(parse(&["main", "0"]).is_err());
-        assert!(parse(&["main", "x"]).is_err());
-    }
-
-    #[test]
-    fn main_help_flags() {
-        assert!(parse(&["main", "-h"]).is_err());
-        assert_eq!(parse(&["main", "--help"]), Ok(Command::Help { topic: Some(HelpTopic::Main) }));
-    }
-
-    #[test]
-    fn main_extra_argument_is_error() {
-        assert!(parse(&["main", "2", "extra"]).is_err());
     }
 
     #[test]

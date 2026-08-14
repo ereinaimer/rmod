@@ -11,11 +11,12 @@ Resolution modifier
 
 Usage:
   rmod list [--caps] (alias: ls)
-  rmod main N [-y]
+  rmod layout -m N [--primary | --left-of M | --right-of M | --above M | --below M]
   rmod set [options]
 
   N = monitor number from 'rmod list'; omit = primary display.
   all = every monitor.
+  M = monitor to position relative to (required).
 
 Profiles:
   720       1280x720
@@ -27,7 +28,8 @@ Profiles:
 Examples:
   rmod list --caps
   rmod list --caps -m 2
-  rmod main 2
+  rmod layout -m 2 --left-of 1
+  rmod layout -m 2 --primary
   rmod set --max
   rmod set -p 1080
   rmod set -w 1920 -h 1080 -m 2 -o 90
@@ -96,23 +98,33 @@ Examples:
         .to_string()
 }
 
-/// Help page for the `main` command.
-pub fn main_help() -> String {
-    "rmod main
-make monitor N the main display
+/// Help page for the `layout` command.
+pub fn layout() -> String {
+    "rmod layout
+Arrange displays: show the grid, place monitors, or set the primary display
 
 Usage:
-  rmod main N [-y]
+  rmod layout
+  rmod layout -m N --left-of M | --right-of M | --above M | --below M
+  rmod layout -m N --primary
 
-  N = monitor number from `rmod list` (required, no default).
-
-Examples:
-  rmod main 2
-  rmod main 2 -y
+  M = monitor to position relative to (required).
 
 Options:
-  --help            print help
-  -y, --yes         skip confirmation"
+  -m, --monitor M         monitor number
+  --left-of M             place the monitor to the left of M
+  --right-of M            place the monitor to the right of M
+  --above M               place the monitor above M
+  --below M               place the monitor below M
+  --primary               make the monitor the main display
+  -y, --yes               skip the confirmation prompt
+  --help                  print help
+
+Examples:
+  rmod layout
+  rmod layout -m 2 --left-of 1
+  rmod layout -m 2 --below 1
+  rmod layout -m 2 --primary"
         .to_string()
 }
 
@@ -130,8 +142,9 @@ mod tests {
         let h = help();
         assert!(h.contains("Resolution modifier"));
         assert!(h.contains("rmod list [--caps]"));
-        assert!(h.contains("rmod main N [-y]"));
-        assert!(h.contains("rmod set [options]"));
+assert!(h.contains("rmod layout -m N [--primary | --left-of M | --right-of M | --above M | --below M]"));
+        assert!(h.contains("rmod layout -m 2 --left-of 1"));
+        assert!(h.contains("M = monitor to position relative to (required)."));
     }
 
     #[test]
@@ -155,7 +168,8 @@ mod tests {
         let h = help();
         assert!(h.contains("rmod list --caps"));
         assert!(h.contains("rmod list --caps -m 2"));
-        assert!(h.contains("rmod main 2"));
+        assert!(h.contains("rmod layout -m 2 --left-of 1"));
+        assert!(h.contains("rmod layout -m 2 --primary"));
         assert!(h.contains("rmod set --max"));
         assert!(h.contains("rmod set -p 1080"));
         assert!(h.contains("rmod set -w 1920 -h 1080 -m 2 -o 90"));
@@ -195,22 +209,24 @@ mod tests {
         assert!(h.contains("--help"));
     }
 
-    #[test]
-    fn main_help_page() {
-        let h = main_help();
-        assert!(h.contains("rmod main"));
+#[test]
+    fn layout_help_page() {
+        let h = layout();
+        assert!(h.contains("rmod layout"));
         assert!(h.contains("Usage:"));
-        assert!(h.contains("rmod main N [-y]"));
-        assert!(h.contains("rmod main 2"));
+        assert!(h.contains("--left"));
+        assert!(h.contains("--primary"));
         assert!(h.contains("--help"));
+        assert!(h.contains("--monitor"));
         assert!(h.contains("-y, --yes"));
     }
 
     #[test]
-    fn top_help_lists_main_command() {
+    fn top_help_lists_layout_command() {
         let h = help();
-        assert!(h.contains("rmod main N [-y]"));
-        assert!(h.contains("rmod main 2"));
+        assert!(h.contains("rmod layout -m N [--primary | --left-of M | --right-of M | --above M | --below M]"));
+        assert!(h.contains("rmod layout -m 2 --left-of 1"));
+        assert!(h.contains("M = monitor to position relative to (required)."));
     }
 
     #[test]

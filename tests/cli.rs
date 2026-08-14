@@ -45,10 +45,10 @@ fn subcommand_help_flags_exit_zero() {
     assert_eq!(rmod(&["ls", "-h"]).status.code(), Some(2));
     assert!(rmod(&["ls", "--help"]).status.success());
     assert!(rmod(&["ls", "--caps", "--help"]).status.success());
-    assert_eq!(rmod(&["set", "-p", "1080", "-h"]).status.code(), Some(2));
+assert_eq!(rmod(&["set", "-p", "1080", "-h"]).status.code(), Some(2));
     assert!(rmod(&["set", "-p", "4k", "--help"]).status.success());
-    assert_eq!(rmod(&["main", "-h"]).status.code(), Some(2));
-    assert!(rmod(&["main", "--help"]).status.success());
+    assert_eq!(rmod(&["layout", "-h"]).status.code(), Some(2));
+    assert!(rmod(&["layout", "--help"]).status.success());
 }
 
 #[test]
@@ -416,45 +416,85 @@ fn set_help_flag() {
 }
 
 #[test]
-fn main_primary_is_noop() {
-    let out = rmod(&["main", "1"]);
+fn layout_show_lists_positions() {
+    let out = rmod(&["layout"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert!(stdout(&out).contains("already the main display"));
+    let stdout = stdout(&out);
+    assert!(stdout.contains("RELATIVE TO"), "missing RELATIVE TO header: {stdout}");
+    assert!(stdout.contains("RMOD Fake Monitor"), "expected fake monitor names: {stdout}");
+    assert!(stdout.contains("(primary)"), "missing primary marker: {stdout}");
+    assert!(stdout.contains("right of 1"), "missing relative position: {stdout}");
+}
+
+#[test]
+fn layout_places_monitor_left_of_primary() {
+    let out = rmod(&["layout", "-m", "2", "--left-of", "1", "-y"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let stdout = stdout(&out);
+    assert!(stdout.contains("placed"), "missing placement line: {stdout}");
+    assert!(stdout.contains("to the left of"), "missing direction wording: {stdout}");
+}
+
+#[test]
+fn layout_places_monitor_below_explicit_reference() {
+    let out = rmod(&["layout", "-m", "2", "--below", "1", "-y"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("below"), "missing direction wording: {}", stdout(&out));
+}
+
+#[test]
+fn layout_primary_promotes() {
+    let out = rmod(&["layout", "-m", "2", "--primary", "-y"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("is now the main display"));
     assert!(!stdout(&out).contains("keep changes"));
     assert!(!stdout(&out).contains("applied"));
+    let noop = rmod(&["layout", "-m", "1", "--primary", "-y"]);
+    assert!(noop.status.success(), "stderr: {}", stderr(&noop));
+    assert!(stdout(&noop).contains("already the main display"));
 }
 
 #[test]
-fn main_no_monitor_is_error() {
-    let out = rmod(&["main"]);
+fn layout_self_reference_is_error() {
+    let out = rmod(&["layout", "-m", "1", "--left-of", "1", "-y"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("missing monitor number for 'main'"));
+    assert!(stderr(&out).contains("error: cannot place monitor 1 relative to itself"));
 }
 
 #[test]
-fn main_all_target_is_error() {
-    let out = rmod(&["main", "all"]);
+fn layout_missing_monitor_is_error() {
+    let out = rmod(&["layout", "--left-of", "1"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("invalid monitor number 'all'"));
+    assert!(stderr(&out).contains("missing monitor for 'layout', e.g. 'rmod layout -m 2 --left-of 1'"));
 }
 
 #[test]
-fn main_zero_monitor_is_error() {
-    let out = rmod(&["main", "0"]);
+fn layout_missing_value_for_direction_is_error() {
+    let out = rmod(&["layout", "-m", "2", "--left-of"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("monitor number must be >= 1"));
+    assert!(stderr(&out).contains("error: missing value for --left-of"));
 }
 
 #[test]
-fn main_help_flag() {
-    assert_eq!(rmod(&["main", "-h"]).status.code(), Some(2));
-    assert!(rmod(&["main", "--help"]).status.success());
+fn layout_primary_with_direction_is_error() {
+    let out = rmod(&["layout", "-m", "2", "--primary", "--left-of", "1"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("error: cannot combine --primary with a direction flag"));
 }
 
 #[test]
-fn main_with_monitor_help() {
-    assert_eq!(rmod(&["main", "2", "-h"]).status.code(), Some(2));
-    assert!(rmod(&["main", "2", "--help"]).status.success());
+fn layout_unknown_argument_is_error() {
+    let out = rmod(&["layout", "-m", "2", "foo"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("error: unexpected argument 'foo' for 'layout'"));
+}
+
+#[test]
+fn layout_help_flag() {
+    assert_eq!(rmod(&["layout", "-h"]).status.code(), Some(2));
+    assert!(rmod(&["layout", "--help"]).status.success());
+    assert_eq!(rmod(&["layout", "-m", "2", "-h"]).status.code(), Some(2));
+    assert!(rmod(&["layout", "-m", "2", "--help"]).status.success());
 }
 
 #[test]
@@ -535,10 +575,12 @@ fn old_syntax_orientation_only_is_error() {
 }
 
 #[test]
-fn old_syntax_main_m_flag_is_error() {
-    let out = rmod(&["main", "-m", "2"]);
+fn main_command_removed_shows_hint() {
+    let out = rmod(&["main", "2"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("unexpected argument"));
+    let err = stderr(&out);
+    assert!(err.contains("unknown command 'main'"), "stderr: {err}");
+    assert!(err.contains("layout"), "missing migration hint: {err}");
 }
 
 #[test]
