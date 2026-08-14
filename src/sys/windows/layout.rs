@@ -94,12 +94,14 @@ pub(crate) fn apply_placement(
             ),
         });
     }
-    if let Some((other_index, _)) = destination_occupied(
-        &target_dev,
-        target_index,
-        occupant.as_ref().map(|(i, _)| *i),
-        names,
-    ) {
+    if occupant.is_some()
+        && let Some((other_index, _)) = destination_occupied(
+            &target_dev,
+            target_index,
+            occupant.as_ref().map(|(i, _)| *i),
+            names,
+        )
+    {
         let other_label = query::display_label(&names[other_index], other_index as u32 + 1);
         return Err(format!(
             "cannot place monitor {}: {other_label} occupies its current position",
