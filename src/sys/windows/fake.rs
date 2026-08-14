@@ -54,7 +54,9 @@ fn monitor(number: u32) -> Option<Monitor> {
 fn resolve(target: Option<u32>) -> Result<Monitor, String> {
     match target {
         None => Ok(monitor(1).expect("fake monitor 1 exists")),
-        Some(n) => monitor(n).ok_or_else(|| format!("monitor {n} not found, run 'rmod list' to see connected displays")),
+        Some(n) => monitor(n).ok_or_else(|| {
+            format!("monitor {n} not found, run 'rmod list' to see connected displays")
+        }),
     }
 }
 
@@ -192,7 +194,7 @@ pub(crate) fn set(
         .iter()
         .any(|m| m.width == w && m.height == h && m.refresh == r)
     {
-return Err(format!(
+        return Err(format!(
             "{} does not support {w}x{h} @ {r}Hz, run 'rmod list --caps' to see supported modes",
             display_label(&monitor)
         ));
@@ -251,7 +253,9 @@ pub(crate) fn make_main(monitor: u32, _names: &[String]) -> Result<MainOutcome<'
             applied: vec![],
             previous: vec![],
         })),
-        n => Err(format!("monitor {n} not found, run 'rmod list' to see connected displays")),
+        n => Err(format!(
+            "monitor {n} not found, run 'rmod list' to see connected displays"
+        )),
     }
 }
 
@@ -284,7 +288,7 @@ pub(crate) fn apply_placement(
 ) -> Result<PlacementOutcome, String> {
     let target = resolve(Some(monitor))?;
     let reference_monitor = resolve(Some(reference)).map_err(|e| format!("reference {e}"))?;
-if reference_monitor.number == target.number {
+    if reference_monitor.number == target.number {
         return Err(format!(
             "cannot place monitor {} relative to itself, use a different reference monitor",
             target.number
@@ -500,7 +504,10 @@ mod tests {
 
     #[test]
     fn make_main_unknown_is_error() {
-        assert_eq!(make_main(99, &[]), Err("monitor 99 not found, run 'rmod list' to see connected displays".to_string()));
+        assert_eq!(
+            make_main(99, &[]),
+            Err("monitor 99 not found, run 'rmod list' to see connected displays".to_string())
+        );
     }
 
     #[test]
@@ -557,11 +564,17 @@ mod tests {
     fn apply_placement_self_reference_is_error() {
         assert_eq!(
             apply_placement(1, Direction::Left, 1),
-            Err("cannot place monitor 1 relative to itself, use a different reference monitor".to_string())
+            Err(
+                "cannot place monitor 1 relative to itself, use a different reference monitor"
+                    .to_string()
+            )
         );
         assert_eq!(
             apply_placement(2, Direction::Left, 2),
-            Err("cannot place monitor 2 relative to itself, use a different reference monitor".to_string())
+            Err(
+                "cannot place monitor 2 relative to itself, use a different reference monitor"
+                    .to_string()
+            )
         );
     }
 
@@ -577,7 +590,10 @@ mod tests {
     fn apply_placement_unknown_reference_is_error() {
         assert_eq!(
             apply_placement(1, Direction::Left, 99),
-            Err("reference monitor 99 not found, run 'rmod list' to see connected displays".to_string())
+            Err(
+                "reference monitor 99 not found, run 'rmod list' to see connected displays"
+                    .to_string()
+            )
         );
     }
 

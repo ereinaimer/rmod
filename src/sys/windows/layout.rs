@@ -567,7 +567,10 @@ mod tests {
         let names = names3();
         assert_eq!(
             apply_placement(1, Direction::Left, 1, &names),
-            Err("cannot place monitor 1 relative to itself, use a different reference monitor".to_string())
+            Err(
+                "cannot place monitor 1 relative to itself, use a different reference monitor"
+                    .to_string()
+            )
         );
     }
 
@@ -585,7 +588,10 @@ mod tests {
         let names = names3();
         assert_eq!(
             apply_placement(1, Direction::Left, 5, &names),
-            Err("reference monitor 5 not found, run 'rmod list' to see connected displays".to_string())
+            Err(
+                "reference monitor 5 not found, run 'rmod list' to see connected displays"
+                    .to_string()
+            )
         );
     }
 

@@ -70,6 +70,151 @@ pub(crate) const PROFILES: &[(&str, u32, u32)] = &[
     ("8k", 7680, 4320),
 ];
 
+/// A documented flag: display text, description, and argv proving it parses.
+pub(crate) struct Flag {
+    pub(crate) flag: &'static str, // e.g. "-w, --width"
+    pub(crate) doc: &'static str,  // e.g. "Resolution width (requires --height)"
+    // Read only by the cfg(test) registry test; the bin build never reads it,
+    // so without this allow `cargo clippy`/`cargo build` warn "never read".
+    #[allow(dead_code)]
+    pub(crate) example: &'static [&'static str], // argv proving the flag parses
+}
+
+pub(crate) const TOP_COMMANDS: &[(&str, &str)] = &[
+    ("list", "List displays and their current settings"),
+    ("set", "Apply resolution, refresh rate, and orientation"),
+    ("layout", "Show the monitor arrangement or move monitors"),
+];
+
+pub(crate) const TOP_FLAGS: &[Flag] = &[
+    Flag {
+        flag: "--help",
+        doc: "Print help",
+        example: &["--help"],
+    },
+    Flag {
+        flag: "--version",
+        doc: "Print version",
+        example: &["--version"],
+    },
+];
+
+pub(crate) const LS_FLAGS: &[Flag] = &[
+    Flag {
+        flag: "--caps",
+        doc: "List supported modes instead of current settings",
+        example: &["list", "--caps"],
+    },
+    Flag {
+        flag: "-m, --monitor",
+        doc: "Monitor number or 'all' (requires --caps)",
+        example: &["list", "-m", "2", "--caps"],
+    },
+    Flag {
+        flag: "--help",
+        doc: "Print help",
+        example: &["list", "--help"],
+    },
+];
+
+pub(crate) const SET_FLAGS: &[Flag] = &[
+    Flag {
+        flag: "-w, --width",
+        doc: "Resolution width (requires --height)",
+        example: &["set", "-w", "1920", "-h", "1080"],
+    },
+    Flag {
+        flag: "-h, --height",
+        doc: "Resolution height (requires --width)",
+        example: &["set", "-w", "1920", "-h", "1080"],
+    },
+    Flag {
+        flag: "-r, --refresh",
+        doc: "Refresh rate in Hz, or 'max'",
+        example: &["set", "-r", "60"],
+    },
+    Flag {
+        flag: "-p, --profile",
+        doc: "Resolution preset (see Profiles below)",
+        example: &["set", "-p", "1080"],
+    },
+    Flag {
+        flag: "-m, --monitor",
+        doc: "Monitor number or 'all' (default: primary)",
+        example: &["set", "-m", "2", "-r", "60"],
+    },
+    Flag {
+        flag: "-o, --orientation",
+        doc: "Rotation angle (see Orientations below)",
+        example: &["set", "-o", "90"],
+    },
+    Flag {
+        flag: "-y, --yes",
+        doc: "Skip the confirmation prompt",
+        example: &["set", "-p", "1080", "-y"],
+    },
+    Flag {
+        flag: "--max",
+        doc: "Use the display's highest supported mode",
+        example: &["set", "--max"],
+    },
+    Flag {
+        flag: "--help",
+        doc: "Print help",
+        example: &["set", "--help"],
+    },
+];
+
+pub(crate) const LAYOUT_FLAGS: &[Flag] = &[
+    Flag {
+        flag: "-m, --monitor",
+        doc: "Monitor to move or promote",
+        example: &["layout", "-m", "2", "--left-of", "1"],
+    },
+    Flag {
+        flag: "--left-of",
+        doc: "Place the monitor left of the reference",
+        example: &["layout", "-m", "2", "--left-of", "1"],
+    },
+    Flag {
+        flag: "--right-of",
+        doc: "Place the monitor right of the reference",
+        example: &["layout", "-m", "2", "--right-of", "1"],
+    },
+    Flag {
+        flag: "--above",
+        doc: "Place the monitor above the reference",
+        example: &["layout", "-m", "2", "--above", "1"],
+    },
+    Flag {
+        flag: "--below",
+        doc: "Place the monitor below the reference",
+        example: &["layout", "-m", "2", "--below", "1"],
+    },
+    Flag {
+        flag: "--primary",
+        doc: "Make the monitor the main display",
+        example: &["layout", "-m", "2", "--primary"],
+    },
+    Flag {
+        flag: "-y, --yes",
+        doc: "Skip the confirmation prompt",
+        example: &["layout", "-m", "2", "--primary", "-y"],
+    },
+    Flag {
+        flag: "--help",
+        doc: "Print help",
+        example: &["layout", "--help"],
+    },
+];
+
+pub(crate) const ORIENTATIONS: &[(u32, &str, &str)] = &[
+    (0, "landscape", "l"),
+    (90, "portrait", "p"),
+    (180, "landscape-flipped", "lf"),
+    (270, "portrait-flipped", "pf"),
+];
+
 /// Set specification formats.
 #[derive(Debug, PartialEq, Clone)]
 pub enum SetSpec {
@@ -115,7 +260,7 @@ pub fn parse_from<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
         "--help" => {
             if args.len() > 1 {
                 return Err(format!(
-                    "unexpected argument '{}', '--help' takes no arguments",
+                    "unexpected argument '{}', '--help' takes no arguments, e.g. 'rmod --help'",
                     args[1].as_ref()
                 ));
             }
@@ -124,7 +269,7 @@ pub fn parse_from<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
         "--version" => {
             if args.len() > 1 {
                 return Err(format!(
-                    "unexpected argument '{}', '--version' takes no arguments",
+                    "unexpected argument '{}', '--version' takes no arguments, e.g. 'rmod --version'",
                     args[1].as_ref()
                 ));
             }
@@ -134,7 +279,10 @@ pub fn parse_from<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
         "layout" => parse_layout(args),
         "main" => Err("unknown command 'main', use 'rmod layout -m N --primary'".to_string()),
         "set" => parse_set(args),
-        _ => Err(format!("unknown command '{}', run 'rmod --help' to list commands", cmd_str)),
+        _ => Err(format!(
+            "unknown command '{}', run 'rmod --help' to list commands",
+            cmd_str
+        )),
     }
 }
 
@@ -154,11 +302,17 @@ fn parse_ls(_cmd: &str, args: &[impl AsRef<str>]) -> Result<Command, String> {
             "-m" | "--monitor" => {
                 i += 1;
                 let Some(val) = args.get(i) else {
-                    return Err("'-m, --monitor' needs a value: a monitor number or 'all', e.g. '-m 2'".to_string());
+                    return Err(
+                        "'-m, --monitor' needs a value: a monitor number or 'all', e.g. '-m 2'"
+                            .to_string(),
+                    );
                 };
                 let val = val.as_ref();
                 if val.starts_with('-') {
-                    return Err("'-m, --monitor' needs a value: a monitor number or 'all', e.g. '-m 2'".to_string());
+                    return Err(
+                        "'-m, --monitor' needs a value: a monitor number or 'all', e.g. '-m 2'"
+                            .to_string(),
+                    );
                 }
                 monitor = parse_monitor_target(val)?;
                 monitor_explicit = true;
@@ -169,12 +323,19 @@ fn parse_ls(_cmd: &str, args: &[impl AsRef<str>]) -> Result<Command, String> {
                     topic: Some(HelpTopic::List),
                 });
             }
-            other => return Err(format!("unexpected argument '{}' for 'list', use '--caps' or '--monitor'", other)),
+            other => {
+                return Err(format!(
+                    "unexpected argument '{}' for 'list', use '--caps' or '--monitor'",
+                    other
+                ));
+            }
         }
     }
 
     if monitor_explicit && !caps {
-        return Err("'-m, --monitor' only works with '--caps', e.g. 'rmod list --caps -m 2'".to_string());
+        return Err(
+            "'-m, --monitor' only works with '--caps', e.g. 'rmod list --caps -m 2'".to_string(),
+        );
     }
 
     Ok(Command::List { caps, monitor })
@@ -199,11 +360,15 @@ fn parse_layout(args: &[impl AsRef<str>]) -> Result<Command, String> {
             "-m" | "--monitor" => {
                 i += 1;
                 let Some(val) = args.get(i) else {
-                    return Err("'-m, --monitor' needs a value: a monitor number or 'all', e.g. '-m 2'".to_string());
+                    return Err(
+                        "'-m, --monitor' needs a value: a monitor number, e.g. '-m 2'".to_string(),
+                    );
                 };
                 let val = val.as_ref();
                 if val.starts_with('-') {
-                    return Err("'-m, --monitor' needs a value: a monitor number or 'all', e.g. '-m 2'".to_string());
+                    return Err(
+                        "'-m, --monitor' needs a value: a monitor number, e.g. '-m 2'".to_string(),
+                    );
                 }
                 monitor = Some(parse_monitor_number(val)?);
                 monitor_explicit = true;
@@ -211,7 +376,10 @@ fn parse_layout(args: &[impl AsRef<str>]) -> Result<Command, String> {
             }
             "--left-of" | "--right-of" | "--above" | "--below" => {
                 if placement.is_some() {
-                    return Err("use only one direction flag, e.g. 'rmod layout -m 2 --left-of 1'".to_string());
+                    return Err(
+                        "use only one direction flag, e.g. 'rmod layout -m 2 --left-of 1'"
+                            .to_string(),
+                    );
                 }
                 let direction = match arg {
                     "--left-of" => Direction::Left,
@@ -242,16 +410,21 @@ fn parse_layout(args: &[impl AsRef<str>]) -> Result<Command, String> {
                 yes = true;
                 i += 1;
             }
-            other => return Err(format!(
-                "unexpected argument '{}' for 'layout', use '--left-of', '--right-of', '--above', '--below', or '--primary'",
-                other
-            )),
+            other => {
+                return Err(format!(
+                    "unexpected argument '{}' for 'layout', use '--left-of', '--right-of', '--above', '--below', or '--primary'",
+                    other
+                ));
+            }
         }
     }
 
     if primary {
         if placement.is_some() {
-            return Err("use '--primary' or a direction flag, not both, e.g. 'rmod layout -m 2 --primary'".to_string());
+            return Err(
+                "use '--primary' or a direction flag, not both, e.g. 'rmod layout -m 2 --primary'"
+                    .to_string(),
+            );
         }
         let Some(monitor) = monitor else {
             return Err(
@@ -291,9 +464,12 @@ fn parse_layout(args: &[impl AsRef<str>]) -> Result<Command, String> {
 }
 
 fn parse_monitor_number(arg: &str) -> Result<u32, String> {
-    let n = arg
-        .parse::<u32>()
-        .map_err(|_| format!("invalid monitor number '{}', use a number from 'rmod list'", arg))?;
+    let n = arg.parse::<u32>().map_err(|_| {
+        format!(
+            "invalid monitor number '{}', use a number from 'rmod list'",
+            arg
+        )
+    })?;
     if n == 0 {
         return Err("monitor numbers start at 1, run 'rmod list' to see them".to_string());
     }
@@ -326,31 +502,42 @@ fn parse_set(args: &[impl AsRef<str>]) -> Result<Command, String> {
             "-w" | "--width" => {
                 i += 1;
                 let Some(val) = args.get(i) else {
-                    return Err("'-w, --width' needs a value: a number of pixels, e.g. '-w 1920'".to_string());
+                    return Err(
+                        "'-w, --width' needs a value: a number of pixels, e.g. '-w 1920'"
+                            .to_string(),
+                    );
                 };
-                width = Some(
-                    val.as_ref()
-                        .parse::<u32>()
-                        .map_err(|_| format!("invalid width '{}', use a number of pixels, e.g. '1920'", val.as_ref()))?,
-                );
+                width = Some(val.as_ref().parse::<u32>().map_err(|_| {
+                    format!(
+                        "invalid width '{}', use a number of pixels, e.g. '1920'",
+                        val.as_ref()
+                    )
+                })?);
                 i += 1;
             }
             "-h" | "--height" => {
                 i += 1;
                 let Some(val) = args.get(i) else {
-                    return Err("'-h, --height' needs a value: a number of pixels, e.g. '-h 1080'".to_string());
+                    return Err(
+                        "'-h, --height' needs a value: a number of pixels, e.g. '-h 1080'"
+                            .to_string(),
+                    );
                 };
-                height = Some(
-                    val.as_ref()
-                        .parse::<u32>()
-                        .map_err(|_| format!("invalid height '{}', use a number of pixels, e.g. '1080'", val.as_ref()))?,
-                );
+                height = Some(val.as_ref().parse::<u32>().map_err(|_| {
+                    format!(
+                        "invalid height '{}', use a number of pixels, e.g. '1080'",
+                        val.as_ref()
+                    )
+                })?);
                 i += 1;
             }
             "-r" | "--refresh" => {
                 i += 1;
                 let Some(val) = args.get(i) else {
-                    return Err("'-r, --refresh' needs a value: a number in Hz or 'max', e.g. '-r 144'".to_string());
+                    return Err(
+                        "'-r, --refresh' needs a value: a number in Hz or 'max', e.g. '-r 144'"
+                            .to_string(),
+                    );
                 };
                 refresh = Some(parse_refresh(val.as_ref())?);
                 i += 1;
@@ -358,10 +545,22 @@ fn parse_set(args: &[impl AsRef<str>]) -> Result<Command, String> {
             "-p" | "--profile" => {
                 i += 1;
                 let Some(val) = args.get(i) else {
-                    return Err("'-p, --profile' needs a value: 720, 1080, 1440, 4k, or 8k, e.g. '-p 1080'".to_string());
+                    return Err(
+                        "'-p, --profile' needs a value: 720, 1080, 1440, 4k, or 8k, e.g. '-p 1080'"
+                            .to_string(),
+                    );
                 };
                 if !PROFILES.iter().any(|(name, _, _)| *name == val.as_ref()) {
-                    return Err(format!("unknown profile '{}', use one of: 720, 1080, 1440, 4k, 8k", val.as_ref()));
+                    let names = PROFILES
+                        .iter()
+                        .map(|(name, _, _)| *name)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return Err(format!(
+                        "unknown profile '{}', use one of: {}",
+                        val.as_ref(),
+                        names
+                    ));
                 }
                 profile = Some(val.as_ref().to_string());
                 i += 1;
@@ -369,11 +568,17 @@ fn parse_set(args: &[impl AsRef<str>]) -> Result<Command, String> {
             "-m" | "--monitor" => {
                 i += 1;
                 let Some(val) = args.get(i) else {
-                    return Err("'-m, --monitor' needs a value: a monitor number or 'all', e.g. '-m 2'".to_string());
+                    return Err(
+                        "'-m, --monitor' needs a value: a monitor number or 'all', e.g. '-m 2'"
+                            .to_string(),
+                    );
                 };
                 let val = val.as_ref();
                 if val.starts_with('-') {
-                    return Err("'-m, --monitor' needs a value: a monitor number or 'all', e.g. '-m 2'".to_string());
+                    return Err(
+                        "'-m, --monitor' needs a value: a monitor number or 'all', e.g. '-m 2'"
+                            .to_string(),
+                    );
                 }
                 monitor = parse_monitor_target(val)?;
                 i += 1;
@@ -381,7 +586,10 @@ fn parse_set(args: &[impl AsRef<str>]) -> Result<Command, String> {
             "-o" | "--orientation" => {
                 i += 1;
                 let Some(val) = args.get(i) else {
-                    return Err("'-o, --orientation' needs a value: 0, 90, 180, or 270, e.g. '-o 90'".to_string());
+                    return Err(
+                        "'-o, --orientation' needs a value: 0, 90, 180, or 270, e.g. '-o 90'"
+                            .to_string(),
+                    );
                 };
                 orientation = Some(parse_orientation(val.as_ref())?);
                 i += 1;
@@ -394,15 +602,20 @@ fn parse_set(args: &[impl AsRef<str>]) -> Result<Command, String> {
                 max_flag = true;
                 i += 1;
             }
-            other => return Err(format!(
-                "unexpected argument '{}' for 'set', use '--width', '--height', '--refresh', '--profile', '--monitor', '--orientation', or '--max'",
-                other
-            )),
+            other => {
+                return Err(format!(
+                    "unexpected argument '{}' for 'set', use '--width', '--height', '--refresh', '--profile', '--monitor', '--orientation', or '--max'",
+                    other
+                ));
+            }
         }
     }
 
     if (width.is_some() && height.is_none()) || (width.is_none() && height.is_some()) {
-        return Err("'-w, --width' and '-h, --height' must be used together, e.g. '-w 1920 -h 1080'".to_string());
+        return Err(
+            "'-w, --width' and '-h, --height' must be used together, e.g. '-w 1920 -h 1080'"
+                .to_string(),
+        );
     }
 
     if profile.is_some() && (width.is_some() || height.is_some()) {
@@ -447,9 +660,12 @@ fn parse_monitor_target(arg: &str) -> Result<MonitorTarget, String> {
     if arg == "all" {
         Ok(MonitorTarget::All)
     } else {
-        let n = arg
-            .parse::<u32>()
-            .map_err(|_| format!("invalid monitor target '{}', use a monitor number or 'all'", arg))?;
+        let n = arg.parse::<u32>().map_err(|_| {
+            format!(
+                "invalid monitor target '{}', use a monitor number or 'all'",
+                arg
+            )
+        })?;
         if n == 0 {
             return Err("monitor numbers start at 1, run 'rmod list' to see them".to_string());
         }
@@ -460,10 +676,12 @@ fn parse_monitor_target(arg: &str) -> Result<MonitorTarget, String> {
 fn parse_refresh(arg: &str) -> Result<Refresh, String> {
     match arg.to_lowercase().as_str() {
         "max" => Ok(Refresh::Max),
-        _ => arg
-            .parse::<u32>()
-            .map(Refresh::Fixed)
-            .map_err(|_| format!("invalid refresh rate '{}', use a number in Hz or 'max'", arg)),
+        _ => arg.parse::<u32>().map(Refresh::Fixed).map_err(|_| {
+            format!(
+                "invalid refresh rate '{}', use a number in Hz or 'max'",
+                arg
+            )
+        }),
     }
 }
 
@@ -473,10 +691,28 @@ fn parse_orientation(arg: &str) -> Result<u32, String> {
         "90" | "p" | "portrait" => Ok(90),
         "180" | "lf" | "landscape-flipped" => Ok(180),
         "270" | "pf" | "portrait-flipped" => Ok(270),
-        _ => Err(format!(
-            "invalid orientation '{}', use 0, 90, 180, or 270 (also: l, p, lf, pf, landscape, portrait, landscape-flipped, portrait-flipped)",
-            arg
-        )),
+        _ => {
+            let angles = ORIENTATIONS
+                .iter()
+                .map(|(angle, _, _)| angle.to_string())
+                .collect::<Vec<_>>();
+            let aliases = ORIENTATIONS
+                .iter()
+                .map(|(_, _, alias)| *alias)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let names = ORIENTATIONS
+                .iter()
+                .map(|(_, name, _)| *name)
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(format!(
+                "invalid orientation '{}', use {}, or {} (also: {aliases}, {names})",
+                arg,
+                angles[..angles.len() - 1].join(", "),
+                angles[angles.len() - 1],
+            ))
+        }
     }
 }
 
@@ -733,13 +969,17 @@ mod tests {
         for flag in ["--left-of", "--right-of", "--above", "--below"] {
             assert_eq!(
                 parse(&["layout", "-m", "2", flag]),
-                Err(format!("'{flag}' needs a value: a monitor number, e.g. '{flag} 1'")),
+                Err(format!(
+                    "'{flag}' needs a value: a monitor number, e.g. '{flag} 1'"
+                )),
                 "flag '{}'",
                 flag
             );
             assert_eq!(
                 parse(&["layout", "-m", "2", flag, "--primary"]),
-                Err(format!("'{flag}' needs a value: a monitor number, e.g. '{flag} 1'")),
+                Err(format!(
+                    "'{flag}' needs a value: a monitor number, e.g. '{flag} 1'"
+                )),
                 "flag '{}'",
                 flag
             );
@@ -758,7 +998,7 @@ mod tests {
     fn layout_second_direction_flag_is_error() {
         assert_eq!(
             parse(&["layout", "-m", "2", "--left-of", "1", "--right-of", "1"]),
-Err("use only one direction flag, e.g. 'rmod layout -m 2 --left-of 1'".to_string())
+            Err("use only one direction flag, e.g. 'rmod layout -m 2 --left-of 1'".to_string())
         );
     }
 
@@ -766,11 +1006,17 @@ Err("use only one direction flag, e.g. 'rmod layout -m 2 --left-of 1'".to_string
     fn layout_primary_with_direction_is_error() {
         assert_eq!(
             parse(&["layout", "-m", "2", "--primary", "--left-of", "1"]),
-            Err("use '--primary' or a direction flag, not both, e.g. 'rmod layout -m 2 --primary'".to_string())
+            Err(
+                "use '--primary' or a direction flag, not both, e.g. 'rmod layout -m 2 --primary'"
+                    .to_string()
+            )
         );
         assert_eq!(
             parse(&["layout", "-m", "2", "--left-of", "1", "--primary"]),
-            Err("use '--primary' or a direction flag, not both, e.g. 'rmod layout -m 2 --primary'".to_string())
+            Err(
+                "use '--primary' or a direction flag, not both, e.g. 'rmod layout -m 2 --primary'"
+                    .to_string()
+            )
         );
     }
 
@@ -838,7 +1084,7 @@ Err("'-m, --monitor' needs a direction flag or '--primary', e.g. 'rmod layout -m
     fn layout_missing_value_for_monitor_flag() {
         assert_eq!(
             parse(&["layout", "-m", "--left-of", "1"]),
-            Err("'-m, --monitor' needs a value: a monitor number or 'all', e.g. '-m 2'".to_string())
+            Err("'-m, --monitor' needs a value: a monitor number, e.g. '-m 2'".to_string())
         );
     }
 
@@ -846,7 +1092,9 @@ Err("'-m, --monitor' needs a direction flag or '--primary', e.g. 'rmod layout -m
     fn ls_missing_value_for_monitor_flag() {
         assert_eq!(
             parse(&["ls", "-m", "--caps"]),
-            Err("'-m, --monitor' needs a value: a monitor number or 'all', e.g. '-m 2'".to_string())
+            Err(
+                "'-m, --monitor' needs a value: a monitor number or 'all', e.g. '-m 2'".to_string()
+            )
         );
     }
 
@@ -854,7 +1102,9 @@ Err("'-m, --monitor' needs a direction flag or '--primary', e.g. 'rmod layout -m
     fn set_missing_value_for_monitor_flag() {
         assert_eq!(
             parse(&["set", "-m", "--max"]),
-            Err("'-m, --monitor' needs a value: a monitor number or 'all', e.g. '-m 2'".to_string())
+            Err(
+                "'-m, --monitor' needs a value: a monitor number or 'all', e.g. '-m 2'".to_string()
+            )
         );
     }
 
@@ -1136,7 +1386,7 @@ Err("'-m, --monitor' needs a direction flag or '--primary', e.g. 'rmod layout -m
     fn set_missing_orientation_value_is_error() {
         assert_eq!(
             parse(&["set", "-w", "1920", "-h", "1080", "-o"]),
-Err("'-o, --orientation' needs a value: 0, 90, 180, or 270, e.g. '-o 90'".to_string())
+            Err("'-o, --orientation' needs a value: 0, 90, 180, or 270, e.g. '-o 90'".to_string())
         );
     }
 
@@ -1278,7 +1528,10 @@ Err("'-o, --orientation' needs a value: 0, 90, 180, or 270, e.g. '-o 90'".to_str
     fn list_monitor_without_caps_is_error() {
         assert_eq!(
             parse(&["list", "-m", "2"]),
-            Err("'-m, --monitor' only works with '--caps', e.g. 'rmod list --caps -m 2'".to_string())
+            Err(
+                "'-m, --monitor' only works with '--caps', e.g. 'rmod list --caps -m 2'"
+                    .to_string()
+            )
         );
     }
 
@@ -1335,7 +1588,105 @@ Err("'-o, --orientation' needs a value: 0, 90, 180, or 270, e.g. '-o 90'".to_str
     fn ls_monitor_without_caps_is_error() {
         assert_eq!(
             parse(&["ls", "-m", "2"]),
-            Err("'-m, --monitor' only works with '--caps', e.g. 'rmod list --caps -m 2'".to_string())
+            Err(
+                "'-m, --monitor' only works with '--caps', e.g. 'rmod list --caps -m 2'"
+                    .to_string()
+            )
         );
+    }
+
+    #[test]
+    fn all_parser_errors_are_actionable() {
+        // add a row when you add an error message
+        let cases: &[(&[&str], &str)] = &[
+            (&["--help", "x"], "parse_from --help with trailing arg"),
+            (
+                &["--version", "x"],
+                "parse_from --version with trailing arg",
+            ),
+            (&["frobnicate"], "parse_from unknown command"),
+            (&["main"], "parse_from legacy 'main' command"),
+            (&["list", "-m"], "parse_ls -m missing value"),
+            (&["list", "-m", "-x"], "parse_ls -m flag-like value"),
+            (&["list", "foo"], "parse_ls unexpected argument"),
+            (&["list", "-m", "2"], "parse_ls -m without --caps"),
+            (
+                &["layout", "--left-of"],
+                "parse_layout direction missing value",
+            ),
+            (
+                &["layout", "--left-of", "-m", "2"],
+                "parse_layout direction flag-like value",
+            ),
+            (
+                &["layout", "--left-of", "1", "--right-of", "2"],
+                "parse_layout two directions",
+            ),
+            (&["layout", "-m"], "parse_layout -m missing value"),
+            (&["layout", "-m", "-x"], "parse_layout -m flag-like value"),
+            (
+                &["layout", "-m", "x", "--left-of", "1"],
+                "parse_layout invalid monitor number",
+            ),
+            (
+                &["layout", "-m", "0", "--left-of", "1"],
+                "parse_layout monitor number zero",
+            ),
+            (&["layout", "foo"], "parse_layout unexpected argument"),
+            (
+                &["layout", "--primary", "--left-of", "1"],
+                "parse_layout primary plus direction",
+            ),
+            (
+                &["layout", "--primary"],
+                "parse_layout primary without monitor",
+            ),
+            (
+                &["layout", "--left-of", "1"],
+                "parse_layout direction without monitor",
+            ),
+            (
+                &["layout", "-m", "2"],
+                "parse_layout monitor without action",
+            ),
+            (&["set"], "parse_set missing spec"),
+            (&["set", "-w"], "parse_set -w missing value"),
+            (&["set", "-w", "x"], "parse_set invalid width"),
+            (&["set", "-h"], "parse_set -h missing value"),
+            (&["set", "-h", "x"], "parse_set invalid height"),
+            (&["set", "-r"], "parse_set -r missing value"),
+            (&["set", "-r", "x"], "parse_set invalid refresh"),
+            (&["set", "-p"], "parse_set -p missing value"),
+            (&["set", "-p", "x"], "parse_set unknown profile"),
+            (&["set", "-m"], "parse_set -m missing value"),
+            (&["set", "-m", "x"], "parse_set invalid monitor target"),
+            (&["set", "-o"], "parse_set -o missing value"),
+            (&["set", "-o", "x"], "parse_set invalid orientation"),
+            (&["set", "foo"], "parse_set unexpected argument"),
+            (&["set", "-w", "1920"], "parse_set width without height"),
+            (
+                &["set", "-p", "1080", "-w", "1920", "-h", "1080"],
+                "parse_set profile plus width/height",
+            ),
+            (
+                &["set", "--max", "-p", "1080"],
+                "parse_set --max plus profile",
+            ),
+            (
+                &["ls", "-m", "x", "--caps"],
+                "parse_monitor_target invalid target",
+            ),
+        ];
+        for (args, label) in cases {
+            let err = parse(args).unwrap_err();
+            assert!(
+                err.contains("e.g.")
+                    || err.contains("run '")
+                    || err.contains("use ")
+                    || err.contains("connect ")
+                    || err.contains("move "),
+                "{label}: message not actionable: {err}"
+            );
+        }
     }
 }

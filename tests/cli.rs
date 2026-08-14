@@ -34,9 +34,18 @@ fn no_args_prints_help() {
     assert!(text.contains("layout  Show the monitor arrangement or move monitors"));
     assert!(text.contains("--help     Print help"));
     assert!(text.contains("--version  Print version"));
-    assert!(!text.contains("-y, --yes"), "top-level help must not advertise -y");
-    assert!(!text.contains("Profiles"), "profiles table must not appear at top level");
-    assert!(!text.contains("Alias"), "ls alias must not appear at top level");
+    assert!(
+        !text.contains("-y, --yes"),
+        "top-level help must not advertise -y"
+    );
+    assert!(
+        !text.contains("Profiles"),
+        "profiles table must not appear at top level"
+    );
+    assert!(
+        !text.contains("Alias"),
+        "ls alias must not appear at top level"
+    );
 }
 
 #[test]
@@ -440,9 +449,18 @@ fn set_help_flag() {
     let text = strip_ansi(&stdout(&out));
     assert!(text.contains("Apply resolution, refresh rate, and orientation to a display"));
     assert!(text.contains("rmod set [OPTIONS]"));
-    assert!(text.contains("Profiles:"), "set page must show the profiles table");
-    assert!(text.contains("1280x720"), "set page must list profile resolutions");
-    assert!(text.contains("Orientations:"), "set page must show orientations");
+    assert!(
+        text.contains("Profiles:"),
+        "set page must show the profiles table"
+    );
+    assert!(
+        text.contains("1280x720"),
+        "set page must list profile resolutions"
+    );
+    assert!(
+        text.contains("Orientations:"),
+        "set page must show orientations"
+    );
     assert!(text.contains("-y, --yes"), "set page must advertise -y");
 }
 
@@ -602,7 +620,10 @@ fn layout_help_flag() {
     let text = strip_ansi(&stdout(&out));
     assert!(text.contains("rmod layout [OPTIONS]"));
     assert!(text.contains("-y, --yes"), "layout page must advertise -y");
-    assert!(text.contains("--primary"), "layout page must advertise --primary");
+    assert!(
+        text.contains("--primary"),
+        "layout page must advertise --primary"
+    );
     assert_eq!(rmod(&["layout", "-m", "2", "-h"]).status.code(), Some(2));
     assert!(rmod(&["layout", "-m", "2", "--help"]).status.success());
 }

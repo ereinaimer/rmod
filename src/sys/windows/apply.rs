@@ -208,8 +208,9 @@ pub fn max(monitor: Option<u32>, orientation: Option<u32>) -> Result<ApplyOutcom
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
     let display = query::display_label(name, index as u32 + 1);
-    let best = best_mode(capabilities::enumerate_modes(name))
-        .ok_or_else(|| format!("{display} has no supported modes, the display may be disabled or not connected"))?;
+    let best = best_mode(capabilities::enumerate_modes(name)).ok_or_else(|| {
+        format!("{display} has no supported modes, the display may be disabled or not connected")
+    })?;
     let base = query::current_mode(name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
     let previous = mode_of(&base);
     let previous_orientation = orientation_of(&base);
@@ -426,9 +427,12 @@ fn describe_change_result(code: i32) -> String {
     match code {
         DISP_CHANGE_SUCCESSFUL => "success".to_string(),
         DISP_CHANGE_RESTART => "a restart is required to apply this mode".to_string(),
-        DISP_CHANGE_FAILED => "the display change failed, the display may be disconnected or out of range".to_string(),
+        DISP_CHANGE_FAILED => {
+            "the display change failed, the display may be disconnected or out of range".to_string()
+        }
         DISP_CHANGE_NOTUPDATED => {
-            "the display settings were not updated, try a different resolution or refresh rate".to_string()
+            "the display settings were not updated, try a different resolution or refresh rate"
+                .to_string()
         }
         DISP_CHANGE_BADFLAGS | DISP_CHANGE_BADPARAM | DISP_CHANGE_BADDUALVIEW => {
             "invalid parameters".to_string()
