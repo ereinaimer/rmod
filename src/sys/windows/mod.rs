@@ -8,14 +8,17 @@
 //! instead, so the integration tests never touch the real display.
 
 pub(crate) mod apply;
-mod bindings;
+pub(crate) mod attach;
+pub(crate) mod bindings;
 mod capabilities;
 mod fade;
 mod fake;
 mod layout;
+pub(crate) mod power;
 pub(crate) mod query;
 
 pub use apply::{ApplyOutcome, Change, MainChange, MainOutcome, Refresh};
+pub use attach::{AttachAction, AttachChange, AttachOutcome};
 pub use capabilities::Mode;
 pub use layout::{Direction, PlacementChange, PlacementOutcome};
 pub use query::Monitor;
@@ -259,6 +262,98 @@ pub(crate) fn enumerate_devices() -> Vec<String> {
         fake::enumerate_devices()
     } else {
         query::enumerate_devices()
+    }
+}
+
+/// Enumerates the device names of every display, attached or detached,
+/// skipping mirroring drivers and disconnected virtual devices.
+#[allow(dead_code)]
+pub(crate) fn enumerate_all_devices() -> Vec<String> {
+    if fake::enabled() {
+        fake::enumerate_all_devices()
+    } else {
+        query::enumerate_all_devices()
+    }
+}
+
+/// Detaches the monitor with the 1-based number `monitor` (the primary
+/// when `None`) from the desktop.
+///
+/// See [`attach::disable`].
+///
+/// # Errors
+/// Unknown monitor, an attempt to disable the primary display, or a
+/// rejected display change.
+#[allow(dead_code)]
+pub fn disable(monitor: Option<u32>) -> Result<AttachOutcome, String> {
+    if fake::enabled() {
+        fake::disable(monitor)
+    } else {
+        attach::disable::disable(monitor)
+    }
+}
+
+/// Re-attaches the monitor with the 1-based number `monitor` (the primary
+/// when `None`) to the desktop.
+///
+/// See [`attach::enable`].
+///
+/// # Errors
+/// Unknown monitor, a monitor with no saved settings and no supported
+/// modes, or a rejected display change.
+#[allow(dead_code)]
+pub fn enable(monitor: Option<u32>) -> Result<AttachOutcome, String> {
+    if fake::enabled() {
+        fake::enable(monitor)
+    } else {
+        attach::enable::enable(monitor)
+    }
+}
+
+/// Undoes an attach/detach change by re-applying the previous device mode.
+///
+/// See [`attach::revert_attach`].
+///
+/// # Errors
+/// Unknown monitor or a rejected display change.
+#[allow(dead_code)]
+pub fn revert_attach(change: &AttachChange) -> Result<(), String> {
+    if fake::enabled() {
+        fake::revert_attach(change)
+    } else {
+        attach::revert_attach(change)
+    }
+}
+
+/// Puts every monitor to sleep (backlight off). Returns the label of every
+/// affected monitor.
+///
+/// See [`power::sleep_monitor`].
+///
+/// # Errors
+/// No displays attached.
+#[allow(dead_code)]
+pub fn sleep_monitor() -> Result<Vec<String>, String> {
+    if fake::enabled() {
+        fake::sleep_monitor()
+    } else {
+        power::sleep_monitor()
+    }
+}
+
+/// Wakes every monitor (backlight on). Returns the label of every affected
+/// monitor.
+///
+/// See [`power::wake_monitor`].
+///
+/// # Errors
+/// No displays attached.
+#[allow(dead_code)]
+pub fn wake_monitor() -> Result<Vec<String>, String> {
+    if fake::enabled() {
+        fake::wake_monitor()
+    } else {
+        power::wake_monitor()
     }
 }
 

@@ -423,7 +423,7 @@ fn describe_change_failure(code: i32, display: &str, devmode: &DevmodeW) -> Stri
     describe_change_result(code)
 }
 
-fn describe_change_result(code: i32) -> String {
+pub(crate) fn describe_change_result(code: i32) -> String {
     match code {
         DISP_CHANGE_SUCCESSFUL => "success".to_string(),
         DISP_CHANGE_RESTART => "a restart is required to apply this mode".to_string(),
@@ -449,7 +449,7 @@ fn mode_of(devmode: &DevmodeW) -> Mode {
     }
 }
 
-fn build_devmode(mode: &Mode, current: &DevmodeW, orientation: Option<u32>) -> DevmodeW {
+pub(crate) fn build_devmode(mode: &Mode, current: &DevmodeW, orientation: Option<u32>) -> DevmodeW {
     let mut devmode = *current;
     devmode.dm_pels_width = mode.width;
     devmode.dm_pels_height = mode.height;

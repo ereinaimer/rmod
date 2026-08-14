@@ -14,6 +14,10 @@ pub enum HelpTopic {
     List,
     Set,
     Layout,
+    Monitor {
+        /// The action whose page to show; `None` is the top-level page.
+        action: Option<MonitorAction>,
+    },
 }
 
 /// What the `layout` command should do.
@@ -28,6 +32,19 @@ pub enum LayoutAction {
     Primary {
         monitor: u32,
     },
+}
+
+/// What the `monitor` command should do.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum MonitorAction {
+    /// Detach a monitor from the desktop.
+    Disable,
+    /// Re-attach a monitor to the desktop.
+    Enable,
+    /// Put every monitor to sleep.
+    Sleep,
+    /// Wake every monitor.
+    Wake,
 }
 
 /// Every top-level command rmod accepts.
@@ -45,6 +62,11 @@ pub enum Command {
         spec: SetSpec,
         monitor: MonitorTarget,
         orientation: Option<u32>,
+        yes: bool,
+    },
+    Monitor {
+        action: MonitorAction,
+        monitor: MonitorTarget,
         yes: bool,
     },
     Help {
@@ -84,6 +106,7 @@ pub(crate) const TOP_COMMANDS: &[(&str, &str)] = &[
     ("list", "List displays and their current settings"),
     ("set", "Apply resolution, refresh rate, and orientation"),
     ("layout", "Show the monitor arrangement or move monitors"),
+    ("monitor", "Attach, detach, sleep, or wake monitors"),
 ];
 
 pub(crate) const TOP_FLAGS: &[Flag] = &[
@@ -208,6 +231,24 @@ pub(crate) const LAYOUT_FLAGS: &[Flag] = &[
     },
 ];
 
+pub(crate) const MONITOR_FLAGS: &[Flag] = &[
+    Flag {
+        flag: "-m, --monitor",
+        doc: "Monitor number or 'all' (default: primary)",
+        example: &["monitor", "detach", "-m", "2"],
+    },
+    Flag {
+        flag: "-y, --yes",
+        doc: "Skip the confirmation prompt",
+        example: &["monitor", "detach", "-m", "2", "-y"],
+    },
+    Flag {
+        flag: "--help",
+        doc: "Print help",
+        example: &["monitor", "--help"],
+    },
+];
+
 pub(crate) const ORIENTATIONS: &[(u32, &str, &str)] = &[
     (0, "landscape", "l"),
     (90, "portrait", "p"),
@@ -279,6 +320,7 @@ pub fn parse_from<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
         "layout" => parse_layout(args),
         "main" => Err("unknown command 'main', use 'rmod layout -m N --primary'".to_string()),
         "set" => parse_set(args),
+        "monitor" => parse_monitor(args),
         _ => Err(format!(
             "unknown command '{}', run 'rmod --help' to list commands",
             cmd_str
@@ -652,6 +694,88 @@ fn parse_set(args: &[impl AsRef<str>]) -> Result<Command, String> {
         spec,
         monitor,
         orientation,
+        yes,
+    })
+}
+
+fn parse_monitor(args: &[impl AsRef<str>]) -> Result<Command, String> {
+    if args.len() < 2 {
+        return Err("'monitor' needs an action: attach, detach, sleep, or wake, e.g. 'rmod monitor detach -m 2'".to_string());
+    }
+    let action_str = args[1].as_ref();
+    if action_str == "--help" {
+        return Ok(Command::Help {
+            topic: Some(HelpTopic::Monitor { action: None }),
+        });
+    }
+    let action = match action_str {
+        "detach" | "disable" | "off" => MonitorAction::Disable,
+        "attach" | "enable" | "on" => MonitorAction::Enable,
+        "sleep" => MonitorAction::Sleep,
+        "wake" => MonitorAction::Wake,
+        other => {
+            return Err(format!(
+                "unknown action '{}' for 'monitor', use attach, detach, sleep, or wake",
+                other
+            ));
+        }
+    };
+    let mut monitor = MonitorTarget::Primary;
+    let mut yes = false;
+    let mut i = 2;
+
+    while i < args.len() {
+        let arg = args[i].as_ref();
+        match arg {
+            "--help" => {
+                return Ok(Command::Help {
+                    topic: Some(HelpTopic::Monitor { action: Some(action) }),
+                });
+            }
+            "-m" | "--monitor" => {
+                if !matches!(action, MonitorAction::Disable | MonitorAction::Enable) {
+                    return Err(format!(
+                        "'-m, --monitor' is not valid for 'monitor {action_str}', {action_str} applies to all monitors"
+                    ));
+                }
+                i += 1;
+                let Some(val) = args.get(i) else {
+                    return Err(
+                        "'-m, --monitor' needs a value: a monitor number or 'all', e.g. '-m 2'"
+                            .to_string(),
+                    );
+                };
+                let val = val.as_ref();
+                if val.starts_with('-') {
+                    return Err(
+                        "'-m, --monitor' needs a value: a monitor number or 'all', e.g. '-m 2'"
+                            .to_string(),
+                    );
+                }
+                monitor = parse_monitor_target(val)?;
+                i += 1;
+            }
+            "-y" | "--yes" => {
+                if !matches!(action, MonitorAction::Disable | MonitorAction::Enable) {
+                    return Err(format!(
+                        "'-y, --yes' is not valid for 'monitor {action_str}', {action_str} applies to all monitors"
+                    ));
+                }
+                yes = true;
+                i += 1;
+            }
+            other => {
+                return Err(format!(
+                    "unexpected argument '{}' for 'monitor {action_str}', use '--monitor' or '--yes'",
+                    other
+                ));
+            }
+        }
+    }
+
+    Ok(Command::Monitor {
+        action,
+        monitor,
         yes,
     })
 }
@@ -1148,6 +1272,216 @@ Err("'-m, --monitor' needs a direction flag or '--primary', e.g. 'rmod layout -m
         assert_eq!(
             parse(&["main", "2", "-y"]),
             Err("unknown command 'main', use 'rmod layout -m N --primary'".to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_detach_command() {
+        assert_eq!(
+            parse(&["monitor", "detach"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Disable,
+                monitor: MonitorTarget::Primary,
+                yes: false
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_disable_and_off_are_aliases_for_detach() {
+        assert_eq!(
+            parse(&["monitor", "disable"]),
+            parse(&["monitor", "detach"])
+        );
+        assert_eq!(parse(&["monitor", "off"]), parse(&["monitor", "detach"]));
+    }
+
+    #[test]
+    fn monitor_attach_command() {
+        assert_eq!(
+            parse(&["monitor", "attach"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Enable,
+                monitor: MonitorTarget::Primary,
+                yes: false
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_enable_and_on_are_aliases_for_attach() {
+        assert_eq!(parse(&["monitor", "enable"]), parse(&["monitor", "attach"]));
+        assert_eq!(parse(&["monitor", "on"]), parse(&["monitor", "attach"]));
+    }
+
+    #[test]
+    fn monitor_detach_with_monitor_and_yes() {
+        for args in [
+            &["monitor", "detach", "-m", "2", "-y"][..],
+            &["monitor", "detach", "-y", "-m", "2"][..],
+            &["monitor", "disable", "-m", "all", "-y"][..],
+        ] {
+            let expected = Command::Monitor {
+                action: MonitorAction::Disable,
+                monitor: if args.contains(&"all") {
+                    MonitorTarget::All
+                } else {
+                    MonitorTarget::Index(2)
+                },
+                yes: true,
+            };
+            assert_eq!(parse(args), Ok(expected), "args: {:?}", args);
+        }
+    }
+
+    #[test]
+    fn monitor_attach_with_monitor() {
+        assert_eq!(
+            parse(&["monitor", "attach", "-m", "2", "-y"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Enable,
+                monitor: MonitorTarget::Index(2),
+                yes: true
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_sleep_command() {
+        assert_eq!(
+            parse(&["monitor", "sleep"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Sleep,
+                monitor: MonitorTarget::Primary,
+                yes: false
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_wake_command() {
+        assert_eq!(
+            parse(&["monitor", "wake"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Wake,
+                monitor: MonitorTarget::Primary,
+                yes: false
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_sleep_rejects_monitor_flag() {
+        assert_eq!(
+            parse(&["monitor", "sleep", "-m", "2"]),
+            Err("'-m, --monitor' is not valid for 'monitor sleep', sleep applies to all monitors"
+                .to_string())
+        );
+        assert_eq!(
+            parse(&["monitor", "wake", "-m", "2"]),
+            Err("'-m, --monitor' is not valid for 'monitor wake', wake applies to all monitors"
+                .to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_sleep_rejects_yes_flag() {
+        assert_eq!(
+            parse(&["monitor", "sleep", "-y"]),
+            Err("'-y, --yes' is not valid for 'monitor sleep', sleep applies to all monitors"
+                .to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_missing_action_is_error() {
+        assert_eq!(
+            parse(&["monitor"]),
+            Err(
+                "'monitor' needs an action: attach, detach, sleep, or wake, e.g. 'rmod monitor detach -m 2'"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn monitor_unknown_action_is_error() {
+        assert_eq!(
+            parse(&["monitor", "frobnicate"]),
+            Err(
+                "unknown action 'frobnicate' for 'monitor', use attach, detach, sleep, or wake"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn monitor_invalid_monitor_target_is_error() {
+        assert!(parse(&["monitor", "detach", "-m", "x"]).is_err());
+        assert!(parse(&["monitor", "detach", "-m", "0"]).is_err());
+    }
+
+    #[test]
+    fn monitor_missing_monitor_value_is_error() {
+        assert_eq!(
+            parse(&["monitor", "detach", "-m"]),
+            Err(
+                "'-m, --monitor' needs a value: a monitor number or 'all', e.g. '-m 2'"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn monitor_unknown_argument_is_error() {
+        assert_eq!(
+            parse(&["monitor", "detach", "foo"]),
+            Err(
+                "unexpected argument 'foo' for 'monitor detach', use '--monitor' or '--yes'"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn monitor_help_flag() {
+        assert_eq!(
+            parse(&["monitor", "--help"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::Monitor { action: None })
+            })
+        );
+        assert_eq!(
+            parse(&["monitor", "disable", "--help"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::Monitor {
+                    action: Some(MonitorAction::Disable)
+                })
+            })
+        );
+        assert_eq!(
+            parse(&["monitor", "detach", "--help"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::Monitor {
+                    action: Some(MonitorAction::Disable)
+                })
+            })
+        );
+        assert_eq!(
+            parse(&["monitor", "attach", "--help"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::Monitor {
+                    action: Some(MonitorAction::Enable)
+                })
+            })
+        );
+        assert_eq!(
+            parse(&["monitor", "sleep", "--help"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::Monitor {
+                    action: Some(MonitorAction::Sleep)
+                })
+            })
         );
     }
 

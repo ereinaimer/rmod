@@ -9,6 +9,7 @@
 use std::sync::OnceLock;
 
 use super::apply::{ApplyOutcome, Change, MainChange, MainOutcome, Refresh};
+use super::attach::{AttachAction, AttachChange, AttachOutcome};
 use super::bindings::{DM_POSITION, DevmodeW, Pointl};
 use super::capabilities::Mode;
 use super::layout::{self, Direction, PlacementChange, PlacementOutcome};
@@ -265,7 +266,6 @@ pub(crate) fn revert_main(_change: &MainChange<'_>) -> Result<(), String> {
 }
 
 /// The synthetic devmode of a fake monitor.
-#[allow(dead_code)]
 fn fake_devmode(monitor: &Monitor) -> DevmodeW {
     let mut devmode: DevmodeW = unsafe { std::mem::zeroed() };
     devmode.dm_position = Pointl {
@@ -336,6 +336,65 @@ pub(crate) fn get_current_mode(monitor: u32) -> Result<Monitor, String> {
 /// Returns the current mode for the primary fake monitor.
 pub(crate) fn get_primary_mode() -> Result<Monitor, String> {
     resolve(None)
+}
+
+/// Detaches a fake monitor from the desktop.
+///
+/// The fake world is stateless: both monitors are always attached, so only
+/// the primary guard can fail and no change is ever `Unchanged`.
+pub(crate) fn disable(monitor: Option<u32>) -> Result<AttachOutcome, String> {
+    let monitor = resolve(monitor)?;
+    if monitor.is_primary {
+        return Err("cannot detach the primary display".to_string());
+    }
+    Ok(AttachOutcome::Applied(AttachChange {
+        monitor: monitor.number,
+        display: display_label(&monitor),
+        action: AttachAction::Disable,
+        previous: fake_devmode(&monitor),
+    }))
+}
+
+/// Re-attaches a fake monitor to the desktop.
+///
+/// The fake world is stateless: both monitors are always attached, so
+/// every enable reports `Unchanged`.
+pub(crate) fn enable(monitor: Option<u32>) -> Result<AttachOutcome, String> {
+    let monitor = resolve(monitor)?;
+    Ok(AttachOutcome::Unchanged(AttachChange {
+        monitor: monitor.number,
+        display: display_label(&monitor),
+        action: AttachAction::Enable,
+        previous: fake_devmode(&monitor),
+    }))
+}
+
+/// Undoes a fake attach/detach change; the fake never persists anything.
+pub(crate) fn revert_attach(_change: &AttachChange) -> Result<(), String> {
+    Ok(())
+}
+
+/// The label of every fake monitor.
+fn fake_labels() -> Vec<String> {
+    vec![
+        display_label(&monitor(1).expect("fake monitor 1 exists")),
+        display_label(&monitor(2).expect("fake monitor 2 exists")),
+    ]
+}
+
+/// Puts the fake monitors to sleep.
+pub(crate) fn sleep_monitor() -> Result<Vec<String>, String> {
+    Ok(fake_labels())
+}
+
+/// Wakes the fake monitors.
+pub(crate) fn wake_monitor() -> Result<Vec<String>, String> {
+    Ok(fake_labels())
+}
+
+/// The fake device names of every display, attached or detached.
+pub(crate) fn enumerate_all_devices() -> Vec<String> {
+    enumerate_devices()
 }
 
 #[cfg(test)]
@@ -604,5 +663,97 @@ mod tests {
             panic!("placement must be applied");
         };
         assert_eq!(revert_placement(&change), Ok(()));
+    }
+
+    #[test]
+    fn disable_primary_is_error() {
+        assert_eq!(
+            disable(None),
+            Err("cannot detach the primary display".to_string())
+        );
+        assert_eq!(
+            disable(Some(1)),
+            Err("cannot detach the primary display".to_string())
+        );
+    }
+
+    #[test]
+    fn disable_second_monitor_is_applied() {
+        match disable(Some(2)).unwrap() {
+            AttachOutcome::Applied(change) => {
+                assert_eq!(change.monitor, 2);
+                assert_eq!(change.display, "RMOD Fake Monitor 2 [:2]");
+                assert_eq!(change.action, AttachAction::Disable);
+                assert_eq!(change.previous.dm_pels_width, 1920);
+                assert_eq!(
+                    change.previous.dm_position,
+                    Pointl { x: 1920, y: 0 }
+                );
+            }
+            AttachOutcome::Unchanged(_) => panic!("disable must be applied"),
+        }
+    }
+
+    #[test]
+    fn disable_unknown_monitor_is_error() {
+        assert_eq!(
+            disable(Some(99)),
+            Err("monitor 99 not found, run 'rmod list' to see connected displays".to_string())
+        );
+    }
+
+    #[test]
+    fn enable_always_unchanged_because_fake_monitors_are_attached() {
+        match enable(Some(2)).unwrap() {
+            AttachOutcome::Unchanged(change) => {
+                assert_eq!(change.monitor, 2);
+                assert_eq!(change.action, AttachAction::Enable);
+                assert_eq!(change.previous.dm_pels_width, 1920);
+            }
+            AttachOutcome::Applied(_) => panic!("fake monitors are always attached"),
+        }
+    }
+
+    #[test]
+    fn enable_unknown_monitor_is_error() {
+        assert_eq!(
+            enable(Some(99)),
+            Err("monitor 99 not found, run 'rmod list' to see connected displays".to_string())
+        );
+    }
+
+    #[test]
+    fn revert_attach_restores_fake_state() {
+        let outcome = disable(Some(2)).unwrap();
+        let AttachOutcome::Applied(change) = outcome else {
+            panic!("disable must be applied");
+        };
+        assert_eq!(revert_attach(&change), Ok(()));
+    }
+
+    #[test]
+    fn sleep_returns_all_labels() {
+        let expected = vec![
+            "RMOD Fake Monitor 1 [:1]".to_string(),
+            "RMOD Fake Monitor 2 [:2]".to_string(),
+        ];
+        assert_eq!(sleep_monitor(), Ok(expected));
+    }
+
+    #[test]
+    fn wake_returns_all_labels() {
+        let expected = vec![
+            "RMOD Fake Monitor 1 [:1]".to_string(),
+            "RMOD Fake Monitor 2 [:2]".to_string(),
+        ];
+        assert_eq!(wake_monitor(), Ok(expected));
+    }
+
+    #[test]
+    fn enumerate_all_devices_matches_attached_devices() {
+        assert_eq!(
+            enumerate_all_devices(),
+            vec![r"\\.\DISPLAY1".to_string(), r"\\.\DISPLAY2".to_string()]
+        );
     }
 }

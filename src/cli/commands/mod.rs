@@ -7,16 +7,19 @@
 
 mod layout;
 mod ls;
+mod monitor;
 mod set;
 
 use crate::cli::{
-    Command, Confirm, HelpTopic, MonitorTarget, confirm_keep, help, layout as layout_help,
-    ls as ls_help, set as set_help, version,
+    Command, Confirm, HelpTopic, MonitorAction, MonitorTarget, confirm_keep, help,
+    layout as layout_help, ls, monitor as monitor_help, monitor_attach, monitor_detach,
+    set as set_help, version,
 };
-use crate::sys::windows::{self, Change, Mode};
+use crate::sys::windows::{self, AttachAction, AttachChange, Change, Mode};
 
 use layout::run_layout;
 use ls::run_list;
+use monitor::run_monitor;
 use set::run_set;
 
 const CONFIRM_TIMEOUT_SECS: u64 = 5;
@@ -32,7 +35,7 @@ pub fn run(command: Command) -> i32 {
         Command::Help {
             topic: Some(HelpTopic::List),
         } => {
-            println!("{}", ls_help());
+            println!("{}", ls());
             0
         }
         Command::Help {
@@ -47,6 +50,17 @@ pub fn run(command: Command) -> i32 {
             println!("{}", layout_help());
             0
         }
+        Command::Help {
+            topic: Some(HelpTopic::Monitor { action }),
+        } => {
+            let page = match action {
+                Some(MonitorAction::Disable) => monitor_detach(),
+                Some(MonitorAction::Enable) => monitor_attach(),
+                _ => monitor_help(),
+            };
+            println!("{page}");
+            0
+        }
         Command::Version => {
             println!("{}", version());
             0
@@ -59,6 +73,11 @@ pub fn run(command: Command) -> i32 {
             orientation,
             yes,
         } => run_set(spec, monitor, orientation, yes),
+        Command::Monitor {
+            action,
+            monitor,
+            yes,
+        } => run_monitor(action, monitor, yes),
     }
 }
 
@@ -257,10 +276,132 @@ fn confirm_or_revert_all(applied: Vec<Change>, yes: bool) -> i32 {
     )
 }
 
+/// Describes an attach/detach outcome: "detached {display}",
+/// "attached {display}", or the already-detached/attached variants.
+fn describe_attach(change: &AttachChange) -> String {
+    match change.action {
+        AttachAction::Disable => {
+            if change.previous.dm_pels_width == 0 {
+                format!("{} is already detached", change.display)
+            } else {
+                format!("detached {}", change.display)
+            }
+        }
+        AttachAction::Enable => {
+            if change.previous.dm_pels_width > 0 {
+                format!("{} is already attached", change.display)
+            } else {
+                format!("attached {}", change.display)
+            }
+        }
+    }
+}
+
+/// Describes an attach/detach revert: "re-attached {display}" or
+/// "re-detached {display}" depending on the mode that was restored.
+fn describe_attach_revert(change: &AttachChange) -> String {
+    if change.previous.dm_pels_width > 0 {
+        format!("re-attached {}", change.display)
+    } else {
+        format!("re-detached {}", change.display)
+    }
+}
+
+/// Runs the keep-or-revert confirmation for an attach/detach change;
+/// `yes` skips the prompt. Reverts by re-applying the previous device mode
+/// and prints the revert line.
+///
+/// Injectable variant of [`confirm_or_revert_attach`]: the confirm prompt
+/// and the revert call are supplied as closures so tests can exercise the
+/// Revert branch without touching the display.
+fn confirm_or_revert_attach_with<C, R>(change: AttachChange, yes: bool, confirm: C, revert: R) -> i32
+where
+    C: FnOnce() -> Confirm,
+    R: FnOnce(&AttachChange) -> Result<(), String>,
+{
+    if yes {
+        return 0;
+    }
+    match confirm() {
+        Confirm::Keep => 0,
+        Confirm::Revert => match revert(&change) {
+            Ok(()) => {
+                println!("{}", describe_attach_revert(&change));
+                0
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                2
+            }
+        },
+    }
+}
+
+/// Runs the keep-or-revert confirmation for an attach/detach change;
+/// `yes` skips the prompt. Reverts by re-applying the previous device mode
+/// and prints the revert line.
+fn confirm_or_revert_attach(change: AttachChange, yes: bool) -> i32 {
+    confirm_or_revert_attach_with(
+        change,
+        yes,
+        || confirm_keep(std::time::Duration::from_secs(CONFIRM_TIMEOUT_SECS)),
+        windows::revert_attach,
+    )
+}
+
+/// Runs the keep-or-revert confirmation for a batch of attach/detach
+/// changes; an empty batch or `yes` skips the prompt. Reverts every change
+/// to its previous device mode, printing one revert line per display.
+///
+/// Injectable variant of [`confirm_or_revert_attach_all`].
+fn confirm_or_revert_attach_all_with<C, R>(
+    applied: Vec<AttachChange>,
+    yes: bool,
+    confirm: C,
+    revert: R,
+) -> i32
+where
+    C: FnOnce() -> Confirm,
+    R: Fn(&AttachChange) -> Result<(), String>,
+{
+    if applied.is_empty() || yes {
+        return 0;
+    }
+    match confirm() {
+        Confirm::Keep => 0,
+        Confirm::Revert => {
+            let mut failed = false;
+            for change in &applied {
+                match revert(change) {
+                    Ok(()) => println!("{}", describe_attach_revert(change)),
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        failed = true;
+                    }
+                }
+            }
+            if failed { 2 } else { 0 }
+        }
+    }
+}
+
+/// Runs the keep-or-revert confirmation for a batch of attach/detach
+/// changes; an empty batch or `yes` skips the prompt. Reverts every change
+/// to its previous device mode, printing one revert line per display.
+fn confirm_or_revert_attach_all(applied: Vec<AttachChange>, yes: bool) -> i32 {
+    confirm_or_revert_attach_all_with(
+        applied,
+        yes,
+        || confirm_keep(std::time::Duration::from_secs(CONFIRM_TIMEOUT_SECS)),
+        windows::revert_attach,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sys::windows::{Change, Mode};
+    use crate::sys::windows::bindings::DevmodeW;
+    use crate::sys::windows::{AttachAction, AttachChange, Change, Mode};
 
     fn mode(width: u32, height: u32, refresh: u32) -> Mode {
         Mode {
@@ -283,6 +424,17 @@ mod tests {
             previous,
             orientation,
             previous_orientation,
+        }
+    }
+
+    fn attach_change(action: AttachAction, previous_width: u32) -> AttachChange {
+        let mut previous: DevmodeW = unsafe { std::mem::zeroed() };
+        previous.dm_pels_width = previous_width;
+        AttachChange {
+            monitor: 2,
+            display: "Generic PnP Monitor [:2]".to_string(),
+            action,
+            previous,
         }
     }
 
@@ -643,6 +795,206 @@ mod tests {
                     Err("boom".to_string())
                 } else {
                     Ok(mode(1920, 1080, 60))
+                }
+            },
+        );
+        assert_eq!(result, 2);
+    }
+
+    #[test]
+    fn describe_attach_detached_when_applied() {
+        assert_eq!(
+            describe_attach(&attach_change(AttachAction::Disable, 1920)),
+            "detached Generic PnP Monitor [:2]"
+        );
+    }
+
+    #[test]
+    fn describe_attach_already_detached_when_width_zero() {
+        assert_eq!(
+            describe_attach(&attach_change(AttachAction::Disable, 0)),
+            "Generic PnP Monitor [:2] is already detached"
+        );
+    }
+
+    #[test]
+    fn describe_attach_attached_when_applied() {
+        assert_eq!(
+            describe_attach(&attach_change(AttachAction::Enable, 0)),
+            "attached Generic PnP Monitor [:2]"
+        );
+    }
+
+    #[test]
+    fn describe_attach_already_attached_when_width_positive() {
+        assert_eq!(
+            describe_attach(&attach_change(AttachAction::Enable, 1920)),
+            "Generic PnP Monitor [:2] is already attached"
+        );
+    }
+
+    #[test]
+    fn describe_attach_revert_re_attached_when_previous_attached() {
+        assert_eq!(
+            describe_attach_revert(&attach_change(AttachAction::Disable, 1920)),
+            "re-attached Generic PnP Monitor [:2]"
+        );
+    }
+
+    #[test]
+    fn describe_attach_revert_re_detached_when_previous_detached() {
+        assert_eq!(
+            describe_attach_revert(&attach_change(AttachAction::Enable, 0)),
+            "re-detached Generic PnP Monitor [:2]"
+        );
+    }
+
+    #[test]
+    fn confirm_or_revert_attach_yes_skips_confirm_and_revert() {
+        assert_eq!(
+            confirm_or_revert_attach_with(
+                attach_change(AttachAction::Disable, 1920),
+                true,
+                || panic!("confirm must be skipped when yes is set"),
+                |_| panic!("revert must be skipped when yes is set"),
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn confirm_or_revert_attach_keep_skips_revert() {
+        assert_eq!(
+            confirm_or_revert_attach_with(
+                attach_change(AttachAction::Disable, 1920),
+                false,
+                || Confirm::Keep,
+                |_| panic!("revert must be skipped on Keep"),
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn confirm_or_revert_attach_revert_calls_revert_with_change() {
+        let captured = std::cell::RefCell::new(None);
+        let result = confirm_or_revert_attach_with(
+            attach_change(AttachAction::Disable, 1920),
+            false,
+            || Confirm::Revert,
+            |change| {
+                assert_eq!(change.monitor, 2);
+                assert_eq!(change.action, AttachAction::Disable);
+                assert_eq!(change.previous.dm_pels_width, 1920);
+                captured.borrow_mut().replace(change.display.clone());
+                Ok(())
+            },
+        );
+        assert_eq!(result, 0);
+        assert_eq!(
+            captured.into_inner(),
+            Some("Generic PnP Monitor [:2]".to_string())
+        );
+    }
+
+    #[test]
+    fn confirm_or_revert_attach_revert_error_returns_2() {
+        assert_eq!(
+            confirm_or_revert_attach_with(
+                attach_change(AttachAction::Enable, 0),
+                false,
+                || Confirm::Revert,
+                |_| Err("boom".to_string()),
+            ),
+            2
+        );
+    }
+
+    #[test]
+    fn confirm_or_revert_attach_all_empty_skips_confirm_and_revert() {
+        assert_eq!(
+            confirm_or_revert_attach_all_with(
+                Vec::new(),
+                false,
+                || panic!("confirm must be skipped for an empty batch"),
+                |_| panic!("revert must be skipped for an empty batch"),
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn confirm_or_revert_attach_all_yes_skips_confirm_and_revert() {
+        let applied = vec![
+            attach_change(AttachAction::Disable, 1920),
+            attach_change(AttachAction::Enable, 0),
+        ];
+        assert_eq!(
+            confirm_or_revert_attach_all_with(
+                applied,
+                true,
+                || panic!("confirm must be skipped when yes is set"),
+                |_| panic!("revert must be skipped when yes is set"),
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn confirm_or_revert_attach_all_keep_skips_revert() {
+        let applied = vec![attach_change(AttachAction::Disable, 1920)];
+        assert_eq!(
+            confirm_or_revert_attach_all_with(
+                applied,
+                false,
+                || Confirm::Keep,
+                |_| panic!("revert must be skipped on Keep"),
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn confirm_or_revert_attach_all_revert_reverts_every_change() {
+        let applied = vec![
+            attach_change(AttachAction::Disable, 1920),
+            attach_change(AttachAction::Enable, 0),
+        ];
+        let calls = std::cell::RefCell::new(Vec::new());
+        let result = confirm_or_revert_attach_all_with(
+            applied,
+            false,
+            || Confirm::Revert,
+            |change| {
+                calls.borrow_mut().push(change.display.clone());
+                Ok(())
+            },
+        );
+        assert_eq!(result, 0);
+        let calls = calls.into_inner();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0], "Generic PnP Monitor [:2]");
+        assert_eq!(calls[1], "Generic PnP Monitor [:2]");
+    }
+
+    #[test]
+    fn confirm_or_revert_attach_all_second_revert_error_returns_2() {
+        let applied = vec![
+            attach_change(AttachAction::Disable, 1920),
+            attach_change(AttachAction::Enable, 0),
+        ];
+        let calls = std::cell::Cell::new(0);
+        let result = confirm_or_revert_attach_all_with(
+            applied,
+            false,
+            || Confirm::Revert,
+            |_| {
+                let n = calls.get() + 1;
+                calls.set(n);
+                if n == 2 {
+                    Err("boom".to_string())
+                } else {
+                    Ok(())
                 }
             },
         );

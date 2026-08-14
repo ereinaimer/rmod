@@ -4,8 +4,9 @@
 //! friendly names, current mode, and the primary-display designation.
 
 use super::bindings::{
-    DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, DISPLAY_DEVICEW, DevmodeW, ENUM_CURRENT_SETTINGS,
-    EnumDisplayDevicesW, EnumDisplaySettingsW, encode_wide, wide_to_string,
+    DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, DISPLAY_DEVICE_DISCONNECT, DISPLAY_DEVICE_MIRRORING_DRIVER,
+    DISPLAY_DEVICEW, DevmodeW, ENUM_CURRENT_SETTINGS, ENUM_REGISTRY_SETTINGS, EnumDisplayDevicesW,
+    EnumDisplaySettingsW, encode_wide, wide_to_string,
 };
 
 /// A display attached to the desktop and its current settings.
@@ -55,6 +56,40 @@ pub(crate) fn current_mode(name: &str) -> Option<DevmodeW> {
     let mut mode: DevmodeW = unsafe { std::mem::zeroed() };
     let ok = unsafe { EnumDisplaySettingsW(name_wide.as_ptr(), ENUM_CURRENT_SETTINGS, &mut mode) };
     if ok == 0 { None } else { Some(mode) }
+}
+
+/// Reads the registry-persisted mode for a device name.
+///
+/// Windows stores the last attached mode in the registry when a monitor is
+/// detached with `CDS_UPDATEREGISTRY`; re-enabling applies these settings
+/// to restore the monitor.
+pub(crate) fn registry_mode(name: &str) -> Option<DevmodeW> {
+    let name_wide = encode_wide(name);
+    let mut mode: DevmodeW = unsafe { std::mem::zeroed() };
+    let ok = unsafe { EnumDisplaySettingsW(name_wide.as_ptr(), ENUM_REGISTRY_SETTINGS, &mut mode) };
+    if ok == 0 { None } else { Some(mode) }
+}
+
+/// Enumerates every display device, attached or detached, skipping
+/// mirroring drivers and disconnected virtual devices.
+pub(crate) fn enumerate_all_devices() -> Vec<String> {
+    let mut names = Vec::new();
+    let mut index = 0u32;
+    loop {
+        let mut device: DISPLAY_DEVICEW = unsafe { std::mem::zeroed() };
+        device.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
+        let ok = unsafe { EnumDisplayDevicesW(std::ptr::null(), index, &mut device, 0) };
+        if ok == 0 {
+            break;
+        }
+        if device.state_flags & DISPLAY_DEVICE_MIRRORING_DRIVER == 0
+            && device.state_flags & DISPLAY_DEVICE_DISCONNECT == 0
+        {
+            names.push(wide_to_string(&device.device_name));
+        }
+        index += 1;
+    }
+    names
 }
 
 /// Queries the friendly name of the monitor attached to a device.

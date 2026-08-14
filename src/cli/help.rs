@@ -5,7 +5,7 @@
 //! `parser`; this module only renders them.
 
 use crate::cli::parser::{
-    Flag, LAYOUT_FLAGS, LS_FLAGS, ORIENTATIONS, SET_FLAGS, TOP_COMMANDS, TOP_FLAGS,
+    Flag, LAYOUT_FLAGS, LS_FLAGS, MONITOR_FLAGS, ORIENTATIONS, SET_FLAGS, TOP_COMMANDS, TOP_FLAGS,
 };
 
 /// Top-level help page: command index, global options, and examples.
@@ -128,6 +128,90 @@ Show the monitor arrangement, place monitors, or set the primary display
     )
 }
 
+/// Help page for the `monitor` command.
+pub fn monitor() -> String {
+    format!(
+        "rmod monitor
+Attach, detach, sleep, or wake monitors
+
+{usage}
+  rmod monitor <ACTION> [OPTIONS]
+
+{actions}
+  detach  Detach a monitor from the desktop
+  attach  Re-attach a monitor to the desktop
+  sleep   Put every monitor to sleep
+  wake    Wake every monitor
+
+{options}
+{option_rows}
+
+{examples}
+  rmod monitor detach -m 2
+  rmod monitor disable -m 2 -y
+  rmod monitor attach -m 2
+  rmod monitor sleep
+  rmod monitor wake",
+        usage = section("Usage:"),
+        actions = section("Actions:"),
+        options = section("Options:"),
+        option_rows = options(MONITOR_FLAGS),
+        examples = section("Examples:"),
+    )
+}
+
+/// Help page for `rmod monitor detach` (aliases: `disable`, `off`).
+pub fn monitor_detach() -> String {
+    format!(
+        "rmod monitor detach
+Detach a monitor from the desktop
+
+{usage}
+  rmod monitor detach [OPTIONS]
+
+{aliases}
+  disable, off
+
+{options}
+{option_rows}
+
+{examples}
+  rmod monitor detach -m 2
+  rmod monitor detach -m 2 -y",
+        usage = section("Usage:"),
+        aliases = section("Aliases:"),
+        options = section("Options:"),
+        option_rows = options(MONITOR_FLAGS),
+        examples = section("Examples:"),
+    )
+}
+
+/// Help page for `rmod monitor attach` (aliases: `enable`, `on`).
+pub fn monitor_attach() -> String {
+    format!(
+        "rmod monitor attach
+Re-attach a monitor to the desktop
+
+{usage}
+  rmod monitor attach [OPTIONS]
+
+{aliases}
+  enable, on
+
+{options}
+{option_rows}
+
+{examples}
+  rmod monitor attach -m 2
+  rmod monitor attach -m 2 -y",
+        usage = section("Usage:"),
+        aliases = section("Aliases:"),
+        options = section("Options:"),
+        option_rows = options(MONITOR_FLAGS),
+        examples = section("Examples:"),
+    )
+}
+
 /// Version string, e.g. `rmod 0.1.0`.
 pub fn version() -> String {
     format!("rmod {}", env!("CARGO_PKG_VERSION"))
@@ -189,9 +273,10 @@ Usage:
   rmod <COMMAND> [OPTIONS]
 
 Commands:
-  list    List displays and their current settings
-  set     Apply resolution, refresh rate, and orientation
-  layout  Show the monitor arrangement or move monitors
+  list     List displays and their current settings
+  set      Apply resolution, refresh rate, and orientation
+  layout   Show the monitor arrangement or move monitors
+  monitor  Attach, detach, sleep, or wake monitors
 
 Options:
   --help     Print help
@@ -323,6 +408,89 @@ Examples:
     }
 
     #[test]
+    fn monitor_help_matches_spec_mockup() {
+        let expected = "rmod monitor
+Attach, detach, sleep, or wake monitors
+
+Usage:
+  rmod monitor <ACTION> [OPTIONS]
+
+Actions:
+  detach  Detach a monitor from the desktop
+  attach  Re-attach a monitor to the desktop
+  sleep   Put every monitor to sleep
+  wake    Wake every monitor
+
+Options:
+  -m, --monitor  Monitor number or 'all' (default: primary)
+  -y, --yes      Skip the confirmation prompt
+  --help         Print help
+
+Examples:
+  rmod monitor detach -m 2
+  rmod monitor disable -m 2 -y
+  rmod monitor attach -m 2
+  rmod monitor sleep
+  rmod monitor wake";
+        assert_eq!(strip_ansi(&monitor()), expected);
+    }
+
+    #[test]
+    fn monitor_help_hides_aliases() {
+        let h = strip_ansi(&monitor());
+        assert!(
+            !h.contains("aliases"),
+            "aliases must only appear on action pages, got: {h}"
+        );
+        assert!(!h.contains("disable, off"));
+        assert!(!h.contains("enable, on"));
+    }
+
+    #[test]
+    fn monitor_detach_help_shows_aliases() {
+        let expected = "rmod monitor detach
+Detach a monitor from the desktop
+
+Usage:
+  rmod monitor detach [OPTIONS]
+
+Aliases:
+  disable, off
+
+Options:
+  -m, --monitor  Monitor number or 'all' (default: primary)
+  -y, --yes      Skip the confirmation prompt
+  --help         Print help
+
+Examples:
+  rmod monitor detach -m 2
+  rmod monitor detach -m 2 -y";
+        assert_eq!(strip_ansi(&monitor_detach()), expected);
+    }
+
+    #[test]
+    fn monitor_attach_help_shows_aliases() {
+        let expected = "rmod monitor attach
+Re-attach a monitor to the desktop
+
+Usage:
+  rmod monitor attach [OPTIONS]
+
+Aliases:
+  enable, on
+
+Options:
+  -m, --monitor  Monitor number or 'all' (default: primary)
+  -y, --yes      Skip the confirmation prompt
+  --help         Print help
+
+Examples:
+  rmod monitor attach -m 2
+  rmod monitor attach -m 2 -y";
+        assert_eq!(strip_ansi(&monitor_attach()), expected);
+    }
+
+    #[test]
     fn version_matches_package_version() {
         assert_eq!(version(), format!("rmod {}", env!("CARGO_PKG_VERSION")));
     }
@@ -388,12 +556,21 @@ Examples:
     }
 
     #[test]
+    fn monitor_help_renders_registry_rows() {
+        assert!(
+            strip_ansi(&monitor()).contains(&options(MONITOR_FLAGS)),
+            "monitor page must render its option rows from MONITOR_FLAGS"
+        );
+    }
+
+    #[test]
     fn help_pages_render_every_registry_flag() {
         for (page, registry, name) in [
             (help(), TOP_FLAGS, "help"),
             (ls(), LS_FLAGS, "ls"),
             (set(), SET_FLAGS, "set"),
             (layout(), LAYOUT_FLAGS, "layout"),
+            (monitor(), MONITOR_FLAGS, "monitor"),
         ] {
             let rendered = strip_ansi(&page);
             for f in registry {
@@ -409,7 +586,7 @@ Examples:
     #[test]
     fn registry_flags_parse_successfully() {
         // parse_from skips argv[0], so each example is prefixed with the program name.
-        let registries = [TOP_FLAGS, LS_FLAGS, SET_FLAGS, LAYOUT_FLAGS];
+        let registries = [TOP_FLAGS, LS_FLAGS, SET_FLAGS, LAYOUT_FLAGS, MONITOR_FLAGS];
         for flags in registries {
             for f in flags {
                 let mut argv = vec!["rmod"];
@@ -443,6 +620,10 @@ Examples:
         assert!(
             parse_from(&["rmod", "layout"]).is_ok(),
             "command 'layout' should parse"
+        );
+        assert!(
+            parse_from(&["rmod", "monitor", "disable"]).is_ok(),
+            "command 'monitor' should parse"
         );
     }
 

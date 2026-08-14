@@ -5,7 +5,13 @@
 //! and [`super::apply`].
 
 pub(crate) const ENUM_CURRENT_SETTINGS: u32 = 0xFFFF_FFFF;
+pub(crate) const ENUM_REGISTRY_SETTINGS: u32 = 0xFFFF_FFFE;
 pub(crate) const DISPLAY_DEVICE_ATTACHED_TO_DESKTOP: u32 = 0x1;
+pub(crate) const DISPLAY_DEVICE_MIRRORING_DRIVER: u32 = 0x8;
+pub(crate) const DISPLAY_DEVICE_DISCONNECT: u32 = 0x0200_0000;
+pub(crate) const WM_SYSCOMMAND: u32 = 0x0112;
+pub(crate) const SC_MONITORPOWER: usize = 0xF170;
+pub(crate) const HWND_BROADCAST: usize = 0xFFFF;
 pub(crate) const CDS_UPDATEREGISTRY: u32 = 0x1;
 pub(crate) const CDS_TEST: u32 = 0x2;
 pub(crate) const DM_PELSWIDTH: u32 = 0x0008_0000;
@@ -178,6 +184,12 @@ unsafe extern "system" {
     ) -> i32;
     pub(crate) fn TranslateMessage(lp_msg: *const Msg) -> i32;
     pub(crate) fn DispatchMessageW(lp_msg: *const Msg) -> isize;
+    pub(crate) fn SendMessageW(
+        h_wnd: usize,
+        msg: u32,
+        w_param: usize,
+        l_param: isize,
+    ) -> isize;
 }
 
 #[link(name = "kernel32")]
@@ -203,6 +215,16 @@ pub(crate) fn wide_to_string(w: &[u16]) -> String {
 mod tests {
     use super::*;
     use std::mem::offset_of;
+
+    #[test]
+    fn attach_and_power_constants() {
+        assert_eq!(ENUM_REGISTRY_SETTINGS, 0xFFFF_FFFE);
+        assert_eq!(DISPLAY_DEVICE_MIRRORING_DRIVER, 0x8);
+        assert_eq!(DISPLAY_DEVICE_DISCONNECT, 0x0200_0000);
+        assert_eq!(WM_SYSCOMMAND, 0x0112);
+        assert_eq!(SC_MONITORPOWER, 0xF170);
+        assert_eq!(HWND_BROADCAST, 0xFFFF);
+    }
 
     #[test]
     fn display_change_constants() {

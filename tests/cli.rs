@@ -1,11 +1,16 @@
 use std::process::Command;
 
 fn rmod(args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_rmod"))
-        .args(args)
-        .env("RMOD_SYS_FAKE", "1")
-        .output()
-        .expect("failed to run rmod")
+    rmod_env(args, &[])
+}
+
+fn rmod_env(args: &[&str], envs: &[(&str, &str)]) -> std::process::Output {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_rmod"));
+    cmd.args(args).env("RMOD_SYS_FAKE", "1");
+    for (key, value) in envs {
+        cmd.env(key, value);
+    }
+    cmd.output().expect("failed to run rmod")
 }
 
 fn stdout(out: &std::process::Output) -> String {
@@ -29,9 +34,10 @@ fn no_args_prints_help() {
     let text = strip_ansi(&stdout(&out));
     assert!(text.contains("rmod <COMMAND> [OPTIONS]"));
     assert!(text.contains("Commands:"));
-    assert!(text.contains("list    List displays and their current settings"));
-    assert!(text.contains("set     Apply resolution, refresh rate, and orientation"));
-    assert!(text.contains("layout  Show the monitor arrangement or move monitors"));
+    assert!(text.contains("list     List displays and their current settings"));
+    assert!(text.contains("set      Apply resolution, refresh rate, and orientation"));
+    assert!(text.contains("layout   Show the monitor arrangement or move monitors"));
+    assert!(text.contains("monitor  Attach, detach, sleep, or wake monitors"));
     assert!(text.contains("--help     Print help"));
     assert!(text.contains("--version  Print version"));
     assert!(
@@ -839,4 +845,164 @@ fn set_optional_spec_orientation() {
         assert!(!err.contains("unknown command"));
         assert!(!err.contains("unexpected argument"));
     }
+}
+
+#[test]
+fn monitor_help_exits_zero() {
+    assert_eq!(rmod(&["monitor", "-h"]).status.code(), Some(2));
+    assert!(rmod(&["monitor", "--help"]).status.success());
+    assert!(rmod(&["monitor", "detach", "--help"]).status.success());
+    let text = strip_ansi(&stdout(&rmod(&["monitor", "--help"])));
+    assert!(text.contains("Attach, detach, sleep, or wake monitors"));
+    assert!(text.contains("-m, --monitor"));
+    assert!(text.contains("-y, --yes"));
+}
+
+#[test]
+fn monitor_detach_second_monitor() {
+    let out = rmod(&["monitor", "detach", "-m", "2", "-y"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("detached RMOD Fake Monitor 2 [:2]"));
+}
+
+#[test]
+fn monitor_disable_is_alias_for_detach() {
+    let out = rmod(&["monitor", "disable", "-m", "2", "-y"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("detached RMOD Fake Monitor 2 [:2]"));
+}
+
+#[test]
+fn monitor_off_is_alias_for_detach() {
+    let out = rmod(&["monitor", "off", "-m", "2", "-y"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("detached RMOD Fake Monitor 2 [:2]"));
+}
+
+#[test]
+fn monitor_detach_primary_is_error() {
+    let out = rmod(&["monitor", "detach", "-y"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("cannot detach the primary display"));
+}
+
+#[test]
+fn monitor_attach_attached_is_unchanged() {
+    let out = rmod(&["monitor", "attach", "-m", "2", "-y"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("RMOD Fake Monitor 2 [:2] is already attached"));
+}
+
+#[test]
+fn monitor_enable_is_alias_for_attach() {
+    let out = rmod(&["monitor", "enable", "-m", "2", "-y"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("RMOD Fake Monitor 2 [:2] is already attached"));
+}
+
+#[test]
+fn monitor_on_is_alias_for_attach() {
+    let out = rmod(&["monitor", "on", "-m", "2", "-y"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("RMOD Fake Monitor 2 [:2] is already attached"));
+}
+
+#[test]
+fn monitor_sleep_prints_slept_per_line() {
+    let out = rmod(&["monitor", "sleep"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("slept RMOD Fake Monitor 1 [:1]"));
+    assert!(text.contains("slept RMOD Fake Monitor 2 [:2]"));
+    assert!(!text.contains("asleep"));
+}
+
+#[test]
+fn monitor_wake_prints_woke_per_line() {
+    let out = rmod(&["monitor", "wake"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("woke RMOD Fake Monitor 1 [:1]"));
+    assert!(text.contains("woke RMOD Fake Monitor 2 [:2]"));
+    assert!(!text.contains("awake"));
+}
+
+#[test]
+fn monitor_detach_help_shows_aliases() {
+    let out = rmod(&["monitor", "detach", "--help"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = strip_ansi(&stdout(&out));
+    assert!(text.contains("Aliases:"));
+    assert!(text.contains("disable, off"));
+}
+
+#[test]
+fn monitor_attach_help_shows_aliases() {
+    let out = rmod(&["monitor", "attach", "--help"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = strip_ansi(&stdout(&out));
+    assert!(text.contains("Aliases:"));
+    assert!(text.contains("enable, on"));
+}
+
+#[test]
+fn monitor_help_hides_aliases() {
+    let out = rmod(&["monitor", "--help"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = strip_ansi(&stdout(&out));
+    assert!(!text.contains("aliases"), "got: {text}");
+    assert!(!text.contains("disable, off"));
+    assert!(!text.contains("enable, on"));
+}
+
+#[test]
+fn monitor_sleep_rejects_monitor_flag() {
+    let out = rmod(&["monitor", "sleep", "-m", "2"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("not valid for 'monitor sleep'"));
+}
+
+#[test]
+fn monitor_sleep_rejects_yes_flag() {
+    let out = rmod(&["monitor", "sleep", "-y"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("not valid for 'monitor sleep'"));
+}
+
+#[test]
+fn monitor_missing_action_is_error() {
+    let out = rmod(&["monitor"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("'monitor' needs an action"));
+}
+
+#[test]
+fn monitor_unknown_action_is_error() {
+    let out = rmod(&["monitor", "frobnicate"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("unknown action 'frobnicate' for 'monitor'"));
+}
+
+#[test]
+fn monitor_unknown_monitor_is_error() {
+    let out = rmod(&["monitor", "detach", "-m", "99", "-y"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("monitor 99 not found"));
+}
+
+#[test]
+fn monitor_detach_all_detaches_secondary_and_reports_primary_error() {
+    let out = rmod(&["monitor", "detach", "-m", "all", "-y"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stdout(&out).contains("detached RMOD Fake Monitor 2 [:2]"));
+    assert!(stderr(&out).contains("cannot detach the primary display"));
+}
+
+#[test]
+fn monitor_attach_all_is_unchanged() {
+    let out = rmod(&["monitor", "attach", "-m", "all", "-y"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("RMOD Fake Monitor 1 [:1] is already attached"));
+    assert!(text.contains("RMOD Fake Monitor 2 [:2] is already attached"));
 }
