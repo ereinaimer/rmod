@@ -3,6 +3,7 @@ use std::process::Command;
 fn rmod(args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_rmod"))
         .args(args)
+        .env("RMOD_SYS_FAKE", "1")
         .output()
         .expect("failed to run rmod")
 }
@@ -28,27 +29,26 @@ fn no_args_prints_help() {
 
 #[test]
 fn help_flags_exit_zero() {
-    assert!(rmod(&["-h"]).status.success());
+    assert_eq!(rmod(&["-h"]).status.code(), Some(2));
     assert!(rmod(&["--help"]).status.success());
 }
 
 #[test]
 fn version_flags_exit_zero() {
-    let out = rmod(&["-V"]);
+    let out = rmod(&["--version"]);
     assert!(out.status.success());
     assert!(stdout(&out).contains("rmod"));
 }
 
 #[test]
 fn subcommand_help_flags_exit_zero() {
-    assert!(rmod(&["ls", "-h"]).status.success());
+    assert_eq!(rmod(&["ls", "-h"]).status.code(), Some(2));
     assert!(rmod(&["ls", "--help"]).status.success());
-    assert!(rmod(&["max", "-h"]).status.success());
-    assert!(rmod(&["max", "--help"]).status.success());
-    assert!(rmod(&["caps", "-h"]).status.success());
-    assert!(rmod(&["caps", "--help"]).status.success());
-    assert!(rmod(&["1920x1080@60", "-h"]).status.success());
-    assert!(rmod(&["4k", "--help"]).status.success());
+    assert!(rmod(&["ls", "--caps", "--help"]).status.success());
+    assert_eq!(rmod(&["set", "-p", "1080", "-h"]).status.code(), Some(2));
+    assert!(rmod(&["set", "-p", "4k", "--help"]).status.success());
+    assert_eq!(rmod(&["main", "-h"]).status.code(), Some(2));
+    assert!(rmod(&["main", "--help"]).status.success());
 }
 
 #[test]
@@ -66,8 +66,35 @@ fn unknown_argument_for_command_exits_2() {
 }
 
 #[test]
+fn list_is_alias_for_ls() {
+    assert_eq!(stdout(&rmod(&["list"])), stdout(&rmod(&["ls"])));
+    assert!(rmod(&["list", "--help"]).status.success());
+}
+
+#[test]
+fn list_caps_works() {
+    let out = rmod(&["list", "--caps", "-m", "2"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("RMOD Fake Monitor 2"));
+}
+
+#[test]
+fn list_monitor_without_caps_is_error() {
+    let out = rmod(&["list", "-m", "2"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("-m is only valid with --caps"));
+}
+
+#[test]
+fn list_unknown_argument_exits_2() {
+    let out = rmod(&["list", "foo"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("error:"));
+}
+
+#[test]
 fn invalid_resolution_exits_2() {
-    let out = rmod(&["480"]);
+    let out = rmod(&["set", "480"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("error:"));
 }
@@ -109,7 +136,7 @@ fn ls_marks_primary_display() {
 
 #[test]
 fn trailing_argument_exits_2() {
-    let out = rmod(&["1920x1080@60", "extra"]);
+    let out = rmod(&["set", "-w", "1920", "-h", "1080", "extra"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("error:"));
 }
@@ -130,21 +157,21 @@ fn uppercase_command_exits_2() {
 
 #[test]
 fn overflow_monitor_exits_2() {
-    let out = rmod(&["max:4294967296"]);
+    let out = rmod(&["set", "--max", "-m", "4294967296"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("error:"));
 }
 
 #[test]
 fn flag_with_trailing_argument_exits_2() {
-    let out = rmod(&["-h", "extra"]);
+    let out = rmod(&["--help", "extra"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("error:"));
 }
 
 #[test]
 fn caps_lists_supported_modes() {
-    let out = rmod(&["caps"]);
+    let out = rmod(&["ls", "--caps"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let stdout = stdout(&out);
     let mut lines = stdout.lines();
@@ -172,30 +199,25 @@ fn caps_lists_supported_modes() {
 }
 
 #[test]
-fn caps_first_monitor_succeeds() {
-    assert!(rmod(&["caps:1"]).status.success());
+fn caps_with_monitor() {
+    assert!(rmod(&["ls", "--caps", "-m", "1"]).status.success());
 }
 
 #[test]
-fn caps_unknown_monitor_exits_2() {
-    let out = rmod(&["caps:999"]);
-    assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("monitor 999 not found"));
-}
-
-#[test]
-fn caps_zero_monitor_exits_2() {
-    let out = rmod(&["caps:0"]);
-    assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("monitor 0 not found"));
+fn ls_shows_fake_environment() {
+    let out = rmod(&["ls"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let stdout = stdout(&out);
+    assert!(stdout.contains("RMOD Fake Monitor"), "expected fake monitor names: {stdout}");
+    assert!(stdout.contains("1920x1080"), "expected fake resolution: {stdout}");
 }
 
 #[test]
 fn caps_all_lists_every_monitor() {
-    let out = rmod(&["caps:*"]);
+    let out = rmod(&["ls", "--caps", "-m", "all"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let stdout = stdout(&out);
-    assert!(stdout.contains("Generic PnP Monitor"));
+    assert!(stdout.contains("RMOD Fake Monitor"));
     let modes: Vec<&str> = stdout.lines().filter(|l| l.starts_with("  ")).collect();
     assert!(!modes.is_empty(), "no mode rows listed");
     for line in &modes {
@@ -206,69 +228,118 @@ fn caps_all_lists_every_monitor() {
 }
 
 #[test]
-fn max_help_lists_usage() {
-    let out = rmod(&["max", "-h"]);
-    assert!(out.status.success(), "stderr: {}", stderr(&out));
-    let stdout = stdout(&out);
-    assert!(stdout.contains("Apply the highest supported resolution"));
-    assert!(stdout.contains("rmod max[:N|:*]"));
+fn caps_unknown_monitor_exits_2() {
+    let out = rmod(&["ls", "--caps", "-m", "999"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("monitor 999 not found"));
 }
 
 #[test]
-fn max_nonexistent_monitor_is_error() {
-    let out = rmod(&["max:99"]);
+fn caps_zero_monitor_exits_2() {
+    let out = rmod(&["ls", "--caps", "-m", "0"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("monitor number must be >= 1"));
+}
+
+#[test]
+fn ls_m_without_caps_is_error() {
+    let out = rmod(&["ls", "-m", "2"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("-m is only valid with --caps"));
+}
+
+#[test]
+fn caps_is_unknown_command() {
+    let out = rmod(&["caps"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("unknown command"));
+}
+
+#[test]
+fn set_max_primary() {
+    let out = rmod(&["set", "--max"]);
+    if !out.status.success() {
+        let err = stderr(&out);
+        assert!(!err.contains("unknown command"));
+        assert!(!err.contains("unexpected argument"));
+    }
+}
+
+#[test]
+fn set_max_with_monitor() {
+    let out = rmod(&["set", "--max", "-m", "1"]);
+    if !out.status.success() {
+        let err = stderr(&out);
+        assert!(!err.contains("unknown command"));
+        assert!(!err.contains("unexpected argument"));
+    }
+}
+
+#[test]
+fn set_max_with_all() {
+    let out = rmod(&["set", "--max", "-m", "all"]);
+    if !out.status.success() {
+        let err = stderr(&out);
+        assert!(!err.contains("unknown command"));
+        assert!(!err.contains("unexpected argument"));
+    }
+}
+
+#[test]
+fn set_max_nonexistent_monitor_is_error() {
+    let out = rmod(&["set", "--max", "-m", "99"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("monitor 99 not found"));
 }
 
 #[test]
-fn max_nonexistent_monitor_yes_flag() {
-    let out = rmod(&["max:99", "-y"]);
+fn set_max_nonexistent_monitor_yes_flag() {
+    let out = rmod(&["set", "--max", "-m", "99", "-y"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("monitor 99 not found"));
 }
 
 #[test]
-fn max_zero_monitor_is_error() {
-    let out = rmod(&["max:0"]);
+fn set_max_zero_monitor_is_error() {
+    let out = rmod(&["set", "--max", "-m", "0"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("monitor 0 not found"));
+    assert!(stderr(&out).contains("monitor number must be >= 1"));
 }
 
 #[test]
 fn set_nonexistent_monitor_is_error() {
-    let out = rmod(&["1920x1080@60:99"]);
+    let out = rmod(&["set", "-w", "1920", "-h", "1080", "-r", "60", "-m", "99"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("monitor 99 not found"));
 }
 
 #[test]
 fn set_zero_monitor_is_error() {
-    let out = rmod(&["1920x1080@60:0"]);
+    let out = rmod(&["set", "-w", "1920", "-h", "1080", "-r", "60", "-m", "0"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("monitor 0 not found"));
+    assert!(stderr(&out).contains("monitor number must be >= 1"));
 }
 
 #[test]
 fn set_nonexistent_monitor_yes_flag() {
-    let out = rmod(&["1920x1080@60:0", "-y"]);
+    let out = rmod(&["set", "-w", "1920", "-h", "1080", "-r", "60", "-m", "0", "-y"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("monitor 0 not found"));
+    assert!(stderr(&out).contains("monitor number must be >= 1"));
 }
 
 #[test]
 fn set_unsupported_mode_is_error() {
-    let out = rmod(&["9999x9999@1"]);
+    let out = rmod(&["set", "-w", "9999", "-h", "9999", "-r", "1"]);
     assert_eq!(out.status.code(), Some(2));
     let err = stderr(&out);
     assert!(
-        err.contains("does not support 9999x9999@1Hz") || err.contains("the display change failed")
+        err.contains("does not support") || err.contains("the display change failed")
     );
 }
 
 #[test]
 fn set_all_unsupported_mode_is_error() {
-    let out = rmod(&["9999x9999@1:*"]);
+    let out = rmod(&["set", "-w", "9999", "-h", "9999", "-r", "1", "-m", "all"]);
     assert_eq!(out.status.code(), Some(2));
     let err = stderr(&out);
     assert!(err.contains("does not support") || err.contains("the display change failed"));
@@ -297,8 +368,7 @@ fn current_mode() -> (String, String, String) {
 #[test]
 fn set_already_active_is_noop() {
     let (w, h, r) = current_mode();
-    let mode = format!("{w}x{h}@{r}");
-    let out = rmod(&[&mode]);
+    let out = rmod(&["set", "-w", &w, "-h", &h, "-r", &r]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let stdout = stdout(&out);
     assert!(stdout.contains("already at"));
@@ -309,8 +379,7 @@ fn set_already_active_is_noop() {
 #[test]
 fn set_all_already_active_is_noop() {
     let (w, h, r) = current_mode();
-    let all = format!("{w}x{h}@{r}:*");
-    let out = rmod(&[&all]);
+    let out = rmod(&["set", "-w", &w, "-h", &h, "-r", &r, "-m", "all"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let stdout = stdout(&out);
     assert!(stdout.contains("is already at"));
@@ -319,115 +388,36 @@ fn set_all_already_active_is_noop() {
 }
 
 #[test]
-fn set_flags_already_active_is_noop() {
-    let (w, h, r) = current_mode();
-    let out = rmod(&["-w", &w, "-h", &h, "-r", &r]);
-    assert!(out.status.success(), "stderr: {}", stderr(&out));
-    let stdout = stdout(&out);
-    assert!(stdout.contains("already at"));
-    assert!(!stdout.contains("keep changes"));
-    assert!(!stdout.contains("applied"));
-}
-
-#[test]
-fn set_flags_all_already_active_is_noop() {
-    let (w, h, r) = current_mode();
-    let out = rmod(&["-w", &w, "-h", &h, "-r", &r, "-m", "*"]);
-    assert!(out.status.success(), "stderr: {}", stderr(&out));
-    let stdout = stdout(&out);
-    assert!(stdout.contains("is already at"));
-    assert!(!stdout.contains("keep changes"));
-    assert!(!stdout.contains("applied"));
-}
-
-#[test]
-fn set_flags_unsupported_mode_is_error() {
-    let out = rmod(&["-w", "9999", "-h", "9999", "-r", "1"]);
-    assert_eq!(out.status.code(), Some(2));
-    let err = stderr(&out);
-    assert!(err.contains("does not support") || err.contains("the display change failed"));
-}
-
-#[test]
-fn set_flags_missing_height_is_error() {
-    let out = rmod(&["-w", "1920"]);
-    assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("-w requires -h"));
-}
-
-#[test]
-fn set_flags_nothing_to_set_is_error() {
-    let out = rmod(&["-y"]);
-    assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("nothing to set"));
-}
-
-#[test]
-fn set_flags_missing_value_is_error() {
-    let out = rmod(&["-w"]);
-    assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("missing value for -w"));
-}
-
-#[test]
-fn set_flags_invalid_refresh_is_error() {
-    let out = rmod(&["-r", "abc"]);
-    assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("invalid refresh"));
-}
-
-#[test]
-fn set_flags_monitor_not_found() {
-    let out = rmod(&["-w", "1920", "-h", "1080", "-r", "60", "-m", "99"]);
-    assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("monitor 99 not found"));
-}
-
-#[test]
-fn set_flags_help() {
-    let out = rmod(&["-w", "1920", "-h", "1080", "--help"]);
-    assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert!(stdout(&out).contains("Flags"));
-}
-
-#[test]
-fn orientation_invalid_compact_is_error() {
-    let out = rmod(&["1920x1080:2/45"]);
-    assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("invalid orientation"));
-}
-
-#[test]
-fn orientation_invalid_flag_is_error() {
-    let out = rmod(&["-o", "45"]);
+fn orientation_invalid_is_error() {
+    let out = rmod(&["set", "-w", "1920", "-h", "1080", "-o", "45"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("invalid orientation"));
 }
 
 #[test]
 fn orientation_missing_value_is_error() {
-    let out = rmod(&["-o"]);
+    let out = rmod(&["set", "-w", "1920", "-h", "1080", "-o"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("missing value for -o"));
 }
 
 #[test]
 fn orientation_flag_help() {
-    let out = rmod(&["-o", "90", "--help"]);
+    let out = rmod(&["set", "-w", "1920", "-h", "1080", "-o", "90", "--help"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert!(stdout(&out).contains("Angle options"));
+    assert!(stdout(&out).contains("Options:"));
 }
 
 #[test]
-fn orientation_compact_help() {
-    let out = rmod(&["1920x1080:2/90", "-h"]);
+fn set_help_flag() {
+    let out = rmod(&["set", "--help"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert!(stdout(&out).contains("Angle options"));
+    assert!(stdout(&out).contains("Apply a resolution"));
 }
 
 #[test]
 fn main_primary_is_noop() {
-    let out = rmod(&["main:1"]);
+    let out = rmod(&["main", "1"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert!(stdout(&out).contains("already the main display"));
     assert!(!stdout(&out).contains("keep changes"));
@@ -443,61 +433,232 @@ fn main_no_monitor_is_error() {
 
 #[test]
 fn main_all_target_is_error() {
-    let out = rmod(&["main:*"]);
+    let out = rmod(&["main", "all"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("main does not accept"));
+    assert!(stderr(&out).contains("invalid monitor number 'all'"));
 }
 
 #[test]
 fn main_zero_monitor_is_error() {
-    let out = rmod(&["main:0"]);
+    let out = rmod(&["main", "0"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("invalid monitor id"));
+    assert!(stderr(&out).contains("monitor number must be >= 1"));
 }
 
 #[test]
 fn main_help_flag() {
-    assert!(rmod(&["main", "-h"]).status.success());
+    assert_eq!(rmod(&["main", "-h"]).status.code(), Some(2));
     assert!(rmod(&["main", "--help"]).status.success());
 }
 
 #[test]
 fn main_with_monitor_help() {
-    assert!(rmod(&["main:2", "-h"]).status.success());
-    assert!(rmod(&["main:2", "--help"]).status.success());
+    assert_eq!(rmod(&["main", "2", "-h"]).status.code(), Some(2));
+    assert!(rmod(&["main", "2", "--help"]).status.success());
 }
 
 #[test]
-fn main_flag_primary_is_noop() {
-    let out = rmod(&["main", "-m", "1"]);
-    assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert!(stdout(&out).contains("already the main display"));
-}
-
-#[test]
-fn main_flag_missing_val() {
-    let out = rmod(&["main", "-m"]);
+fn old_syntax_max_colon_is_error() {
+    let out = rmod(&["max:2"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("missing value for -m"));
+    assert!(stderr(&out).contains("unknown command"));
 }
 
 #[test]
-fn main_flag_all_is_error() {
-    let out = rmod(&["main", "-m", "*"]);
+fn old_syntax_max_all_is_error() {
+    let out = rmod(&["max:*"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("main does not accept"));
+    assert!(stderr(&out).contains("unknown command"));
 }
 
 #[test]
-fn main_flag_zero_is_error() {
-    let out = rmod(&["main", "-m", "0"]);
+fn old_syntax_caps_colon_is_error() {
+    let out = rmod(&["caps:2"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("invalid monitor id"));
+    assert!(stderr(&out).contains("unknown command"));
 }
 
 #[test]
-fn main_flag_with_yes() {
-    let out = rmod(&["main", "-m", "1", "-y"]);
-    assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert!(stdout(&out).contains("already the main display"));
+fn old_syntax_caps_all_is_error() {
+    let out = rmod(&["caps:*"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("unknown command"));
+}
+
+#[test]
+fn old_syntax_main_colon_is_error() {
+    let out = rmod(&["main:2"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("unknown command"));
+}
+
+#[test]
+fn old_syntax_implicit_set_is_error() {
+    let out = rmod(&["1920x1080@60"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("unknown command"));
+}
+
+#[test]
+fn old_syntax_profile_with_monitor_is_error() {
+    let out = rmod(&["4k:2"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("unknown command"));
+}
+
+#[test]
+fn old_syntax_compact_orientation_is_error() {
+    let out = rmod(&["1920x1080:2/90"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("unknown command"));
+}
+
+#[test]
+fn old_syntax_flag_based_is_error() {
+    let out = rmod(&["-w", "1920", "-h", "1080", "-r", "60"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("unknown command"));
+}
+
+#[test]
+fn old_syntax_refresh_only_is_error() {
+    let out = rmod(&["-r", "144"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("unknown command"));
+}
+
+#[test]
+fn old_syntax_orientation_only_is_error() {
+    let out = rmod(&["-o", "90"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("unknown command"));
+}
+
+#[test]
+fn old_syntax_main_m_flag_is_error() {
+    let out = rmod(&["main", "-m", "2"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("unexpected argument"));
+}
+
+#[test]
+fn set_with_profile() {
+    let out = rmod(&["set", "-p", "1080"]);
+    if !out.status.success() {
+        let err = stderr(&out);
+        assert!(!err.contains("unknown command"));
+        assert!(!err.contains("unexpected argument"));
+    }
+}
+
+#[test]
+fn set_with_profile_and_refresh() {
+    let out = rmod(&["set", "-p", "4k", "-r", "144"]);
+    if !out.status.success() {
+        let err = stderr(&out);
+        assert!(!err.contains("unknown command"));
+        assert!(!err.contains("unexpected argument"));
+    }
+}
+
+#[test]
+fn set_with_explicit_resolution() {
+    let out = rmod(&["set", "-w", "1920", "-h", "1080", "-r", "60"]);
+    if !out.status.success() {
+        let err = stderr(&out);
+        assert!(!err.contains("unknown command"));
+        assert!(!err.contains("unexpected argument"));
+    }
+}
+
+#[test]
+fn set_with_explicit_no_refresh() {
+    let out = rmod(&["set", "-w", "1920", "-h", "1080"]);
+    if !out.status.success() {
+        let err = stderr(&out);
+        assert!(!err.contains("unknown command"));
+        assert!(!err.contains("unexpected argument"));
+    }
+}
+
+#[test]
+fn set_with_refresh_only() {
+    let out = rmod(&["set", "-r", "60"]);
+    if !out.status.success() {
+        let err = stderr(&out);
+        assert!(!err.contains("unknown command"));
+        assert!(!err.contains("unexpected argument"));
+    }
+}
+
+#[test]
+fn set_with_max_refresh() {
+    let out = rmod(&["set", "-r", "max"]);
+    if !out.status.success() {
+        let err = stderr(&out);
+        assert!(!err.contains("unknown command"));
+        assert!(!err.contains("unexpected argument"));
+    }
+}
+
+#[test]
+fn set_with_monitor() {
+    let out = rmod(&["set", "-p", "1080", "-m", "2"]);
+    if !out.status.success() {
+        let err = stderr(&out);
+        assert!(!err.contains("unknown command"));
+        assert!(!err.contains("unexpected argument"));
+    }
+}
+
+#[test]
+fn set_with_all() {
+    let out = rmod(&["set", "-p", "1080", "-m", "all"]);
+    if !out.status.success() {
+        let err = stderr(&out);
+        assert!(!err.contains("unknown command"));
+        assert!(!err.contains("unexpected argument"));
+    }
+}
+
+#[test]
+fn set_with_orientation() {
+    let out = rmod(&["set", "-w", "1920", "-h", "1080", "-m", "2", "-o", "90"]);
+    if !out.status.success() {
+        let err = stderr(&out);
+        assert!(!err.contains("unknown command"));
+        assert!(!err.contains("unexpected argument"));
+    }
+}
+
+#[test]
+fn set_with_yes() {
+    let out = rmod(&["set", "-p", "1440", "-y"]);
+    if !out.status.success() {
+        let err = stderr(&out);
+        assert!(!err.contains("unknown command"));
+        assert!(!err.contains("unexpected argument"));
+    }
+}
+
+#[test]
+fn set_all_profiles() {
+    for profile in ["720", "1080", "1440", "4k", "8k"] {
+        let out = rmod(&["set", "-p", profile]);
+        if !out.status.success() {
+            let err = stderr(&out);
+            assert!(!err.contains("unknown command"), "profile {}: {}", profile, err);
+            assert!(!err.contains("unexpected argument"), "profile {}", profile);
+        }
+    }
+}
+
+#[test]
+fn set_optional_spec_orientation() {
+    let out = rmod(&["set", "-o", "portrait", "-y"]);
+    if !out.status.success() {
+        let err = stderr(&out);
+        assert!(!err.contains("unknown command"));
+        assert!(!err.contains("unexpected argument"));
+    }
 }

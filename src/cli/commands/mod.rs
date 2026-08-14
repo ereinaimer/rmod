@@ -1,27 +1,22 @@
 //! Command dispatch and display-change reporting.
 //!
 //! [`run`] executes a parsed [`Command`]: the per-command runners in the
-//! `ls`, `caps`, `max` and `set` submodules apply the change via
+//! `ls`, `main` and `set` submodules apply the change via
 //! [`crate::sys::windows`], report the outcome, and run the shared
 //! keep-or-revert confirmation flow.
 
-mod caps;
 mod ls;
 mod main;
-mod max;
 mod set;
 
-// Import via `crate::cli`, not `crate::cli::help`, so the `pub use help::{...}` re-exports in `crate::cli` stay referenced (direct imports would dead-code them and trip clippy).
 use crate::cli::{
-    Command, Confirm, HelpTopic, Target, caps as caps_help, confirm_keep, help, ls as ls_help,
-    main_help, max as max_help, set as set_help, version,
+    Command, Confirm, HelpTopic, MonitorTarget, confirm_keep, help, ls as ls_help, main_help,
+    set as set_help, version,
 };
 use crate::sys::windows::{self, Change, Mode};
 
-use caps::run_caps;
 use ls::run_list;
 use main::run_main;
-use max::run_max;
 use set::run_set;
 
 const CONFIRM_TIMEOUT_SECS: u64 = 5;
@@ -41,18 +36,6 @@ pub fn run(command: Command) -> i32 {
             0
         }
         Command::Help {
-            topic: Some(HelpTopic::Max),
-        } => {
-            println!("{}", max_help());
-            0
-        }
-        Command::Help {
-            topic: Some(HelpTopic::Caps),
-        } => {
-            println!("{}", caps_help());
-            0
-        }
-        Command::Help {
             topic: Some(HelpTopic::Set),
         } => {
             println!("{}", set_help());
@@ -68,28 +51,24 @@ pub fn run(command: Command) -> i32 {
             println!("{}", version());
             0
         }
-        Command::List => run_list(),
-        Command::Caps { target } => run_caps(target),
-        Command::Max { target, yes } => run_max(target, yes),
-        Command::Main { target, yes } => run_main(target, yes),
+        Command::List { caps, monitor } => run_list(caps, monitor),
+        Command::Main { monitor, yes } => run_main(monitor, yes),
         Command::Set {
-            width,
-            height,
-            refresh,
+            spec,
+            monitor,
             orientation,
-            target,
             yes,
-        } => run_set(width, height, refresh, orientation, target, yes),
+        } => run_set(spec, monitor, orientation, yes),
     }
 }
 
 /// Maps a command target to the monitor number [`crate::sys::windows`]
 /// expects; the primary display is `None`.
-fn monitor_of(target: Target) -> Option<u32> {
+fn monitor_of(target: MonitorTarget) -> Option<u32> {
     match target {
-        Target::Primary => None,
-        Target::Index(n) => Some(n),
-        Target::All => unreachable!(),
+        MonitorTarget::Primary => None,
+        MonitorTarget::Index(n) => Some(n),
+        MonitorTarget::All => unreachable!(),
     }
 }
 
@@ -178,14 +157,28 @@ fn describe_revert(
 
 /// Runs the keep-or-revert confirmation for a single display; `yes` skips
 /// the prompt. Reverts to the previous mode and prints the revert line.
-fn confirm_or_revert(monitor: Option<u32>, change: Change, yes: bool) -> i32 {
+///
+/// Injectable variant of [`confirm_or_revert`]: the confirm prompt and the
+/// revert call are supplied as closures so tests can exercise the Revert
+/// branch without touching the display.
+fn confirm_or_revert_with<C, R>(
+    monitor: Option<u32>,
+    change: Change,
+    yes: bool,
+    confirm: C,
+    revert: R,
+) -> i32
+where
+    C: FnOnce() -> Confirm,
+    R: FnOnce(Option<u32>, Mode, Option<u32>) -> Result<Mode, String>,
+{
     if yes {
         return 0;
     }
-    match confirm_keep(std::time::Duration::from_secs(CONFIRM_TIMEOUT_SECS)) {
+    match confirm() {
         Confirm::Keep => 0,
         Confirm::Revert => {
-            match windows::revert(monitor, change.previous, change.previous_orientation) {
+            match revert(monitor, change.previous, change.previous_orientation) {
                 Ok(mode) => {
                     println!(
                         "{}",
@@ -202,19 +195,44 @@ fn confirm_or_revert(monitor: Option<u32>, change: Change, yes: bool) -> i32 {
     }
 }
 
+/// Runs the keep-or-revert confirmation for a single display; `yes` skips
+/// the prompt. Reverts to the previous mode and prints the revert line.
+fn confirm_or_revert(monitor: Option<u32>, change: Change, yes: bool) -> i32 {
+    confirm_or_revert_with(
+        monitor,
+        change,
+        yes,
+        || confirm_keep(std::time::Duration::from_secs(CONFIRM_TIMEOUT_SECS)),
+        windows::revert,
+    )
+}
+
 /// Runs the keep-or-revert confirmation for a batch of displays; an empty
 /// batch or `yes` skips the prompt. Reverts every change to its previous
 /// mode, printing one revert line per display.
-fn confirm_or_revert_all(applied: Vec<Change>, yes: bool) -> i32 {
+///
+/// Injectable variant of [`confirm_or_revert_all`]: the confirm prompt and
+/// the revert call are supplied as closures so tests can exercise the
+/// Revert branch without touching the display.
+fn confirm_or_revert_all_with<C, R>(
+    applied: Vec<Change>,
+    yes: bool,
+    confirm: C,
+    revert: R,
+) -> i32
+where
+    C: FnOnce() -> Confirm,
+    R: Fn(Option<u32>, Mode, Option<u32>) -> Result<Mode, String>,
+{
     if applied.is_empty() || yes {
         return 0;
     }
-    match confirm_keep(std::time::Duration::from_secs(CONFIRM_TIMEOUT_SECS)) {
+    match confirm() {
         Confirm::Keep => 0,
         Confirm::Revert => {
             let mut failed = false;
             for change in applied {
-                match windows::revert(
+                match revert(
                     Some(change.monitor),
                     change.previous,
                     change.previous_orientation,
@@ -232,6 +250,18 @@ fn confirm_or_revert_all(applied: Vec<Change>, yes: bool) -> i32 {
             if failed { 2 } else { 0 }
         }
     }
+}
+
+/// Runs the keep-or-revert confirmation for a batch of displays; an empty
+/// batch or `yes` skips the prompt. Reverts every change to its previous
+/// mode, printing one revert line per display.
+fn confirm_or_revert_all(applied: Vec<Change>, yes: bool) -> i32 {
+    confirm_or_revert_all_with(
+        applied,
+        yes,
+        || confirm_keep(std::time::Duration::from_secs(CONFIRM_TIMEOUT_SECS)),
+        windows::revert,
+    )
 }
 
 #[cfg(test)]
@@ -467,5 +497,162 @@ mod tests {
             describe_revert(&mode(1920, 1080, 60), Some(90), Some("AOC 24G2 [:1]")),
             "reverted AOC 24G2 [:1] to 1920x1080 @ 60Hz, rotated 90°"
         );
+    }
+
+    #[test]
+    fn confirm_or_revert_yes_skips_confirm_and_revert() {
+        assert_eq!(
+            confirm_or_revert_with(
+                Some(1),
+                change(mode(1920, 1080, 60), mode(1280, 720, 60), None, None),
+                true,
+                || panic!("confirm must be skipped when yes is set"),
+                |_, _, _| panic!("revert must be skipped when yes is set"),
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn confirm_or_revert_keep_skips_revert() {
+        assert_eq!(
+            confirm_or_revert_with(
+                Some(1),
+                change(mode(1920, 1080, 60), mode(1280, 720, 60), None, None),
+                false,
+                || Confirm::Keep,
+                |_, _, _| panic!("revert must be skipped on Keep"),
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn confirm_or_revert_revert_calls_revert_with_previous_mode() {
+        assert_eq!(
+            confirm_or_revert_with(
+                Some(2),
+                change(mode(1920, 1080, 60), mode(1280, 720, 60), None, Some(90)),
+                false,
+                || Confirm::Revert,
+                |monitor, previous, previous_orientation| {
+                    assert_eq!(monitor, Some(2));
+                    assert_eq!(previous, mode(1280, 720, 60));
+                    assert_eq!(previous_orientation, Some(90));
+                    Ok(mode(1920, 1080, 60))
+                },
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn confirm_or_revert_revert_error_returns_2() {
+        assert_eq!(
+            confirm_or_revert_with(
+                Some(1),
+                change(mode(1920, 1080, 60), mode(1280, 720, 60), None, None),
+                false,
+                || Confirm::Revert,
+                |_, _, _| Err("boom".to_string()),
+            ),
+            2
+        );
+    }
+
+    #[test]
+    fn confirm_or_revert_all_empty_skips_confirm_and_revert() {
+        assert_eq!(
+            confirm_or_revert_all_with(
+                Vec::new(),
+                false,
+                || panic!("confirm must be skipped for an empty batch"),
+                |_, _, _| panic!("revert must be skipped for an empty batch"),
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn confirm_or_revert_all_yes_skips_confirm_and_revert() {
+        let applied = vec![
+            change(mode(1920, 1080, 60), mode(1280, 720, 60), None, None),
+            change(mode(1920, 1080, 144), mode(1280, 720, 60), None, None),
+        ];
+        assert_eq!(
+            confirm_or_revert_all_with(
+                applied,
+                true,
+                || panic!("confirm must be skipped when yes is set"),
+                |_, _, _| panic!("revert must be skipped when yes is set"),
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn confirm_or_revert_all_keep_skips_revert() {
+        let applied = vec![
+            change(mode(1920, 1080, 60), mode(1280, 720, 60), None, None),
+            change(mode(1920, 1080, 144), mode(1280, 720, 60), None, None),
+        ];
+        assert_eq!(
+            confirm_or_revert_all_with(
+                applied,
+                false,
+                || Confirm::Keep,
+                |_, _, _| panic!("revert must be skipped on Keep"),
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn confirm_or_revert_all_revert_reverts_every_change() {
+        let applied = vec![
+            change(mode(1920, 1080, 60), mode(1280, 720, 60), None, Some(90)),
+            change(mode(1920, 1080, 144), mode(1024, 768, 60), None, None),
+        ];
+        let calls = std::cell::RefCell::new(Vec::new());
+        let result = confirm_or_revert_all_with(
+            applied,
+            false,
+            || Confirm::Revert,
+            |monitor, previous, previous_orientation| {
+                calls
+                    .borrow_mut()
+                    .push((monitor, previous, previous_orientation));
+                Ok(mode(1920, 1080, 60))
+            },
+        );
+        assert_eq!(result, 0);
+        let calls = calls.into_inner();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0], (Some(1), mode(1280, 720, 60), Some(90)));
+        assert_eq!(calls[1], (Some(1), mode(1024, 768, 60), None));
+    }
+
+    #[test]
+    fn confirm_or_revert_all_second_revert_error_returns_2() {
+        let applied = vec![
+            change(mode(1920, 1080, 60), mode(1280, 720, 60), None, None),
+            change(mode(1920, 1080, 144), mode(1024, 768, 60), None, None),
+        ];
+        let calls = std::cell::Cell::new(0);
+        let result = confirm_or_revert_all_with(
+            applied,
+            false,
+            || Confirm::Revert,
+            |_, _, _| {
+                let n = calls.get() + 1;
+                calls.set(n);
+                if n == 2 {
+                    Err("boom".to_string())
+                } else {
+                    Ok(mode(1920, 1080, 60))
+                }
+            },
+        );
+        assert_eq!(result, 2);
     }
 }

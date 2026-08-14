@@ -203,7 +203,7 @@ pub fn set(
 /// # Errors
 /// Returns `Err` for an unknown monitor number, no supported modes, or a
 /// rejected display change.
-pub fn max(monitor: Option<u32>) -> Result<ApplyOutcome, String> {
+pub fn max(monitor: Option<u32>, orientation: Option<u32>) -> Result<ApplyOutcome, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
     let display = query::display_label(name, index as u32 + 1);
@@ -211,9 +211,17 @@ pub fn max(monitor: Option<u32>) -> Result<ApplyOutcome, String> {
         .ok_or_else(|| format!("{display} has no supported modes"))?;
     let base = query::current_mode(name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
     let previous = mode_of(&base);
-    let result = outcome_of(index as u32 + 1, display, best, previous, None, None);
+    let previous_orientation = orientation_of(&base);
+    let result = outcome_of(
+        index as u32 + 1,
+        display,
+        best,
+        previous,
+        orientation,
+        Some(previous_orientation),
+    );
     if let ApplyOutcome::Applied(change) = &result {
-        let devmode = build_devmode(&change.mode, &base, None);
+        let devmode = build_devmode(&change.mode, &base, orientation);
         fade::transition(name, &devmode, || {
             apply_mode(name, &change.display, &devmode)
         })?;
@@ -231,6 +239,7 @@ pub fn max(monitor: Option<u32>) -> Result<ApplyOutcome, String> {
 ///
 /// # Errors
 /// No displays found, a mode no display supports, or preflight failures.
+#[allow(dead_code)]
 pub fn set_all(
     width: Option<u32>,
     height: Option<u32>,
@@ -252,10 +261,10 @@ pub fn set_all(
 /// # Errors
 /// No displays found, a display with no supported modes, or preflight
 /// failures.
-pub fn max_all() -> Result<Vec<ApplyOutcome>, String> {
+pub fn max_all(orientation: Option<u32>) -> Result<Vec<ApplyOutcome>, String> {
     let names = query::enumerate_devices();
     let targets = query::resolve_all(&names)?;
-    apply_all(plan_max(&targets)?)
+    apply_all(plan_max(&targets, orientation)?)
 }
 
 /// Re-applies a previously captured mode to undo a display change.
@@ -500,6 +509,19 @@ fn resolve_dims(width: Option<u32>, height: Option<u32>, base: &DevmodeW) -> (u3
     )
 }
 
+/// True when hardware-touching tests should run: `RMOD_HW_TEST` is `"1"`.
+#[cfg(test)]
+fn hw_tests_enabled_for(value: Option<&str>) -> bool {
+    value == Some("1")
+}
+
+/// True when `RMOD_HW_TEST` is set to `"1"`, gating the tests that
+/// re-apply modes to the host display.
+#[cfg(test)]
+fn hw_tests_enabled() -> bool {
+    hw_tests_enabled_for(std::env::var("RMOD_HW_TEST").ok().as_deref())
+}
+
 /// The effective dimensions for an orientation request.
 ///
 /// Dimensions are resolved against the display's physical panel size
@@ -523,6 +545,7 @@ fn effective_dims(
     }
 }
 
+#[allow(dead_code)]
 fn plan_set<'a>(
     targets: &'a [(usize, &'a str)],
     width: Option<u32>,
@@ -569,7 +592,10 @@ fn plan_set<'a>(
     Ok(planned)
 }
 
-fn plan_max<'a>(targets: &'a [(usize, &'a str)]) -> Result<Vec<Planned<'a>>, String> {
+fn plan_max<'a>(
+    targets: &'a [(usize, &'a str)],
+    orientation: Option<u32>,
+) -> Result<Vec<Planned<'a>>, String> {
     let mut planned = Vec::new();
     let mut failures = Vec::new();
     for (index, name) in targets {
@@ -580,8 +606,16 @@ fn plan_max<'a>(targets: &'a [(usize, &'a str)]) -> Result<Vec<Planned<'a>>, Str
         };
         let base = query::current_mode(name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
         let previous = mode_of(&base);
-        let devmode = build_devmode(&mode, &base, None);
-        let outcome = outcome_of(*index as u32 + 1, display, mode, previous, None, None);
+        let previous_orientation = orientation_of(&base);
+        let devmode = build_devmode(&mode, &base, orientation);
+        let outcome = outcome_of(
+            *index as u32 + 1,
+            display,
+            mode,
+            previous,
+            orientation,
+            Some(previous_orientation),
+        );
         planned.push(Planned {
             name,
             devmode,
@@ -1026,7 +1060,27 @@ mod tests {
     }
 
     #[test]
+    fn hw_tests_enabled_for_one_is_true() {
+        assert!(hw_tests_enabled_for(Some("1")));
+    }
+
+    #[test]
+    fn hw_tests_enabled_for_zero_is_false() {
+        assert!(!hw_tests_enabled_for(Some("0")));
+    }
+
+    #[test]
+    fn hw_tests_enabled_for_none_is_false() {
+        assert!(!hw_tests_enabled_for(None));
+    }
+
+    #[test]
     fn apply_mode_accepts_current_mode() {
+        // Skipped by default so `cargo test` never touches the display; run
+        // with `RMOD_HW_TEST=1` in a hardware lab.
+        if !hw_tests_enabled() {
+            return;
+        }
         let names = query::enumerate_devices();
         if names.is_empty() {
             return;
@@ -1040,6 +1094,11 @@ mod tests {
 
     #[test]
     fn apply_mode_rejects_unsupported_mode() {
+        // Skipped by default so `cargo test` never touches the display; run
+        // with `RMOD_HW_TEST=1` in a hardware lab.
+        if !hw_tests_enabled() {
+            return;
+        }
         let names = query::enumerate_devices();
         if names.is_empty() {
             return;

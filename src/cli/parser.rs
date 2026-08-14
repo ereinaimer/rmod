@@ -1,7 +1,7 @@
-//! Command-line grammar: commands, `:N` monitor suffix, profiles.
+//! Command-line grammar: unified verb-centric syntax.
 //!
-//! A single [`Command`] is produced from argv; any trailing or malformed
-//! argument is rejected with an `Err(String)` describing the problem.
+//! Every command: `rmod <verb> [arguments]`
+//! Monitor targeting is always a positional argument after the verb.
 
 use std::env;
 
@@ -10,73 +10,26 @@ pub use crate::sys::windows::apply::Refresh;
 /// Help topics reachable via the command-specific `-h`/`--help` flags.
 #[derive(Debug, PartialEq)]
 pub enum HelpTopic {
-    /// `rmod ls -h`
     List,
-    /// `rmod max -h`
-    Max,
-    /// `rmod caps -h`
-    Caps,
-    /// `rmod WxH@R -h`
     Set,
-    /// `rmod main:N -h`
     Main,
 }
 
 /// Every top-level command rmod accepts.
 #[derive(Debug, PartialEq)]
 pub enum Command {
-    /// `ls` — list displays and their current settings.
-    List,
-    /// `max[:N]` — apply the highest supported resolution/refresh.
-    Max {
-        /// Which display to target; `:*` = every monitor.
-        target: Target,
-        /// `-y`/`--yes` — skip the confirmation prompt.
-        yes: bool,
-    },
-    /// `caps[:N]` — list supported modes.
-    Caps {
-        /// Which display to target; `:*` = every monitor.
-        target: Target,
-    },
-    /// `WxH@R[:N][/angle]` — set resolution, refresh rate and rotation.
-    Set {
-        /// Pixel width; `None` keeps the current width.
-        width: Option<u32>,
-        /// Pixel height; `None` keeps the current height.
-        height: Option<u32>,
-        refresh: Refresh,
-        /// Rotation angle in degrees; `None` keeps the current orientation.
-        orientation: Option<u32>,
-        /// Which display to target; `:*` = every monitor.
-        target: Target,
-        /// `-y`/`--yes` — skip the confirmation prompt.
-        yes: bool,
-    },
-    /// `help [ls|max|caps|WxH@R]` or `-h`/`--help`.
-    Help {
-        /// Optional per-command topic.
-        topic: Option<HelpTopic>,
-    },
-    /// `-V`/`--version` — print the version.
+    List { caps: bool, monitor: MonitorTarget },
+    Main { monitor: u32, yes: bool },
+    Set { spec: SetSpec, monitor: MonitorTarget, orientation: Option<u32>, yes: bool },
+    Help { topic: Option<HelpTopic> },
     Version,
-    /// `main:N` — make monitor N the main display.
-    Main {
-        /// Which display to target (must be :N, never :* or Primary).
-        target: Target,
-        /// `-y`/`--yes` — skip the confirmation prompt.
-        yes: bool,
-    },
 }
 
 /// Which display(s) a command targets.
 #[derive(Debug, PartialEq, Copy, Clone)]
-pub enum Target {
-    /// The primary display (no `:N` suffix).
+pub enum MonitorTarget {
     Primary,
-    /// A numbered display from `ls` (`:N`, 1-based).
     Index(u32),
-    /// Every attached display (`:*`).
     All,
 }
 
@@ -88,6 +41,17 @@ pub(crate) const PROFILES: &[(&str, u32, u32)] = &[
     ("4k", 3840, 2160),
     ("8k", 7680, 4320),
 ];
+
+/// Set specification formats.
+#[derive(Debug, PartialEq, Clone)]
+pub enum SetSpec {
+    Profile(String),
+    ProfileWithRefresh(String, Refresh),
+    Explicit { width: u32, height: u32, refresh: Refresh },
+    RefreshOnly(Refresh),
+    Max,
+    Keep,
+}
 
 /// Parses the process arguments into a [`Command`].
 ///
@@ -114,389 +78,242 @@ pub fn parse_from<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
         return Ok(Command::Help { topic: None });
     };
     let cmd_str = cmd.as_ref();
-    let command = match cmd_str {
-        "-h" => {
-            if args
-                .get(1)
-                .is_some_and(|t| t.as_ref().parse::<u32>().is_ok())
-            {
-                return parse_flags(args);
-            }
-            return match args.get(1) {
-                None => Ok(Command::Help { topic: None }),
-                Some(extra) => Err(format!("unexpected argument '{}'", extra.as_ref())),
-            };
-        }
+
+    match cmd_str {
         "--help" => {
-            return match args.get(1) {
-                None => Ok(Command::Help { topic: None }),
-                Some(extra) => Err(format!("unexpected argument '{}'", extra.as_ref())),
-            };
+            if args.len() > 1 {
+                return Err(format!("unexpected argument '{}'", args[1].as_ref()));
+            }
+            Ok(Command::Help { topic: None })
         }
-        "-V" | "--version" => {
-            return match args.get(1) {
-                None => Ok(Command::Version),
-                Some(extra) => Err(format!("unexpected argument '{}'", extra.as_ref())),
-            };
+        "--version" => {
+            if args.len() > 1 {
+                return Err(format!("unexpected argument '{}'", args[1].as_ref()));
+            }
+            Ok(Command::Version)
         }
-        "ls" => parse_tail(
-            "ls",
-            args.get(1).map(|s| s.as_ref()),
-            Command::List,
-            HelpTopic::List,
-            false,
-        )?,
-        "max" => parse_tail(
-            "max",
-            args.get(1).map(|s| s.as_ref()),
-            Command::Max {
-                target: Target::Primary,
-                yes: false,
-            },
-            HelpTopic::Max,
-            true,
-        )?,
-        "main" => {
-            let mut target: Option<Target> = None;
-            let mut yes = false;
-            let mut i = 1;
-            while i < args.len() {
-                let arg = args[i].as_ref();
-                match arg {
-                    "-h" | "--help" => {
-                        return Ok(Command::Help {
-                            topic: Some(HelpTopic::Main),
-                        });
-                    }
-                    "-y" | "--yes" => {
-                        yes = true;
-                        i += 1;
-                    }
-                    "-m" | "--monitor" => {
-                        let Some(value) = args.get(i + 1) else {
-                            return Err("missing value for -m".to_string());
-                        };
-                        let value_str = value.as_ref();
-                        i += 2;
-                        let t = if value_str == "*" {
-                            Target::All
-                        } else {
-                            value_str
-                                .parse()
-                                .map(Target::Index)
-                                .map_err(|_| format!("invalid monitor id in '-m {value_str}'"))?
-                        };
-                        if t == Target::All {
-                            return Err("main does not accept :*".to_string());
-                        }
-                        if let Target::Index(0) = t {
-                            return Err("invalid monitor id in 'main:0'".to_string());
-                        }
-                        target = Some(t);
-                    }
-                    other => {
-                        return Err(format!("unexpected argument '{other}'"));
-                    }
+        "ls" | "list" => parse_ls(cmd_str, args),
+        "main" => parse_main(args),
+        "set" => parse_set(args),
+        _ => Err(format!("unknown command '{}'", cmd_str)),
+    }
+}
+
+fn parse_ls(cmd: &str, args: &[impl AsRef<str>]) -> Result<Command, String> {
+    let mut caps = false;
+    let mut monitor = MonitorTarget::Primary;
+    let mut monitor_explicit = false;
+    let mut i = 1;
+
+    while i < args.len() {
+        let arg = args[i].as_ref();
+        match arg {
+            "--caps" => {
+                caps = true;
+                i += 1;
+            }
+            "-m" | "--monitor" => {
+                i += 1;
+                let Some(val) = args.get(i) else {
+                    return Err("missing value for -m".to_string());
+                };
+                monitor = parse_monitor_target(val.as_ref())?;
+                monitor_explicit = true;
+                i += 1;
+            }
+            "--help" => return Ok(Command::Help { topic: Some(HelpTopic::List) }),
+            other => return Err(format!("unexpected argument '{}' for '{}'", other, cmd)),
+        }
+    }
+
+    if monitor_explicit && !caps {
+        return Err("-m is only valid with --caps".to_string());
+    }
+
+    Ok(Command::List { caps, monitor })
+}
+
+fn parse_main(args: &[impl AsRef<str>]) -> Result<Command, String> {
+    let mut monitor: Option<u32> = None;
+    let mut yes = false;
+    let mut i = 1;
+
+    while i < args.len() {
+        let arg = args[i].as_ref();
+        match arg {
+            "--help" => return Ok(Command::Help { topic: Some(HelpTopic::Main) }),
+            "-y" | "--yes" => {
+                yes = true;
+                i += 1;
+            }
+            _ if !arg.starts_with('-') => {
+                if monitor.is_some() {
+                    return Err(format!("unexpected argument '{}'", arg));
                 }
+                let n = arg.parse::<u32>().map_err(|_| format!("invalid monitor number '{}'", arg))?;
+                if n == 0 {
+                    return Err("monitor number must be >= 1".to_string());
+                }
+                monitor = Some(n);
+                i += 1;
             }
-            let Some(t) = target else {
-                return Err("missing monitor number for 'main'".to_string());
-            };
-            return Ok(Command::Main { target: t, yes });
+            other => return Err(format!("unexpected argument '{}' for 'main'", other)),
         }
-        "caps" => parse_tail(
-            "caps",
-            args.get(1).map(|s| s.as_ref()),
-            Command::Caps {
-                target: Target::Primary,
-            },
-            HelpTopic::Caps,
-            false,
-        )?,
-        _ if cmd_str.starts_with("max:") => {
-            let target = parse_monitor(&cmd_str[4..], cmd_str)?;
-            parse_tail(
-                "max",
-                args.get(1).map(|s| s.as_ref()),
-                Command::Max { target, yes: false },
-                HelpTopic::Max,
-                true,
-            )?
-        }
-        _ if cmd_str.starts_with("main:") => {
-            let target = parse_monitor(&cmd_str[5..], cmd_str)?;
-            if target == Target::All {
-                return Err("main does not accept :*".to_string());
-            }
-            if let Target::Index(0) = target {
-                return Err("invalid monitor id in 'main:0'".to_string());
-            }
-            parse_tail(
-                "main",
-                args.get(1).map(|s| s.as_ref()),
-                Command::Main { target, yes: false },
-                HelpTopic::Main,
-                true,
-            )?
-        }
-        _ if cmd_str.starts_with("caps:") => {
-            let target = parse_monitor(&cmd_str[5..], cmd_str)?;
-            parse_tail(
-                "caps",
-                args.get(1).map(|s| s.as_ref()),
-                Command::Caps { target },
-                HelpTopic::Caps,
-                false,
-            )?
-        }
-        _ if cmd_str.starts_with('-') => return parse_flags(args),
-        _ => parse_set(cmd_str, args.get(1).map(|s| s.as_ref()))?,
-    };
-    if let Some(extra) = args.get(2) {
-        return Err(format!("unexpected argument '{}'", extra.as_ref()));
     }
-    Ok(command)
+
+    let Some(monitor) = monitor else {
+        return Err("missing monitor number for 'main'".to_string());
+    };
+
+    Ok(Command::Main { monitor, yes })
 }
 
-fn parse_tail(
-    name: &str,
-    tail: Option<&str>,
-    cmd: Command,
-    topic: HelpTopic,
-    allow_yes: bool,
-) -> Result<Command, String> {
-    match tail {
-        Some("-h" | "--help") => Ok(Command::Help { topic: Some(topic) }),
-        Some("-y" | "--yes") if allow_yes => Ok(match cmd {
-            Command::Max { target, .. } => Command::Max { target, yes: true },
-            Command::Set {
-                width,
-                height,
-                refresh,
-                orientation,
-                target,
-                ..
-            } => Command::Set {
-                width,
-                height,
-                refresh,
-                orientation,
-                target,
-                yes: true,
-            },
-            Command::Main { target, .. } => Command::Main { target, yes: true },
-            other => other,
-        }),
-        Some(other) => {
-            if name == "main" {
-                Err(format!("unexpected argument '{other}'"))
-            } else {
-                Err(format!("unknown argument '{other}' for '{name}'"))
-            }
-        }
-        None => Ok(cmd),
+fn parse_set(args: &[impl AsRef<str>]) -> Result<Command, String> {
+    if args.len() < 2 {
+        return Err("missing action for 'set'".to_string());
     }
+
+    let mut width = None;
+    let mut height = None;
+    let mut refresh = None;
+    let mut profile = None;
+    let mut monitor = MonitorTarget::Primary;
+    let mut orientation = None;
+    let mut yes = false;
+    let mut max_flag = false;
+
+    let mut i = 1;
+    while i < args.len() {
+        let arg = args[i].as_ref();
+        match arg {
+            "--help" => return Ok(Command::Help { topic: Some(HelpTopic::Set) }),
+            "-w" | "--width" => {
+                i += 1;
+                let Some(val) = args.get(i) else {
+                    return Err("missing value for -w".to_string());
+                };
+                width = Some(val.as_ref().parse::<u32>().map_err(|_| format!("invalid width '{}'", val.as_ref()))?);
+                i += 1;
+            }
+            "-h" | "--height" => {
+                i += 1;
+                let Some(val) = args.get(i) else {
+                    return Err("missing value for -h".to_string());
+                };
+                height = Some(val.as_ref().parse::<u32>().map_err(|_| format!("invalid height '{}'", val.as_ref()))?);
+                i += 1;
+            }
+            "-r" | "--refresh" => {
+                i += 1;
+                let Some(val) = args.get(i) else {
+                    return Err("missing value for -r".to_string());
+                };
+                refresh = Some(parse_refresh(val.as_ref())?);
+                i += 1;
+            }
+            "-p" | "--profile" => {
+                i += 1;
+                let Some(val) = args.get(i) else {
+                    return Err("missing value for -p".to_string());
+                };
+                if !PROFILES.iter().any(|(name, _, _)| *name == val.as_ref()) {
+                    return Err(format!("unknown profile '{}'", val.as_ref()));
+                }
+                profile = Some(val.as_ref().to_string());
+                i += 1;
+            }
+            "-m" | "--monitor" => {
+                i += 1;
+                let Some(val) = args.get(i) else {
+                    return Err("missing value for -m".to_string());
+                };
+                monitor = parse_monitor_target(val.as_ref())?;
+                i += 1;
+            }
+            "-o" | "--orientation" => {
+                i += 1;
+                let Some(val) = args.get(i) else {
+                    return Err("missing value for -o".to_string());
+                };
+                orientation = Some(parse_orientation(val.as_ref())?);
+                i += 1;
+            }
+            "-y" | "--yes" => {
+                yes = true;
+                i += 1;
+            }
+            "--max" => {
+                max_flag = true;
+                i += 1;
+            }
+            other => return Err(format!("unexpected argument '{}' for 'set'", other)),
+        }
+    }
+
+    if (width.is_some() && height.is_none()) || (width.is_none() && height.is_some()) {
+        return Err("width requires height and height requires width".to_string());
+    }
+
+    if profile.is_some() && (width.is_some() || height.is_some()) {
+        return Err("cannot combine profile with explicit width or height".to_string());
+    }
+
+    if max_flag && (width.is_some() || height.is_some() || refresh.is_some() || profile.is_some()) {
+        return Err("cannot combine --max with width, height, refresh, or profile".to_string());
+    }
+
+
+    let spec = if max_flag {
+        SetSpec::Max
+    } else if let Some(p) = profile {
+        if let Some(r) = refresh {
+            SetSpec::ProfileWithRefresh(p, r)
+        } else {
+            SetSpec::Profile(p)
+        }
+    } else if let Some(w) = width {
+        let h = height.unwrap();
+        let r = refresh.unwrap_or(Refresh::Keep);
+        SetSpec::Explicit { width: w, height: h, refresh: r }
+    } else if let Some(r) = refresh {
+        SetSpec::RefreshOnly(r)
+    } else {
+        SetSpec::Keep
+    };
+
+    Ok(Command::Set { spec, monitor, orientation, yes })
 }
 
-fn parse_set(cmd: &str, tail: Option<&str>) -> Result<Command, String> {
-    let (spec, orientation) = match cmd.split_once('/') {
-        Some((spec, angle)) => (spec, Some(parse_orientation(angle, cmd)?)),
-        None => (cmd, None),
-    };
-    let (spec, target) = match spec.split_once(':') {
-        Some((spec, m)) => (spec, parse_monitor(m, cmd)?),
-        None => (spec, Target::Primary),
-    };
-    let (res, refresh) = match spec.split_once('@') {
-        Some((res, r)) => (res, Some(parse_refresh(r, cmd)?)),
-        None => (spec, None),
-    };
-    let (width, height) = match res.split_once('x') {
-        Some((w, h)) => (
-            Some(w.parse().map_err(|_| format!("invalid width in '{cmd}'"))?),
-            Some(
-                h.parse()
-                    .map_err(|_| format!("invalid height in '{cmd}'"))?,
-            ),
-        ),
-        None => match PROFILES.iter().find(|(name, _, _)| *name == res) {
-            Some((_, w, h)) => (Some(*w), Some(*h)),
-            None => return Err(format!("unknown profile or invalid resolution '{cmd}'")),
-        },
-    };
-    let refresh = refresh.unwrap_or(Refresh::Keep);
-    match tail {
-        Some("-h" | "--help") => Ok(Command::Help {
-            topic: Some(HelpTopic::Set),
-        }),
-        Some("-y" | "--yes") => Ok(Command::Set {
-            width,
-            height,
-            refresh,
-            orientation,
-            target,
-            yes: true,
-        }),
-        Some(other) => Err(format!("unexpected argument '{other}'")),
-        None => Ok(Command::Set {
-            width,
-            height,
-            refresh,
-            orientation,
-            target,
-            yes: false,
-        }),
+fn parse_monitor_target(arg: &str) -> Result<MonitorTarget, String> {
+    if arg == "all" {
+        Ok(MonitorTarget::All)
+    } else {
+        let n = arg.parse::<u32>().map_err(|_| format!("invalid monitor target '{}'", arg))?;
+        if n == 0 {
+            return Err("monitor number must be >= 1".to_string());
+        }
+        Ok(MonitorTarget::Index(n))
     }
 }
 
-/// Parses a rotation angle token; names are matched case-insensitively.
-fn parse_orientation(token: &str, cmd: &str) -> Result<u32, String> {
-    match token.to_lowercase().as_str() {
+fn parse_refresh(arg: &str) -> Result<Refresh, String> {
+    match arg.to_lowercase().as_str() {
+        "max" => Ok(Refresh::Max),
+        _ => arg
+            .parse::<u32>()
+            .map(Refresh::Fixed)
+            .map_err(|_| format!("invalid refresh rate '{}'", arg)),
+    }
+}
+
+fn parse_orientation(arg: &str) -> Result<u32, String> {
+    match arg.to_lowercase().as_str() {
         "0" | "l" | "landscape" => Ok(0),
         "90" | "p" | "portrait" => Ok(90),
         "180" | "lf" => Ok(180),
         "270" | "pf" => Ok(270),
-        _ => Err(format!("invalid orientation in '{cmd}'")),
+        _ => Err(format!("invalid orientation '{}'", arg)),
     }
-}
-
-fn parse_refresh(r: &str, cmd: &str) -> Result<Refresh, String> {
-    if r == "max" {
-        Ok(Refresh::Max)
-    } else {
-        r.parse()
-            .map(Refresh::Fixed)
-            .map_err(|_| format!("invalid refresh rate in '{cmd}'"))
-    }
-}
-
-fn parse_monitor(m: &str, cmd: &str) -> Result<Target, String> {
-    if m == "*" {
-        Ok(Target::All)
-    } else {
-        m.parse()
-            .map(Target::Index)
-            .map_err(|_| format!("invalid monitor id in '{cmd}'"))
-    }
-}
-
-/// Parses `-w`/`-h`/`-r`/`-o`/`-m`/`-y` flag syntax into a set command.
-///
-/// Flags may appear in any order; repeated flags keep the last value.
-/// `-h` is contextual: a following token that parses as a height keeps it,
-/// otherwise (missing, non-numeric, or flag-like) the set help page wins.
-///
-/// # Errors
-/// Returns `Err` for missing or invalid flag values, unknown flags, or
-/// when no dimension/refresh flag was given.
-fn parse_flags<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
-    let mut width: Option<u32> = None;
-    let mut height: Option<u32> = None;
-    let mut refresh: Option<Refresh> = None;
-    let mut orientation: Option<u32> = None;
-    let mut target = Target::Primary;
-    let mut yes = false;
-    let mut i = 0;
-    while i < args.len() {
-        let flag = args[i].as_ref();
-        i += 1;
-        match flag {
-            "-w" | "--width" => {
-                let Some(value) = args.get(i) else {
-                    return Err("missing value for -w".to_string());
-                };
-                let value_str = value.as_ref();
-                i += 1;
-                width = Some(
-                    value_str
-                        .parse()
-                        .map_err(|_| format!("invalid width in '-w {value_str}'"))?,
-                );
-            }
-            "-h" | "--height" => {
-                let Some(value) = args.get(i) else {
-                    return Ok(Command::Help {
-                        topic: Some(HelpTopic::Set),
-                    });
-                };
-                let value_str = value.as_ref();
-                match value_str.parse::<u32>() {
-                    Ok(h) => {
-                        i += 1;
-                        height = Some(h);
-                    }
-                    Err(_) => {
-                        return Ok(Command::Help {
-                            topic: Some(HelpTopic::Set),
-                        });
-                    }
-                }
-            }
-            "-r" | "--refresh" => {
-                let Some(value) = args.get(i) else {
-                    return Err("missing value for -r".to_string());
-                };
-                let value_str = value.as_ref();
-                i += 1;
-                refresh = Some(match value_str {
-                    "max" => Refresh::Max,
-                    "keep" => Refresh::Keep,
-                    _ => value_str
-                        .parse()
-                        .map(Refresh::Fixed)
-                        .map_err(|_| format!("invalid refresh in '-r {value_str}'"))?,
-                });
-            }
-            "-m" | "--monitor" => {
-                let Some(value) = args.get(i) else {
-                    return Err("missing value for -m".to_string());
-                };
-                let value_str = value.as_ref();
-                i += 1;
-                target = if value_str == "*" {
-                    Target::All
-                } else {
-                    value_str
-                        .parse()
-                        .map(Target::Index)
-                        .map_err(|_| format!("invalid monitor id in '-m {value_str}'"))?
-                };
-            }
-            "-o" | "--orientation" => {
-                let Some(value) = args.get(i) else {
-                    return Err("missing value for -o".to_string());
-                };
-                let value_str = value.as_ref();
-                i += 1;
-                orientation = Some(parse_orientation(value_str, &format!("-o {value_str}"))?);
-            }
-            "-y" | "--yes" => yes = true,
-            "--help" => {
-                return Ok(Command::Help {
-                    topic: Some(HelpTopic::Set),
-                });
-            }
-            other => return Err(format!("unknown argument '{other}'")),
-        }
-    }
-    if width.is_none() && height.is_none() && refresh.is_none() && orientation.is_none() {
-        return Err("nothing to set".to_string());
-    }
-    if width.is_some() != height.is_some() {
-        return Err(if width.is_some() {
-            "-w requires -h".to_string()
-        } else {
-            "-h requires -w".to_string()
-        });
-    }
-    Ok(Command::Set {
-        width,
-        height,
-        refresh: refresh.unwrap_or(Refresh::Keep),
-        orientation,
-        target,
-        yes,
-    })
 }
 
 #[cfg(test)]
@@ -509,75 +326,43 @@ mod tests {
         parse_from(&full_args)
     }
 
-    fn set(width: u32, height: u32, refresh: Refresh, target: Target) -> Command {
-        Command::Set {
-            width: Some(width),
-            height: Some(height),
-            refresh,
-            orientation: None,
-            target,
-            yes: false,
-        }
-    }
-
-    fn set_yes(width: u32, height: u32, refresh: Refresh, target: Target) -> Command {
-        Command::Set {
-            width: Some(width),
-            height: Some(height),
-            refresh,
-            orientation: None,
-            target,
-            yes: true,
-        }
-    }
-
-    fn set_rotated(
-        width: u32,
-        height: u32,
-        refresh: Refresh,
-        orientation: u32,
-        target: Target,
-    ) -> Command {
-        Command::Set {
-            width: Some(width),
-            height: Some(height),
-            refresh,
-            orientation: Some(orientation),
-            target,
-            yes: false,
-        }
-    }
-
-    fn help(topic: Option<HelpTopic>) -> Command {
-        Command::Help { topic }
-    }
-
     #[test]
     fn no_args_prints_help() {
-        assert_eq!(parse(&[]), Ok(help(None)));
+        assert_eq!(parse(&[]), Ok(Command::Help { topic: None }));
     }
 
     #[test]
     fn help_flags() {
-        assert_eq!(parse(&["-h"]), Ok(help(None)));
-        assert_eq!(parse(&["--help"]), Ok(help(None)));
+        assert!(parse(&["-h"]).is_err());
+        assert_eq!(parse(&["--help"]), Ok(Command::Help { topic: None }));
     }
 
     #[test]
     fn version_flags() {
-        assert_eq!(parse(&["-V"]), Ok(Command::Version));
+        assert!(parse(&["-V"]).is_err());
         assert_eq!(parse(&["--version"]), Ok(Command::Version));
     }
 
     #[test]
     fn ls_command() {
-        assert_eq!(parse(&["ls"]), Ok(Command::List));
+        assert_eq!(
+            parse(&["ls"]),
+            Ok(Command::List { caps: false, monitor: MonitorTarget::Primary })
+        );
+    }
+
+    #[test]
+    fn list_command() {
+        assert_eq!(
+            parse(&["list"]),
+            Ok(Command::List { caps: false, monitor: MonitorTarget::Primary })
+        );
     }
 
     #[test]
     fn ls_help_flags() {
-        assert_eq!(parse(&["ls", "-h"]), Ok(help(Some(HelpTopic::List))));
-        assert_eq!(parse(&["ls", "--help"]), Ok(help(Some(HelpTopic::List))));
+        assert!(parse(&["ls", "-h"]).is_err());
+        assert_eq!(parse(&["ls", "--help"]), Ok(Command::Help { topic: Some(HelpTopic::List) }));
     }
 
     #[test]
@@ -586,298 +371,420 @@ mod tests {
     }
 
     #[test]
-    fn ls_yes_flag_is_error() {
-        let err = parse(&["ls", "-y"]).unwrap_err();
-        assert!(err.contains("unknown argument '-y' for 'ls'"), "{err}");
+    fn list_unknown_argument_is_error() {
+        assert_eq!(
+            parse(&["list", "foo"]),
+            Err("unexpected argument 'foo' for 'list'".to_string())
+        );
     }
 
     #[test]
-    fn max_command() {
+    fn list_help_flag() {
         assert_eq!(
-            parse(&["max"]),
-            Ok(Command::Max {
-                target: Target::Primary,
+            parse(&["list", "--help"]),
+            Ok(Command::Help { topic: Some(HelpTopic::List) })
+        );
+    }
+
+    #[test]
+    fn set_max_command() {
+        assert_eq!(
+            parse(&["set", "--max"]),
+            Ok(Command::Set {
+                spec: SetSpec::Max,
+                monitor: MonitorTarget::Primary,
+                orientation: None,
                 yes: false
             })
         );
     }
 
     #[test]
-    fn max_with_monitor() {
+    fn set_max_with_monitor() {
         assert_eq!(
-            parse(&["max:2"]),
-            Ok(Command::Max {
-                target: Target::Index(2),
+            parse(&["set", "--max", "-m", "2"]),
+            Ok(Command::Set {
+                spec: SetSpec::Max,
+                monitor: MonitorTarget::Index(2),
+                orientation: None,
                 yes: false
             })
         );
     }
 
     #[test]
-    fn max_yes_flag() {
+    fn set_max_with_all() {
         assert_eq!(
-            parse(&["max", "-y"]),
-            Ok(Command::Max {
-                target: Target::Primary,
-                yes: true
-            })
-        );
-    }
-
-    #[test]
-    fn max_yes_flag_with_monitor() {
-        assert_eq!(
-            parse(&["max:2", "-y"]),
-            Ok(Command::Max {
-                target: Target::Index(2),
-                yes: true
-            })
-        );
-    }
-
-    #[test]
-    fn max_all_target() {
-        assert_eq!(
-            parse(&["max:*"]),
-            Ok(Command::Max {
-                target: Target::All,
+            parse(&["set", "--max", "-m", "all"]),
+            Ok(Command::Set {
+                spec: SetSpec::Max,
+                monitor: MonitorTarget::All,
+                orientation: None,
                 yes: false
             })
         );
     }
 
     #[test]
-    fn max_all_target_with_yes() {
+    fn set_max_yes_flag() {
         assert_eq!(
-            parse(&["max:*", "-y"]),
-            Ok(Command::Max {
-                target: Target::All,
+            parse(&["set", "--max", "-y"]),
+            Ok(Command::Set {
+                spec: SetSpec::Max,
+                monitor: MonitorTarget::Primary,
+                orientation: None,
                 yes: true
             })
         );
     }
 
     #[test]
-    fn max_all_invalid_id_is_error() {
-        let err = parse(&["max:*:2"]).unwrap_err();
-        assert!(err.contains("invalid monitor id"), "{err}");
-    }
-
-    #[test]
-    fn max_invalid_monitor_is_error() {
-        assert!(parse(&["max:x"]).is_err());
-        assert!(parse(&["max:"]).is_err());
-    }
-
-    #[test]
-    fn max_help_flags() {
-        assert_eq!(parse(&["max", "-h"]), Ok(help(Some(HelpTopic::Max))));
-        assert_eq!(parse(&["max", "--help"]), Ok(help(Some(HelpTopic::Max))));
-        assert_eq!(parse(&["max:2", "-h"]), Ok(help(Some(HelpTopic::Max))));
-    }
-
-    #[test]
-    fn caps_command() {
+    fn set_max_yes_flag_with_monitor() {
         assert_eq!(
-            parse(&["caps"]),
-            Ok(Command::Caps {
-                target: Target::Primary
+            parse(&["set", "--max", "-m", "2", "-y"]),
+            Ok(Command::Set {
+                spec: SetSpec::Max,
+                monitor: MonitorTarget::Index(2),
+                orientation: None,
+                yes: true
+            })
+        );
+        assert_eq!(
+            parse(&["set", "-y", "--max", "-m", "2"]),
+            Ok(Command::Set {
+                spec: SetSpec::Max,
+                monitor: MonitorTarget::Index(2),
+                orientation: None,
+                yes: true
             })
         );
     }
 
     #[test]
-    fn caps_with_monitor() {
+    fn set_max_all_with_yes() {
         assert_eq!(
-            parse(&["caps:2"]),
-            Ok(Command::Caps {
-                target: Target::Index(2)
+            parse(&["set", "--max", "-m", "all", "-y"]),
+            Ok(Command::Set {
+                spec: SetSpec::Max,
+                monitor: MonitorTarget::All,
+                orientation: None,
+                yes: true
             })
         );
     }
 
     #[test]
-    fn caps_all_target() {
+    fn set_max_invalid_monitor_is_error() {
+        assert!(parse(&["set", "--max", "-m", "x"]).is_err());
+        assert!(parse(&["set", "--max", "-m", "0"]).is_err());
+    }
+
+    #[test]
+    fn set_max_conflicting_spec_is_error() {
+        assert!(parse(&["set", "-p", "1080", "--max"]).is_err());
+        assert!(parse(&["set", "--max", "-p", "1080"]).is_err());
+        assert!(parse(&["set", "-w", "1920", "-h", "1080", "--max"]).is_err());
+    }
+
+    #[test]
+    fn main_command() {
         assert_eq!(
-            parse(&["caps:*"]),
-            Ok(Command::Caps {
-                target: Target::All
+            parse(&["main", "2"]),
+            Ok(Command::Main { monitor: 2, yes: false })
+        );
+    }
+
+    #[test]
+    fn main_with_yes() {
+        assert_eq!(
+            parse(&["main", "2", "-y"]),
+            Ok(Command::Main { monitor: 2, yes: true })
+        );
+        assert_eq!(
+            parse(&["main", "-y", "2"]),
+            Ok(Command::Main { monitor: 2, yes: true })
+        );
+    }
+
+    #[test]
+    fn main_no_monitor_is_error() {
+        assert!(parse(&["main"]).is_err());
+        assert!(parse(&["main", "-y"]).is_err());
+    }
+
+    #[test]
+    fn main_invalid_monitor_is_error() {
+        assert!(parse(&["main", "0"]).is_err());
+        assert!(parse(&["main", "x"]).is_err());
+    }
+
+    #[test]
+    fn main_help_flags() {
+        assert!(parse(&["main", "-h"]).is_err());
+        assert_eq!(parse(&["main", "--help"]), Ok(Command::Help { topic: Some(HelpTopic::Main) }));
+    }
+
+    #[test]
+    fn main_extra_argument_is_error() {
+        assert!(parse(&["main", "2", "extra"]).is_err());
+    }
+
+    #[test]
+    fn set_command() {
+        assert_eq!(
+            parse(&["set", "-p", "1080"]),
+            Ok(Command::Set {
+                spec: SetSpec::Profile("1080".to_string()),
+                monitor: MonitorTarget::Primary,
+                orientation: None,
+                yes: false
             })
         );
     }
 
     #[test]
-    fn caps_invalid_monitor_is_error() {
-        assert!(parse(&["caps:x"]).is_err());
-        assert!(parse(&["caps:"]).is_err());
-    }
-
-    #[test]
-    fn caps_help_flags() {
-        assert_eq!(parse(&["caps", "-h"]), Ok(help(Some(HelpTopic::Caps))));
-        assert_eq!(parse(&["caps", "--help"]), Ok(help(Some(HelpTopic::Caps))));
-    }
-
-    #[test]
-    fn caps_help_flags_with_monitor() {
-        assert_eq!(parse(&["caps:2", "-h"]), Ok(help(Some(HelpTopic::Caps))));
+    fn set_with_monitor() {
         assert_eq!(
-            parse(&["caps:2", "--help"]),
-            Ok(help(Some(HelpTopic::Caps)))
+            parse(&["set", "-p", "4k", "-r", "144", "-m", "2"]),
+            Ok(Command::Set {
+                spec: SetSpec::ProfileWithRefresh("4k".to_string(), Refresh::Fixed(144)),
+                monitor: MonitorTarget::Index(2),
+                orientation: None,
+                yes: false
+            })
         );
     }
 
     #[test]
-    fn caps_yes_flag_is_error() {
-        let err = parse(&["caps", "-y"]).unwrap_err();
-        assert!(err.contains("unknown argument '-y' for 'caps'"), "{err}");
-    }
-
-    #[test]
-    fn caps_yes_flag_with_monitor_is_error() {
-        let err = parse(&["caps:2", "-y"]).unwrap_err();
-        assert!(err.contains("unknown argument '-y' for 'caps'"), "{err}");
-    }
-
-    #[test]
-    fn set_help_flags() {
+    fn set_with_all() {
         assert_eq!(
-            parse(&["1920x1080@60", "-h"]),
-            Ok(help(Some(HelpTopic::Set)))
-        );
-        assert_eq!(parse(&["4k", "--help"]), Ok(help(Some(HelpTopic::Set))));
-        assert_eq!(
-            parse(&["1920x1080@60:2", "-h"]),
-            Ok(help(Some(HelpTopic::Set)))
+            parse(&["set", "-r", "60", "-m", "all"]),
+            Ok(Command::Set {
+                spec: SetSpec::RefreshOnly(Refresh::Fixed(60)),
+                monitor: MonitorTarget::All,
+                orientation: None,
+                yes: false
+            })
         );
     }
 
     #[test]
-    fn set_help_extra_argument_is_error() {
-        assert!(parse(&["1920x1080@60", "-h", "foo"]).is_err());
-    }
-
-    #[test]
-    fn set_unknown_argument_is_error() {
-        assert!(parse(&["1920x1080@60", "foo"]).is_err());
-    }
-
-    #[test]
-    fn set_yes_flag() {
+    fn set_with_orientation() {
         assert_eq!(
-            parse(&["1920x1080@60", "-y"]),
-            Ok(set_yes(1920, 1080, Refresh::Fixed(60), Target::Primary))
+            parse(&["set", "-w", "1920", "-h", "1080", "-m", "2", "-o", "90"]),
+            Ok(Command::Set {
+                spec: SetSpec::Explicit { width: 1920, height: 1080, refresh: Refresh::Keep },
+                monitor: MonitorTarget::Index(2),
+                orientation: Some(90),
+                yes: false
+            })
         );
     }
 
     #[test]
-    fn set_yes_flag_long() {
+    fn set_with_yes() {
         assert_eq!(
-            parse(&["1920x1080@60", "--yes"]),
-            Ok(set_yes(1920, 1080, Refresh::Fixed(60), Target::Primary))
+            parse(&["set", "-p", "1440", "-y"]),
+            Ok(Command::Set {
+                spec: SetSpec::Profile("1440".to_string()),
+                monitor: MonitorTarget::Primary,
+                orientation: None,
+                yes: true
+            })
         );
     }
 
     #[test]
-    fn set_yes_extra_argument_is_error() {
-        assert!(parse(&["1920x1080@60", "-y", "extra"]).is_err());
-    }
-
-    #[test]
-    fn set_resolution_and_refresh() {
+    fn set_explicit_resolution_and_refresh() {
         assert_eq!(
-            parse(&["1920x1080@144"]),
-            Ok(set(1920, 1080, Refresh::Fixed(144), Target::Primary))
+            parse(&["set", "-w", "1920", "-h", "1080", "-r", "144"]),
+            Ok(Command::Set {
+                spec: SetSpec::Explicit { width: 1920, height: 1080, refresh: Refresh::Fixed(144) },
+                monitor: MonitorTarget::Primary,
+                orientation: None,
+                yes: false
+            })
         );
     }
 
     #[test]
-    fn set_with_monitor_suffix() {
+    fn set_explicit_no_refresh() {
         assert_eq!(
-            parse(&["1920x1080@60:2"]),
-            Ok(set(1920, 1080, Refresh::Fixed(60), Target::Index(2)))
+            parse(&["set", "-w", "1920", "-h", "1080"]),
+            Ok(Command::Set {
+                spec: SetSpec::Explicit { width: 1920, height: 1080, refresh: Refresh::Keep },
+                monitor: MonitorTarget::Primary,
+                orientation: None,
+                yes: false
+            })
         );
     }
 
     #[test]
-    fn set_all_target() {
+    fn set_refresh_only() {
         assert_eq!(
-            parse(&["1920x1080@60:*"]),
-            Ok(set(1920, 1080, Refresh::Fixed(60), Target::All))
+            parse(&["set", "-r", "max"]),
+            Ok(Command::Set {
+                spec: SetSpec::RefreshOnly(Refresh::Max),
+                monitor: MonitorTarget::Primary,
+                orientation: None,
+                yes: false
+            })
         );
     }
 
     #[test]
-    fn set_all_target_help() {
+    fn set_profile_with_refresh() {
         assert_eq!(
-            parse(&["1920x1080@60:*", "-h"]),
-            Ok(help(Some(HelpTopic::Set)))
+            parse(&["set", "-p", "720", "-r", "60"]),
+            Ok(Command::Set {
+                spec: SetSpec::ProfileWithRefresh("720".to_string(), Refresh::Fixed(60)),
+                monitor: MonitorTarget::Primary,
+                orientation: None,
+                yes: false
+            })
         );
     }
 
     #[test]
-    fn set_all_invalid_id_is_error() {
-        let err = parse(&["1920x1080@60:12x"]).unwrap_err();
-        assert!(err.contains("invalid monitor id"), "{err}");
-    }
-
-    #[test]
-    fn set_without_refresh_keeps_current() {
+    fn set_profile_with_max_refresh() {
         assert_eq!(
-            parse(&["1920x1080"]),
-            Ok(set(1920, 1080, Refresh::Keep, Target::Primary))
+            parse(&["set", "-p", "720", "-r", "max"]),
+            Ok(Command::Set {
+                spec: SetSpec::ProfileWithRefresh("720".to_string(), Refresh::Max),
+                monitor: MonitorTarget::Primary,
+                orientation: None,
+                yes: false
+            })
         );
     }
 
     #[test]
-    fn set_with_max_refresh() {
-        assert_eq!(
-            parse(&["1920x1080@max"]),
-            Ok(set(1920, 1080, Refresh::Max, Target::Primary))
-        );
-    }
-
-    #[test]
-    fn profile_resolves_to_resolution() {
-        assert_eq!(
-            parse(&["4k"]),
-            Ok(set(3840, 2160, Refresh::Keep, Target::Primary))
-        );
-    }
-
-    #[test]
-    fn profile_with_fixed_refresh() {
-        assert_eq!(
-            parse(&["720@60"]),
-            Ok(set(1280, 720, Refresh::Fixed(60), Target::Primary))
-        );
-    }
-
-    #[test]
-    fn profile_with_max_refresh_and_monitor() {
-        assert_eq!(
-            parse(&["720@max:2"]),
-            Ok(set(1280, 720, Refresh::Max, Target::Index(2)))
-        );
-    }
-
-    #[test]
-    fn profile_with_monitor_suffix() {
-        assert_eq!(
-            parse(&["4k:2"]),
-            Ok(set(3840, 2160, Refresh::Keep, Target::Index(2)))
-        );
-    }
-
-    #[test]
-    fn all_profiles_resolve_to_their_resolution() {
-        for (name, width, height) in PROFILES {
-            assert_eq!(
-                parse(&[name]),
-                Ok(set(*width, *height, Refresh::Keep, Target::Primary)),
-                "profile '{name}'"
+    fn set_all_profiles() {
+        for (name, _, _) in PROFILES {
+            assert!(
+                parse(&["set", "-p", name]).is_ok(),
+                "profile '{}'",
+                name
             );
         }
+    }
+
+    #[test]
+    fn set_unknown_profile_is_error() {
+        assert!(parse(&["set", "-p", "480"]).is_err());
+        assert!(parse(&["set", "-p", "1080p"]).is_err());
+    }
+
+    #[test]
+    fn set_invalid_width_is_error() {
+        assert!(parse(&["set", "-w", "abc", "-h", "1080"]).is_err());
+    }
+
+    #[test]
+    fn set_invalid_height_is_error() {
+        assert!(parse(&["set", "-w", "1920", "-h", "xyz"]).is_err());
+    }
+
+    #[test]
+    fn set_invalid_refresh_is_error() {
+        assert!(parse(&["set", "-r", "fast"]).is_err());
+    }
+
+    #[test]
+    fn set_missing_spec_is_error() {
+        assert_eq!(parse(&["set"]), Err("missing action for 'set'".to_string()));
+    }
+
+    #[test]
+    fn set_orientation_aliases() {
+        for (token, angle) in [
+            ("0", 0), ("l", 0), ("landscape", 0),
+            ("90", 90), ("p", 90), ("portrait", 90),
+            ("180", 180), ("lf", 180),
+            ("270", 270), ("pf", 270),
+        ] {
+            assert_eq!(
+                parse(&["set", "-w", "1920", "-h", "1080", "-o", token]),
+                Ok(Command::Set {
+                    spec: SetSpec::Explicit { width: 1920, height: 1080, refresh: Refresh::Keep },
+                    monitor: MonitorTarget::Primary,
+                    orientation: Some(angle),
+                    yes: false
+                }),
+                "angle '{}'",
+                token
+            );
+        }
+    }
+
+    #[test]
+    fn set_orientation_case_insensitive() {
+        assert_eq!(
+            parse(&["set", "-w", "1920", "-h", "1080", "-o", "Portrait"]),
+            Ok(Command::Set {
+                spec: SetSpec::Explicit { width: 1920, height: 1080, refresh: Refresh::Keep },
+                monitor: MonitorTarget::Primary,
+                orientation: Some(90),
+                yes: false
+            })
+        );
+    }
+
+    #[test]
+    fn set_invalid_orientation_is_error() {
+        assert!(parse(&["set", "-w", "1920", "-h", "1080", "-o", "45"]).is_err());
+    }
+
+    #[test]
+    fn set_missing_orientation_value_is_error() {
+        assert_eq!(parse(&["set", "-w", "1920", "-h", "1080", "-o"]), Err("missing value for -o".to_string()));
+    }
+
+    #[test]
+    fn set_help_flag() {
+        assert!(parse(&["set", "-h"]).is_err());
+        assert_eq!(parse(&["set", "--help"]), Ok(Command::Help { topic: Some(HelpTopic::Set) }));
+    }
+
+    #[test]
+    fn set_optional_spec() {
+        assert_eq!(
+            parse(&["set", "-o", "portrait"]),
+            Ok(Command::Set {
+                spec: SetSpec::Keep,
+                monitor: MonitorTarget::Primary,
+                orientation: Some(90),
+                yes: false
+            })
+        );
+        assert_eq!(
+            parse(&["set", "-m", "2", "-o", "90"]),
+            Ok(Command::Set {
+                spec: SetSpec::Keep,
+                monitor: MonitorTarget::Index(2),
+                orientation: Some(90),
+                yes: false
+            })
+        );
+        assert_eq!(
+            parse(&["set", "-m", "all", "-o", "landscape"]),
+            Ok(Command::Set {
+                spec: SetSpec::Keep,
+                monitor: MonitorTarget::All,
+                orientation: Some(0),
+                yes: false
+            })
+        );
+        assert_eq!(
+            parse(&["set", "-y"]),
+            Ok(Command::Set {
+                spec: SetSpec::Keep,
+                monitor: MonitorTarget::Primary,
+                orientation: None,
+                yes: true
+            })
+        );
     }
 
     #[test]
@@ -886,127 +793,18 @@ mod tests {
     }
 
     #[test]
-    fn unknown_profile_is_error() {
-        assert!(parse(&["480"]).is_err());
-        assert!(parse(&["1080p"]).is_err());
-    }
-
-    #[test]
-    fn invalid_width_is_error() {
-        assert!(parse(&["ax1080@60"]).is_err());
-        assert!(parse(&["-1x1080@60"]).is_err());
-    }
-
-    #[test]
-    fn invalid_height_is_error() {
-        assert!(parse(&["1920x@60"]).is_err());
-    }
-
-    #[test]
-    fn invalid_refresh_is_error() {
-        assert!(parse(&["1920x1080@fast"]).is_err());
-        assert!(parse(&["1920x1080@"]).is_err());
-    }
-
-    #[test]
-    fn empty_resolution_is_error() {
-        assert!(parse(&["@60"]).is_err());
-    }
-
-    #[test]
-    fn max_with_refresh_syntax_is_error() {
-        assert!(parse(&["max@60"]).is_err());
-    }
-
-    #[test]
-    fn trailing_argument_after_set_is_error() {
-        assert!(parse(&["1920x1080@60", "extra"]).is_err());
-        assert!(parse(&["4k:2", "extra"]).is_err());
-    }
-
-    #[test]
-    fn trailing_argument_after_flag_is_error() {
-        assert!(parse(&["-h", "extra"]).is_err());
-        assert!(parse(&["--version", "extra"]).is_err());
-    }
-
-    #[test]
-    fn trailing_argument_after_monitor_command_is_error() {
-        assert!(parse(&["max:2", "extra"]).is_err());
-        assert!(parse(&["caps:2", "extra"]).is_err());
-    }
-
-    #[test]
-    fn monitor_overflow_is_error() {
-        assert!(parse(&["max:4294967296"]).is_err());
-        assert!(parse(&["caps:4294967296"]).is_err());
-        assert!(parse(&["1920x1080@60:4294967296"]).is_err());
-    }
-
-    #[test]
-    fn dimension_overflow_is_error() {
-        assert!(parse(&["99999999999999x1080@60"]).is_err());
-        assert!(parse(&["1920x99999999999999@60"]).is_err());
-    }
-
-    #[test]
-    fn refresh_overflow_is_error() {
-        assert!(parse(&["1920x1080@99999999999"]).is_err());
-    }
-
-    #[test]
-    fn zero_refresh_parses_as_fixed_zero() {
-        assert_eq!(
-            parse(&["1920x1080@0"]),
-            Ok(set(1920, 1080, Refresh::Fixed(0), Target::Primary))
-        );
-    }
-
-    #[test]
-    fn monitor_with_leading_zeros() {
-        assert_eq!(
-            parse(&["1920x1080@60:02"]),
-            Ok(set(1920, 1080, Refresh::Fixed(60), Target::Index(2)))
-        );
-    }
-
-    #[test]
-    fn multiple_at_signs_is_error() {
-        assert!(parse(&["1920x1080@60@70"]).is_err());
-    }
-
-    #[test]
-    fn multiple_x_is_error() {
-        assert!(parse(&["1920x1080x2@60"]).is_err());
-    }
-
-    #[test]
-    fn multiple_colons_is_error() {
-        assert!(parse(&["1920x1080@60:2:3"]).is_err());
-        assert!(parse(&["max:2:3"]).is_err());
-    }
-
-    #[test]
-    fn colon_before_at_is_error() {
-        assert!(parse(&["1920x1080:2@60"]).is_err());
-    }
-
-    #[test]
     fn commands_are_case_sensitive() {
         assert!(parse(&["LS"]).is_err());
         assert!(parse(&["Max"]).is_err());
-        assert!(parse(&["Caps"]).is_err());
-        assert!(parse(&["4K"]).is_err());
-        assert!(parse(&["-V"]).is_ok());
-        assert!(parse(&["-v"]).is_err());
-        assert!(parse(&["--HELP"]).is_err());
+        assert!(parse(&["CAPS"]).is_err());
+        assert!(parse(&["SET"]).is_err());
+        assert!(parse(&["MAIN"]).is_err());
     }
 
     #[test]
     fn whitespace_in_token_is_error() {
-        assert!(parse(&[" 720"]).is_err());
-        assert!(parse(&["720 "]).is_err());
-        assert!(parse(&["1920x1080 @60"]).is_err());
+        assert!(parse(&[" max"]).is_err());
+        assert!(parse(&["max "]).is_err());
     }
 
     #[test]
@@ -1015,671 +813,111 @@ mod tests {
     }
 
     #[test]
-    fn double_dash_is_error() {
-        assert!(parse(&["--"]).is_err());
+    fn old_syntax_max_colon_is_error() {
+        assert!(parse(&["max:2"]).is_err());
+        assert!(parse(&["max:*"]).is_err());
     }
 
     #[test]
-    fn command_with_monitor_suffix_is_error() {
-        assert!(parse(&["ls:2"]).is_err());
-        assert!(parse(&["ls:"]).is_err());
+    fn old_syntax_caps_colon_is_error() {
+        assert!(parse(&["caps:2"]).is_err());
+        assert!(parse(&["caps:*"]).is_err());
     }
 
     #[test]
-    fn flags_full_spec() {
+    fn old_syntax_main_colon_is_error() {
+        assert!(parse(&["main:2"]).is_err());
+    }
+
+    #[test]
+    fn old_syntax_implicit_set_is_error() {
+        assert!(parse(&["1920x1080@60"]).is_err());
+        assert!(parse(&["4k"]).is_err());
+        assert!(parse(&["4k:2"]).is_err());
+        assert!(parse(&["1920x1080:2/90"]).is_err());
+    }
+
+    #[test]
+    fn old_syntax_flag_based_is_error() {
+        assert!(parse(&["-w", "1920", "-h", "1080", "-r", "60"]).is_err());
+        assert!(parse(&["-r", "144"]).is_err());
+        assert!(parse(&["-o", "90"]).is_err());
+    }
+
+    #[test]
+    fn old_syntax_main_m_flag_is_error() {
+        assert!(parse(&["main", "-m", "2"]).is_err());
+    }
+
+    #[test]
+    fn ls_caps_command() {
         assert_eq!(
-            parse(&["-w", "1920", "-h", "1080", "-r", "144", "-m", "2", "-y"]),
-            Ok(Command::Set {
-                width: Some(1920),
-                height: Some(1080),
-                refresh: Refresh::Fixed(144),
-                orientation: None,
-                target: Target::Index(2),
-                yes: true,
-            })
+            parse(&["ls", "--caps"]),
+            Ok(Command::List { caps: true, monitor: MonitorTarget::Primary })
         );
     }
 
     #[test]
-    fn flags_long_names() {
+    fn list_is_alias_for_ls() {
+        assert_eq!(parse(&["list"]), parse(&["ls"]));
+        assert_eq!(parse(&["list", "--caps"]), parse(&["ls", "--caps"]));
         assert_eq!(
-            parse(&[
-                "--width",
-                "1920",
-                "--height",
-                "1080",
-                "--refresh",
-                "144",
-                "--monitor",
-                "2",
-                "--yes",
-            ]),
-            Ok(Command::Set {
-                width: Some(1920),
-                height: Some(1080),
-                refresh: Refresh::Fixed(144),
-                orientation: None,
-                target: Target::Index(2),
-                yes: true,
-            })
+            parse(&["list", "--caps", "-m", "2"]),
+            parse(&["ls", "--caps", "-m", "2"])
         );
     }
 
     #[test]
-    fn flags_order_independent() {
+    fn list_monitor_without_caps_is_error() {
         assert_eq!(
-            parse(&["-m", "2", "-r", "144", "-h", "1080", "-w", "1920", "-y"]),
-            Ok(Command::Set {
-                width: Some(1920),
-                height: Some(1080),
-                refresh: Refresh::Fixed(144),
-                orientation: None,
-                target: Target::Index(2),
-                yes: true,
-            })
+            parse(&["list", "-m", "2"]),
+            Err("-m is only valid with --caps".to_string())
         );
     }
 
     #[test]
-    fn flags_repeated_last_wins() {
+    fn ls_caps_with_monitor() {
         assert_eq!(
-            parse(&["-w", "100", "-h", "200", "-w", "1920", "-h", "1080"]),
-            Ok(Command::Set {
-                width: Some(1920),
-                height: Some(1080),
-                refresh: Refresh::Keep,
-                orientation: None,
-                target: Target::Primary,
-                yes: false,
-            })
+            parse(&["ls", "--caps", "-m", "2"]),
+            Ok(Command::List { caps: true, monitor: MonitorTarget::Index(2) })
         );
     }
 
     #[test]
-    fn flags_width_and_height_keep_current_refresh() {
+    fn ls_caps_all() {
         assert_eq!(
-            parse(&["-w", "1920", "-h", "1080"]),
-            Ok(Command::Set {
-                width: Some(1920),
-                height: Some(1080),
-                refresh: Refresh::Keep,
-                orientation: None,
-                target: Target::Primary,
-                yes: false,
-            })
+            parse(&["ls", "--caps", "-m", "all"]),
+            Ok(Command::List { caps: true, monitor: MonitorTarget::All })
         );
     }
 
     #[test]
-    fn flags_refresh_only() {
+    fn ls_caps_monitor_before_flag() {
         assert_eq!(
-            parse(&["-r", "144"]),
-            Ok(Command::Set {
-                width: None,
-                height: None,
-                refresh: Refresh::Fixed(144),
-                orientation: None,
-                target: Target::Primary,
-                yes: false,
-            })
+            parse(&["ls", "-m", "2", "--caps"]),
+            Ok(Command::List { caps: true, monitor: MonitorTarget::Index(2) })
         );
     }
 
     #[test]
-    fn flags_refresh_max() {
+    fn ls_caps_invalid_monitor_is_error() {
+        assert!(parse(&["ls", "--caps", "-m", "x"]).is_err());
+        assert!(parse(&["ls", "--caps", "-m", "0"]).is_err());
+    }
+
+    #[test]
+    fn ls_caps_help_flag() {
         assert_eq!(
-            parse(&["-r", "max"]),
-            Ok(Command::Set {
-                width: None,
-                height: None,
-                refresh: Refresh::Max,
-                orientation: None,
-                target: Target::Primary,
-                yes: false,
-            })
+            parse(&["ls", "--caps", "--help"]),
+            Ok(Command::Help { topic: Some(HelpTopic::List) })
         );
     }
 
     #[test]
-    fn flags_refresh_keep() {
+    fn ls_monitor_without_caps_is_error() {
         assert_eq!(
-            parse(&["-r", "keep"]),
-            Ok(Command::Set {
-                width: None,
-                height: None,
-                refresh: Refresh::Keep,
-                orientation: None,
-                target: Target::Primary,
-                yes: false,
-            })
-        );
-    }
-
-    #[test]
-    fn flags_monitor_all() {
-        assert_eq!(
-            parse(&["-w", "1920", "-h", "1080", "-m", "*"]),
-            Ok(Command::Set {
-                width: Some(1920),
-                height: Some(1080),
-                refresh: Refresh::Keep,
-                orientation: None,
-                target: Target::All,
-                yes: false,
-            })
-        );
-    }
-
-    #[test]
-    fn flags_monitor_zero_parses() {
-        assert_eq!(
-            parse(&["-w", "1920", "-h", "1080", "-m", "0"]),
-            Ok(Command::Set {
-                width: Some(1920),
-                height: Some(1080),
-                refresh: Refresh::Keep,
-                orientation: None,
-                target: Target::Index(0),
-                yes: false,
-            })
-        );
-    }
-
-    #[test]
-    fn flags_height_first_then_width() {
-        assert_eq!(
-            parse(&["-h", "1080", "-w", "1920"]),
-            Ok(Command::Set {
-                width: Some(1920),
-                height: Some(1080),
-                refresh: Refresh::Keep,
-                orientation: None,
-                target: Target::Primary,
-                yes: false,
-            })
-        );
-    }
-
-    #[test]
-    fn flags_height_first_requires_width() {
-        let err = parse(&["-h", "1080"]).unwrap_err();
-        assert_eq!(err, "-h requires -w");
-    }
-
-    #[test]
-    fn flags_width_requires_height() {
-        let err = parse(&["-w", "1920"]).unwrap_err();
-        assert_eq!(err, "-w requires -h");
-    }
-
-    #[test]
-    fn flags_trailing_h_is_help() {
-        assert_eq!(parse(&["-w", "1920", "-h"]), Ok(help(Some(HelpTopic::Set))));
-    }
-
-    #[test]
-    fn flags_h_with_bad_value_is_help() {
-        assert_eq!(
-            parse(&["-w", "1920", "-h", "abc"]),
-            Ok(help(Some(HelpTopic::Set)))
-        );
-    }
-
-    #[test]
-    fn flags_h_before_other_flag_is_help() {
-        assert_eq!(
-            parse(&["-w", "1920", "-h", "-r", "60"]),
-            Ok(help(Some(HelpTopic::Set)))
-        );
-    }
-
-    #[test]
-    fn flags_help_flag_in_flag_mode() {
-        assert_eq!(
-            parse(&["-w", "1920", "-h", "1080", "--help"]),
-            Ok(help(Some(HelpTopic::Set)))
-        );
-    }
-
-    #[test]
-    fn flags_missing_width_value() {
-        let err = parse(&["-w"]).unwrap_err();
-        assert_eq!(err, "missing value for -w");
-    }
-
-    #[test]
-    fn flags_missing_refresh_value() {
-        let err = parse(&["-r"]).unwrap_err();
-        assert_eq!(err, "missing value for -r");
-    }
-
-    #[test]
-    fn flags_missing_monitor_value() {
-        let err = parse(&["-m"]).unwrap_err();
-        assert_eq!(err, "missing value for -m");
-    }
-
-    #[test]
-    fn flags_invalid_width() {
-        let err = parse(&["-w", "abc"]).unwrap_err();
-        assert_eq!(err, "invalid width in '-w abc'");
-    }
-
-    #[test]
-    fn flags_invalid_refresh() {
-        let err = parse(&["-r", "abc"]).unwrap_err();
-        assert_eq!(err, "invalid refresh in '-r abc'");
-    }
-
-    #[test]
-    fn flags_invalid_monitor_id() {
-        let err = parse(&["-m", "abc"]).unwrap_err();
-        assert_eq!(err, "invalid monitor id in '-m abc'");
-    }
-
-    #[test]
-    fn flags_yes_alone_is_nothing_to_set() {
-        let err = parse(&["-y"]).unwrap_err();
-        assert_eq!(err, "nothing to set");
-    }
-
-    #[test]
-    fn flags_monitor_alone_is_nothing_to_set() {
-        let err = parse(&["-m", "2"]).unwrap_err();
-        assert_eq!(err, "nothing to set");
-    }
-
-    #[test]
-    fn flags_unknown_argument() {
-        let err = parse(&["-x"]).unwrap_err();
-        assert_eq!(err, "unknown argument '-x'");
-    }
-
-    #[test]
-    fn flags_positional_after_flags_is_error() {
-        let err = parse(&["-w", "1920", "-h", "1080", "extra"]).unwrap_err();
-        assert_eq!(err, "unknown argument 'extra'");
-    }
-
-    #[test]
-    fn compact_angle_suffix_parses() {
-        assert_eq!(
-            parse(&["1920x1080/90"]),
-            Ok(set_rotated(1920, 1080, Refresh::Keep, 90, Target::Primary))
-        );
-        assert_eq!(
-            parse(&["1920x1080@60:1/270"]),
-            Ok(set_rotated(
-                1920,
-                1080,
-                Refresh::Fixed(60),
-                270,
-                Target::Index(1)
-            ))
-        );
-        assert_eq!(
-            parse(&["1920x1080:2/portrait"]),
-            Ok(set_rotated(1920, 1080, Refresh::Keep, 90, Target::Index(2)))
-        );
-    }
-
-    #[test]
-    fn compact_angle_aliases() {
-        for (token, angle) in [
-            ("0", 0),
-            ("l", 0),
-            ("landscape", 0),
-            ("90", 90),
-            ("p", 90),
-            ("portrait", 90),
-            ("180", 180),
-            ("lf", 180),
-            ("270", 270),
-            ("pf", 270),
-        ] {
-            assert_eq!(
-                parse(&[&format!("1920x1080/{token}")]),
-                Ok(set_rotated(
-                    1920,
-                    1080,
-                    Refresh::Keep,
-                    angle,
-                    Target::Primary
-                )),
-                "angle '{token}'"
-            );
-        }
-    }
-
-    #[test]
-    fn compact_angle_aliases_case_insensitive() {
-        assert_eq!(
-            parse(&["1920x1080/Portrait"]),
-            Ok(set_rotated(1920, 1080, Refresh::Keep, 90, Target::Primary))
-        );
-        assert_eq!(
-            parse(&["1920x1080/PF"]),
-            Ok(set_rotated(1920, 1080, Refresh::Keep, 270, Target::Primary))
-        );
-        assert_eq!(
-            parse(&["1920x1080/LF"]),
-            Ok(set_rotated(1920, 1080, Refresh::Keep, 180, Target::Primary))
-        );
-        assert_eq!(
-            parse(&["1920x1080/L"]),
-            Ok(set_rotated(1920, 1080, Refresh::Keep, 0, Target::Primary))
-        );
-    }
-
-    #[test]
-    fn compact_angle_with_all_monitors() {
-        assert_eq!(
-            parse(&["1920x1080:*/pf"]),
-            Ok(set_rotated(1920, 1080, Refresh::Keep, 270, Target::All))
-        );
-    }
-
-    #[test]
-    fn compact_angle_with_yes_flag() {
-        assert_eq!(
-            parse(&["1920x1080:2/90", "-y"]),
-            Ok(Command::Set {
-                width: Some(1920),
-                height: Some(1080),
-                refresh: Refresh::Keep,
-                orientation: Some(90),
-                target: Target::Index(2),
-                yes: true,
-            })
-        );
-    }
-
-    #[test]
-    fn compact_invalid_angle_is_error() {
-        assert_eq!(
-            parse(&["1920x1080:2/45"]),
-            Err("invalid orientation in '1920x1080:2/45'".to_string())
-        );
-    }
-
-    #[test]
-    fn compact_multiple_slashes_is_error() {
-        assert_eq!(
-            parse(&["1920x1080/90/180"]),
-            Err("invalid orientation in '1920x1080/90/180'".to_string())
-        );
-    }
-
-    #[test]
-    fn compact_empty_angle_is_error() {
-        assert_eq!(
-            parse(&["1920x1080:2/"]),
-            Err("invalid orientation in '1920x1080:2/'".to_string())
-        );
-    }
-
-    #[test]
-    fn flags_orientation() {
-        assert_eq!(
-            parse(&["-o", "90"]),
-            Ok(Command::Set {
-                width: None,
-                height: None,
-                refresh: Refresh::Keep,
-                orientation: Some(90),
-                target: Target::Primary,
-                yes: false,
-            })
-        );
-        assert_eq!(
-            parse(&["--orientation", "portrait"]),
-            Ok(Command::Set {
-                width: None,
-                height: None,
-                refresh: Refresh::Keep,
-                orientation: Some(90),
-                target: Target::Primary,
-                yes: false,
-            })
-        );
-    }
-
-    #[test]
-    fn flags_orientation_aliases() {
-        for (token, angle) in [
-            ("0", 0),
-            ("l", 0),
-            ("landscape", 0),
-            ("90", 90),
-            ("p", 90),
-            ("portrait", 90),
-            ("180", 180),
-            ("lf", 180),
-            ("270", 270),
-            ("pf", 270),
-        ] {
-            assert_eq!(
-                parse(&["-o", token]),
-                Ok(Command::Set {
-                    width: None,
-                    height: None,
-                    refresh: Refresh::Keep,
-                    orientation: Some(angle),
-                    target: Target::Primary,
-                    yes: false,
-                }),
-                "angle '{token}'"
-            );
-        }
-    }
-
-    #[test]
-    fn flags_orientation_repeated_last_wins() {
-        assert_eq!(
-            parse(&["-o", "0", "-o", "90"]),
-            Ok(Command::Set {
-                width: None,
-                height: None,
-                refresh: Refresh::Keep,
-                orientation: Some(90),
-                target: Target::Primary,
-                yes: false,
-            })
-        );
-    }
-
-    #[test]
-    fn flags_orientation_invalid_is_error() {
-        assert_eq!(
-            parse(&["-o", "45"]),
-            Err("invalid orientation in '-o 45'".to_string())
-        );
-    }
-
-    #[test]
-    fn flags_orientation_missing_value_is_error() {
-        assert_eq!(parse(&["-o"]), Err("missing value for -o".to_string()));
-    }
-
-    #[test]
-    fn flags_orientation_with_dimensions() {
-        assert_eq!(
-            parse(&["-w", "1920", "-h", "1080", "-o", "90"]),
-            Ok(Command::Set {
-                width: Some(1920),
-                height: Some(1080),
-                refresh: Refresh::Keep,
-                orientation: Some(90),
-                target: Target::Primary,
-                yes: false,
-            })
-        );
-        assert_eq!(
-            parse(&["-o", "90", "-r", "144"]),
-            Ok(Command::Set {
-                width: None,
-                height: None,
-                refresh: Refresh::Fixed(144),
-                orientation: Some(90),
-                target: Target::Primary,
-                yes: false,
-            })
-        );
-    }
-
-    #[test]
-    fn flags_orientation_with_monitor() {
-        assert_eq!(
-            parse(&["-o", "90", "-m", "2"]),
-            Ok(Command::Set {
-                width: None,
-                height: None,
-                refresh: Refresh::Keep,
-                orientation: Some(90),
-                target: Target::Index(2),
-                yes: false,
-            })
-        );
-    }
-
-    #[test]
-    fn main_with_monitor() {
-        assert_eq!(
-            parse(&["main:2"]),
-            Ok(Command::Main {
-                target: Target::Index(2),
-                yes: false
-            })
-        );
-    }
-
-    #[test]
-    fn main_with_monitor_yes() {
-        assert_eq!(
-            parse(&["main:2", "-y"]),
-            Ok(Command::Main {
-                target: Target::Index(2),
-                yes: true
-            })
-        );
-    }
-
-    #[test]
-    fn main_no_monitor_is_error() {
-        let err = parse(&["main"]).unwrap_err();
-        assert_eq!(err, "missing monitor number for 'main'");
-        let err = parse(&["main", "-y"]).unwrap_err();
-        assert_eq!(err, "missing monitor number for 'main'");
-    }
-
-    #[test]
-    fn main_help_flags() {
-        assert_eq!(parse(&["main", "-h"]), Ok(help(Some(HelpTopic::Main))));
-        assert_eq!(parse(&["main", "--help"]), Ok(help(Some(HelpTopic::Main))));
-    }
-
-    #[test]
-    fn main_with_monitor_help() {
-        assert_eq!(parse(&["main:2", "-h"]), Ok(help(Some(HelpTopic::Main))));
-        assert_eq!(
-            parse(&["main:2", "--help"]),
-            Ok(help(Some(HelpTopic::Main)))
-        );
-    }
-
-    #[test]
-    fn main_all_target_is_error() {
-        let err = parse(&["main:*"]).unwrap_err();
-        assert_eq!(err, "main does not accept :*");
-    }
-
-    #[test]
-    fn main_invalid_monitor_id() {
-        assert_eq!(
-            parse(&["main:"]).unwrap_err(),
-            "invalid monitor id in 'main:'"
-        );
-        assert_eq!(
-            parse(&["main:x"]).unwrap_err(),
-            "invalid monitor id in 'main:x'"
-        );
-        assert_eq!(
-            parse(&["main:0"]).unwrap_err(),
-            "invalid monitor id in 'main:0'"
-        );
-    }
-
-    #[test]
-    fn main_extra_argument_is_error() {
-        assert_eq!(
-            parse(&["main:2", "extra"]).unwrap_err(),
-            "unexpected argument 'extra'"
-        );
-    }
-
-    #[test]
-    fn main_monitor_overflow_is_error() {
-        assert!(parse(&["main:4294967296"]).is_err());
-    }
-
-    #[test]
-    fn main_with_m_flag() {
-        assert_eq!(
-            parse(&["main", "-m", "2"]),
-            Ok(Command::Main {
-                target: Target::Index(2),
-                yes: false
-            })
-        );
-    }
-
-    #[test]
-    fn main_with_monitor_flag_long() {
-        assert_eq!(
-            parse(&["main", "--monitor", "2"]),
-            Ok(Command::Main {
-                target: Target::Index(2),
-                yes: false
-            })
-        );
-    }
-
-    #[test]
-    fn main_with_m_flag_and_yes() {
-        assert_eq!(
-            parse(&["main", "-m", "2", "-y"]),
-            Ok(Command::Main {
-                target: Target::Index(2),
-                yes: true
-            })
-        );
-        assert_eq!(
-            parse(&["main", "-y", "-m", "2"]),
-            Ok(Command::Main {
-                target: Target::Index(2),
-                yes: true
-            })
-        );
-    }
-
-    #[test]
-    fn main_flag_errors() {
-        assert_eq!(parse(&["main", "-m"]).unwrap_err(), "missing value for -m");
-        assert_eq!(
-            parse(&["main", "-m", "abc"]).unwrap_err(),
-            "invalid monitor id in '-m abc'"
-        );
-        assert_eq!(
-            parse(&["main", "-m", "0"]).unwrap_err(),
-            "invalid monitor id in 'main:0'"
-        );
-        assert_eq!(
-            parse(&["main", "-m", "*"]).unwrap_err(),
-            "main does not accept :*"
-        );
-        assert_eq!(
-            parse(&["main", "-m", "2", "-w", "1920"]).unwrap_err(),
-            "unexpected argument '-w'"
+            parse(&["ls", "-m", "2"]),
+            Err("-m is only valid with --caps".to_string())
         );
     }
 }

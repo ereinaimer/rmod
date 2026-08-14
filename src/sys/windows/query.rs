@@ -135,3 +135,17 @@ pub(crate) fn resolve_all(names: &[String]) -> Result<Vec<(usize, &str)>, String
         .map(|(i, n)| (i, n.as_str()))
         .collect())
 }
+
+/// Returns the current mode for a specific monitor number (1-based).
+pub fn get_current_mode(monitor: u32) -> Result<Monitor, String> {
+    let names = enumerate_devices();
+    let (index, name) = resolve_device(Some(monitor), &names)?;
+    Ok(describe(index, name))
+}
+
+/// Returns the current mode for the primary monitor.
+pub fn get_primary_mode() -> Result<Monitor, String> {
+    let names = enumerate_devices();
+    let (index, name) = resolve_device(None, &names)?;
+    Ok(describe(index, name))
+}
