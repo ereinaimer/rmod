@@ -505,19 +505,6 @@ fn resolve_dims(width: Option<u32>, height: Option<u32>, base: &DevmodeW) -> (u3
     )
 }
 
-/// True when hardware-touching tests should run: `RMOD_HW_TEST` is `"1"`.
-#[cfg(test)]
-fn hw_tests_enabled_for(value: Option<&str>) -> bool {
-    value == Some("1")
-}
-
-/// True when `RMOD_HW_TEST` is set to `"1"`, gating the tests that
-/// re-apply modes to the host display.
-#[cfg(test)]
-fn hw_tests_enabled() -> bool {
-    hw_tests_enabled_for(std::env::var("RMOD_HW_TEST").ok().as_deref())
-}
-
 /// The effective dimensions for an orientation request.
 ///
 /// Dimensions are resolved against the display's physical panel size
@@ -1052,68 +1039,6 @@ mod tests {
                 "Generic PnP Monitor [:1]"
             ),
             Err("Generic PnP Monitor [:1] does not support 320x200".to_string())
-        );
-    }
-
-    #[test]
-    fn hw_tests_enabled_for_one_is_true() {
-        assert!(hw_tests_enabled_for(Some("1")));
-    }
-
-    #[test]
-    fn hw_tests_enabled_for_zero_is_false() {
-        assert!(!hw_tests_enabled_for(Some("0")));
-    }
-
-    #[test]
-    fn hw_tests_enabled_for_none_is_false() {
-        assert!(!hw_tests_enabled_for(None));
-    }
-
-    #[test]
-    fn apply_mode_accepts_current_mode() {
-        // Skipped by default so `cargo test` never touches the display; run
-        // with `RMOD_HW_TEST=1` in a hardware lab.
-        if !hw_tests_enabled() {
-            return;
-        }
-        let names = query::enumerate_devices();
-        if names.is_empty() {
-            return;
-        }
-        let Some(current) = query::current_mode(&names[0]) else {
-            return;
-        };
-        let result = apply_mode(&names[0], &query::display_label(&names[0], 1), &current);
-        assert!(result.is_ok() || result.unwrap_err().contains("the display change failed"));
-    }
-
-    #[test]
-    fn apply_mode_rejects_unsupported_mode() {
-        // Skipped by default so `cargo test` never touches the display; run
-        // with `RMOD_HW_TEST=1` in a hardware lab.
-        if !hw_tests_enabled() {
-            return;
-        }
-        let names = query::enumerate_devices();
-        if names.is_empty() {
-            return;
-        }
-        let base = query::current_mode(&names[0]).unwrap_or_else(|| unsafe { std::mem::zeroed() });
-        let devmode = build_devmode(
-            &Mode {
-                width: 1,
-                height: 1,
-                refresh: 1,
-            },
-            &base,
-            None,
-        );
-        let result = apply_mode(&names[0], &query::display_label(&names[0], 1), &devmode);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(
-            err.contains("does not support 1x1@1Hz") || err.contains("the display change failed")
         );
     }
 

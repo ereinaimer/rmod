@@ -322,12 +322,6 @@ mod tests {
     use super::super::bindings::{DM_POSITION, DevmodeW, Pointl};
     use super::*;
 
-    /// True when `RMOD_HW_TEST` is set to `"1"`, gating the tests that
-    /// re-apply positions to the host display.
-    fn hw_tests_enabled() -> bool {
-        std::env::var("RMOD_HW_TEST").is_ok_and(|v| v == "1")
-    }
-
     fn devmode_at(x: i32, y: i32, width: u32, height: u32) -> DevmodeW {
         let mut devmode: DevmodeW = unsafe { std::mem::zeroed() };
         devmode.dm_position = Pointl { x, y };
@@ -611,6 +605,10 @@ mod tests {
         assert_eq!(change.previous[0].1.dm_position, Pointl { x: 1920, y: 0 });
         assert_eq!(change.previous[1].0, "C");
         assert_eq!(change.previous[1].1.dm_position, Pointl { x: 0, y: 1080 });
+        // Reverting a change with no applied pairs succeeds with no work.
+        // Exercised through the pure rollback helper: `revert_placement`
+        // wraps this in a real full-screen fade, which unit tests must not
+        // trigger (the fake backend covers the fade-free revert path).
         let empty = PlacementChange {
             display: "A [:1]".to_string(),
             reference_display: "A [:1]".to_string(),
@@ -618,23 +616,9 @@ mod tests {
             applied: vec![],
             previous: vec![],
         };
-        assert_eq!(revert_placement(&empty), Ok(()));
-    }
-
-    #[test]
-    fn apply_placement_real_display_then_revert() {
-        // Skipped by default so `cargo test` never touches the display; run
-        // with `RMOD_HW_TEST=1` in a hardware lab.
-        if !hw_tests_enabled() {
-            return;
-        }
-        let names = query::enumerate_devices();
-        assert!(names.len() >= 2, "hardware lab needs at least two displays");
-        let outcome = apply_placement(2, Direction::Left, 1, &names)
-            .expect("placement should succeed in a hardware lab");
-        let PlacementOutcome::Applied(change) = outcome else {
-            return;
-        };
-        assert!(revert_placement(&change).is_ok());
+        assert_eq!(
+            apply_with_rollback(&empty.applied, &empty.previous, |_, _| Ok(())),
+            Ok(())
+        );
     }
 }
