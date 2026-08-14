@@ -466,3 +466,38 @@ fn main_with_monitor_help() {
     assert!(rmod(&["main:2", "-h"]).status.success());
     assert!(rmod(&["main:2", "--help"]).status.success());
 }
+
+#[test]
+fn main_flag_primary_is_noop() {
+    let out = rmod(&["main", "-m", "1"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("already the main display"));
+}
+
+#[test]
+fn main_flag_missing_val() {
+    let out = rmod(&["main", "-m"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("missing value for -m"));
+}
+
+#[test]
+fn main_flag_all_is_error() {
+    let out = rmod(&["main", "-m", "*"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("main does not accept"));
+}
+
+#[test]
+fn main_flag_zero_is_error() {
+    let out = rmod(&["main", "-m", "0"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("invalid monitor id"));
+}
+
+#[test]
+fn main_flag_with_yes() {
+    let out = rmod(&["main", "-m", "1", "-y"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("already the main display"));
+}

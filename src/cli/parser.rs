@@ -157,16 +157,52 @@ pub fn parse_from<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
             true,
         )?,
         "main" => {
-            let tail = args.get(1).map(|s| s.as_ref());
-            match tail {
-                Some("-h") | Some("--help") => Ok(Command::Help {
-                    topic: Some(HelpTopic::Main),
-                }),
-                Some("-y") | Some("--yes") | None => {
-                    Err("missing monitor number for 'main'".to_string())
+            let mut target: Option<Target> = None;
+            let mut yes = false;
+            let mut i = 1;
+            while i < args.len() {
+                let arg = args[i].as_ref();
+                match arg {
+                    "-h" | "--help" => {
+                        return Ok(Command::Help {
+                            topic: Some(HelpTopic::Main),
+                        });
+                    }
+                    "-y" | "--yes" => {
+                        yes = true;
+                        i += 1;
+                    }
+                    "-m" | "--monitor" => {
+                        let Some(value) = args.get(i + 1) else {
+                            return Err("missing value for -m".to_string());
+                        };
+                        let value_str = value.as_ref();
+                        i += 2;
+                        let t = if value_str == "*" {
+                            Target::All
+                        } else {
+                            value_str
+                                .parse()
+                                .map(Target::Index)
+                                .map_err(|_| format!("invalid monitor id in '-m {value_str}'"))?
+                        };
+                        if t == Target::All {
+                            return Err("main does not accept :*".to_string());
+                        }
+                        if let Target::Index(0) = t {
+                            return Err("invalid monitor id in 'main:0'".to_string());
+                        }
+                        target = Some(t);
+                    }
+                    other => {
+                        return Err(format!("unexpected argument '{other}'"));
+                    }
                 }
-                Some(other) => Err(format!("unexpected argument '{other}'")),
-            }?
+            }
+            let Some(t) = target else {
+                return Err("missing monitor number for 'main'".to_string());
+            };
+            return Ok(Command::Main { target: t, yes });
         }
         "caps" => parse_tail(
             "caps",
@@ -1584,5 +1620,66 @@ mod tests {
     #[test]
     fn main_monitor_overflow_is_error() {
         assert!(parse(&["main:4294967296"]).is_err());
+    }
+
+    #[test]
+    fn main_with_m_flag() {
+        assert_eq!(
+            parse(&["main", "-m", "2"]),
+            Ok(Command::Main {
+                target: Target::Index(2),
+                yes: false
+            })
+        );
+    }
+
+    #[test]
+    fn main_with_monitor_flag_long() {
+        assert_eq!(
+            parse(&["main", "--monitor", "2"]),
+            Ok(Command::Main {
+                target: Target::Index(2),
+                yes: false
+            })
+        );
+    }
+
+    #[test]
+    fn main_with_m_flag_and_yes() {
+        assert_eq!(
+            parse(&["main", "-m", "2", "-y"]),
+            Ok(Command::Main {
+                target: Target::Index(2),
+                yes: true
+            })
+        );
+        assert_eq!(
+            parse(&["main", "-y", "-m", "2"]),
+            Ok(Command::Main {
+                target: Target::Index(2),
+                yes: true
+            })
+        );
+    }
+
+    #[test]
+    fn main_flag_errors() {
+        assert_eq!(parse(&["main", "-m"]).unwrap_err(), "missing value for -m");
+        assert_eq!(
+            parse(&["main", "-m", "abc"]).unwrap_err(),
+            "invalid monitor id in '-m abc'"
+        );
+        assert_eq!(
+            parse(&["main", "-m", "0"]).unwrap_err(),
+            "invalid monitor id in 'main:0'"
+        );
+        assert_eq!(
+            parse(&["main", "-m", "*"]).unwrap_err(),
+            "main does not accept :*"
+        );
+        assert_eq!(
+            parse(&["main", "-m", "2", "-w", "1920"]).unwrap_err(),
+            "unexpected argument '-w'"
+        );
     }
 }

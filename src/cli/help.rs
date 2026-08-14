@@ -184,20 +184,24 @@ Options:
 /// Help page for the `main` command.
 pub fn main_help() -> String {
     "rmod main:N [-y]
+rmod main -m N [-y]
 make monitor N the main display
 
 Usage:
   rmod main:N [-y]
+  rmod main -m N [-y]
 
   N = monitor number from rmod ls
   :* is not accepted
 
 Examples:
   rmod main:2
+  rmod main -m 2
 
 Options:
-  -h, --help   print help
-  -y, --yes    skip confirmation"
+  -h, --help        print help
+  -m, --monitor N   specify monitor number
+  -y, --yes         skip confirmation"
         .to_string()
 }
 
@@ -304,12 +308,16 @@ mod tests {
     fn main_help_page() {
         let h = main_help();
         assert!(h.contains("rmod main:N [-y]"));
+        assert!(h.contains("rmod main -m N [-y]"));
         assert!(h.contains("make monitor N the main display"));
         assert!(h.contains("Usage:"));
         assert!(h.contains("rmod main:N"));
+        assert!(h.contains("rmod main -m N"));
         assert!(h.contains("rmod main:2"));
+        assert!(h.contains("rmod main -m 2"));
         assert!(h.contains("-h, --help"));
         assert!(h.contains("-y, --yes"));
+        assert!(h.contains("-m, --monitor"));
     }
 
     #[test]
