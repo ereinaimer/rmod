@@ -8,7 +8,7 @@
 use crate::cli::{MonitorAction, MonitorTarget};
 use crate::sys::windows::{self, AttachOutcome};
 
-use super::{confirm_or_revert_attach, confirm_or_revert_attach_all, describe_attach, monitor_of};
+use super::{confirm_or_revert_attach, confirm_or_revert_attach_all, describe_attach};
 
 /// Runs the `monitor` command with the parsed action and target.
 pub(super) fn run_monitor(action: MonitorAction, monitor: MonitorTarget, yes: bool) -> i32 {
@@ -44,16 +44,18 @@ pub(super) fn run_monitor(action: MonitorAction, monitor: MonitorTarget, yes: bo
 /// Runs a disable/enable action against the targeted display(s).
 fn run_attach(action: MonitorAction, monitor: MonitorTarget, yes: bool) -> i32 {
     match monitor {
-        MonitorTarget::Primary | MonitorTarget::Index(_) => {
-            let monitor_idx = monitor_of(monitor);
+        MonitorTarget::Index(n) => {
             let outcome = if action == MonitorAction::Disable {
-                windows::disable(monitor_idx)
+                windows::disable(Some(n))
             } else {
-                windows::enable(monitor_idx)
+                windows::enable(Some(n))
             };
             report_single(outcome, yes)
         }
         MonitorTarget::All => report_all(action, yes),
+        // The parser requires `-m` for attach/detach, so the primary
+        // default is unreachable here.
+        MonitorTarget::Primary => unreachable!(),
     }
 }
 

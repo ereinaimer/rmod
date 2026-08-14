@@ -167,7 +167,7 @@ pub fn monitor_detach() -> String {
 Detach a monitor from the desktop
 
 {usage}
-  rmod monitor detach [OPTIONS]
+  rmod monitor detach -m <MONITOR> [OPTIONS]
 
 {aliases}
   disable, off
@@ -193,7 +193,7 @@ pub fn monitor_attach() -> String {
 Re-attach a monitor to the desktop
 
 {usage}
-  rmod monitor attach [OPTIONS]
+  rmod monitor attach -m <MONITOR> [OPTIONS]
 
 {aliases}
   enable, on
@@ -422,7 +422,7 @@ Actions:
   wake    Wake every monitor
 
 Options:
-  -m, --monitor  Monitor number or 'all' (default: primary)
+  -m, --monitor  Monitor number or 'all' (required)
   -y, --yes      Skip the confirmation prompt
   --help         Print help
 
@@ -452,13 +452,13 @@ Examples:
 Detach a monitor from the desktop
 
 Usage:
-  rmod monitor detach [OPTIONS]
+  rmod monitor detach -m <MONITOR> [OPTIONS]
 
 Aliases:
   disable, off
 
 Options:
-  -m, --monitor  Monitor number or 'all' (default: primary)
+  -m, --monitor  Monitor number or 'all' (required)
   -y, --yes      Skip the confirmation prompt
   --help         Print help
 
@@ -474,13 +474,13 @@ Examples:
 Re-attach a monitor to the desktop
 
 Usage:
-  rmod monitor attach [OPTIONS]
+  rmod monitor attach -m <MONITOR> [OPTIONS]
 
 Aliases:
   enable, on
 
 Options:
-  -m, --monitor  Monitor number or 'all' (default: primary)
+  -m, --monitor  Monitor number or 'all' (required)
   -y, --yes      Skip the confirmation prompt
   --help         Print help
 
@@ -622,7 +622,7 @@ Examples:
             "command 'layout' should parse"
         );
         assert!(
-            parse_from(&["rmod", "monitor", "disable"]).is_ok(),
+            parse_from(&["rmod", "monitor", "disable", "-m", "2"]).is_ok(),
             "command 'monitor' should parse"
         );
     }

@@ -234,7 +234,7 @@ pub(crate) const LAYOUT_FLAGS: &[Flag] = &[
 pub(crate) const MONITOR_FLAGS: &[Flag] = &[
     Flag {
         flag: "-m, --monitor",
-        doc: "Monitor number or 'all' (default: primary)",
+        doc: "Monitor number or 'all' (required)",
         example: &["monitor", "detach", "-m", "2"],
     },
     Flag {
@@ -721,6 +721,7 @@ fn parse_monitor(args: &[impl AsRef<str>]) -> Result<Command, String> {
         }
     };
     let mut monitor = MonitorTarget::Primary;
+    let mut monitor_explicit = false;
     let mut yes = false;
     let mut i = 2;
 
@@ -753,6 +754,7 @@ fn parse_monitor(args: &[impl AsRef<str>]) -> Result<Command, String> {
                     );
                 }
                 monitor = parse_monitor_target(val)?;
+                monitor_explicit = true;
                 i += 1;
             }
             "-y" | "--yes" => {
@@ -771,6 +773,17 @@ fn parse_monitor(args: &[impl AsRef<str>]) -> Result<Command, String> {
                 ));
             }
         }
+    }
+
+    if matches!(action, MonitorAction::Disable | MonitorAction::Enable) && !monitor_explicit {
+        let verb = if action == MonitorAction::Disable {
+            "detach"
+        } else {
+            "attach"
+        };
+        return Err(format!(
+            "'monitor {verb}' needs '-m, --monitor': a monitor number or 'all', e.g. 'rmod monitor {verb} -m 2'"
+        ));
     }
 
     Ok(Command::Monitor {
@@ -1276,42 +1289,59 @@ Err("'-m, --monitor' needs a direction flag or '--primary', e.g. 'rmod layout -m
     }
 
     #[test]
-    fn monitor_detach_command() {
+    fn monitor_detach_requires_monitor_flag() {
         assert_eq!(
             parse(&["monitor", "detach"]),
-            Ok(Command::Monitor {
-                action: MonitorAction::Disable,
-                monitor: MonitorTarget::Primary,
-                yes: false
-            })
+            Err("'monitor detach' needs '-m, --monitor': a monitor number or 'all', e.g. 'rmod monitor detach -m 2'".to_string())
+        );
+        assert_eq!(
+            parse(&["monitor", "disable"]),
+            Err("'monitor detach' needs '-m, --monitor': a monitor number or 'all', e.g. 'rmod monitor detach -m 2'".to_string())
+        );
+        assert_eq!(
+            parse(&["monitor", "off"]),
+            Err("'monitor detach' needs '-m, --monitor': a monitor number or 'all', e.g. 'rmod monitor detach -m 2'".to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_attach_requires_monitor_flag() {
+        assert_eq!(
+            parse(&["monitor", "attach"]),
+            Err("'monitor attach' needs '-m, --monitor': a monitor number or 'all', e.g. 'rmod monitor attach -m 2'".to_string())
+        );
+        assert_eq!(
+            parse(&["monitor", "enable"]),
+            Err("'monitor attach' needs '-m, --monitor': a monitor number or 'all', e.g. 'rmod monitor attach -m 2'".to_string())
+        );
+        assert_eq!(
+            parse(&["monitor", "on"]),
+            Err("'monitor attach' needs '-m, --monitor': a monitor number or 'all', e.g. 'rmod monitor attach -m 2'".to_string())
         );
     }
 
     #[test]
     fn monitor_disable_and_off_are_aliases_for_detach() {
         assert_eq!(
-            parse(&["monitor", "disable"]),
-            parse(&["monitor", "detach"])
+            parse(&["monitor", "disable", "-m", "2"]),
+            parse(&["monitor", "detach", "-m", "2"])
         );
-        assert_eq!(parse(&["monitor", "off"]), parse(&["monitor", "detach"]));
-    }
-
-    #[test]
-    fn monitor_attach_command() {
         assert_eq!(
-            parse(&["monitor", "attach"]),
-            Ok(Command::Monitor {
-                action: MonitorAction::Enable,
-                monitor: MonitorTarget::Primary,
-                yes: false
-            })
+            parse(&["monitor", "off", "-m", "2"]),
+            parse(&["monitor", "detach", "-m", "2"])
         );
     }
 
     #[test]
     fn monitor_enable_and_on_are_aliases_for_attach() {
-        assert_eq!(parse(&["monitor", "enable"]), parse(&["monitor", "attach"]));
-        assert_eq!(parse(&["monitor", "on"]), parse(&["monitor", "attach"]));
+        assert_eq!(
+            parse(&["monitor", "enable", "-m", "2"]),
+            parse(&["monitor", "attach", "-m", "2"])
+        );
+        assert_eq!(
+            parse(&["monitor", "on", "-m", "2"]),
+            parse(&["monitor", "attach", "-m", "2"])
+        );
     }
 
     #[test]

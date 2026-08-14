@@ -881,9 +881,22 @@ fn monitor_off_is_alias_for_detach() {
 
 #[test]
 fn monitor_detach_primary_is_error() {
-    let out = rmod(&["monitor", "detach", "-y"]);
-    assert_eq!(out.status.code(), Some(2));
+    let out = rmod(&["monitor", "detach", "-m", "1", "-y"]);
+    assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
     assert!(stderr(&out).contains("cannot detach the primary display"));
+}
+
+#[test]
+fn monitor_detach_without_monitor_is_error() {
+    for args in [&["monitor", "detach"][..], &["monitor", "attach"][..]] {
+        let out = rmod(args);
+        assert_eq!(out.status.code(), Some(2), "args: {args:?}");
+        assert!(
+            stderr(&out).contains("needs '-m, --monitor'"),
+            "stderr: {}",
+            stderr(&out)
+        );
+    }
 }
 
 #[test]
