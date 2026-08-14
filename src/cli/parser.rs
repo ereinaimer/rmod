@@ -310,8 +310,8 @@ fn parse_orientation(arg: &str) -> Result<u32, String> {
     match arg.to_lowercase().as_str() {
         "0" | "l" | "landscape" => Ok(0),
         "90" | "p" | "portrait" => Ok(90),
-        "180" | "lf" => Ok(180),
-        "270" | "pf" => Ok(270),
+        "180" | "lf" | "landscape-flipped" => Ok(180),
+        "270" | "pf" | "portrait-flipped" => Ok(270),
         _ => Err(format!("invalid orientation '{}'", arg)),
     }
 }
@@ -701,8 +701,8 @@ mod tests {
         for (token, angle) in [
             ("0", 0), ("l", 0), ("landscape", 0),
             ("90", 90), ("p", 90), ("portrait", 90),
-            ("180", 180), ("lf", 180),
-            ("270", 270), ("pf", 270),
+            ("180", 180), ("lf", 180), ("landscape-flipped", 180),
+            ("270", 270), ("pf", 270), ("portrait-flipped", 270),
         ] {
             assert_eq!(
                 parse(&["set", "-w", "1920", "-h", "1080", "-o", token]),

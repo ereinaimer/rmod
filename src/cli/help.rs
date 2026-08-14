@@ -82,7 +82,7 @@ Options:
   -r, --refresh R         refresh rate (fixed number or 'max')
   -p, --profile P         resolution profile preset (720, 1080, 1440, 4k, 8k)
   -m, --monitor M         monitor target (number or 'all', default: primary)
-  -o, --orientation O     display rotation: 0 | 90 | 180 | 270 | l | lf | p | portrait | pf | landscape
+  -o, --orientation O     display rotation: 0 | 90 | 180 | 270 | l | lf | p | portrait | pf | landscape | landscape-flipped | portrait-flipped
   -y, --yes               skip the confirmation prompt
   --max                   shortcut to set highest resolution and refresh rate
   --help                  print help
