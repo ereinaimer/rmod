@@ -209,7 +209,7 @@ pub fn max(monitor: Option<u32>, orientation: Option<u32>) -> Result<ApplyOutcom
     let (index, name) = query::resolve_device(monitor, &names)?;
     let display = query::display_label(name, index as u32 + 1);
     let best = best_mode(capabilities::enumerate_modes(name))
-        .ok_or_else(|| format!("{display} has no supported modes"))?;
+        .ok_or_else(|| format!("{display} has no supported modes, the display may be disabled or not connected"))?;
     let base = query::current_mode(name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
     let previous = mode_of(&base);
     let previous_orientation = orientation_of(&base);
@@ -415,7 +415,7 @@ fn validate_mode(name: &str, display: &str, devmode: &DevmodeW) -> Result<(), St
 fn describe_change_failure(code: i32, display: &str, devmode: &DevmodeW) -> String {
     if code == DISP_CHANGE_BADMODE {
         return format!(
-            "{display} does not support {}x{}@{}Hz",
+            "{display} does not support {}x{}@{}Hz, run 'rmod list --caps' to see supported modes",
             devmode.dm_pels_width, devmode.dm_pels_height, devmode.dm_display_frequency
         );
     }
@@ -426,8 +426,10 @@ fn describe_change_result(code: i32) -> String {
     match code {
         DISP_CHANGE_SUCCESSFUL => "success".to_string(),
         DISP_CHANGE_RESTART => "a restart is required to apply this mode".to_string(),
-        DISP_CHANGE_FAILED => "the display change failed".to_string(),
-        DISP_CHANGE_NOTUPDATED => "the display settings were not updated".to_string(),
+        DISP_CHANGE_FAILED => "the display change failed, the display may be disconnected or out of range".to_string(),
+        DISP_CHANGE_NOTUPDATED => {
+            "the display settings were not updated, try a different resolution or refresh rate".to_string()
+        }
         DISP_CHANGE_BADFLAGS | DISP_CHANGE_BADPARAM | DISP_CHANGE_BADDUALVIEW => {
             "invalid parameters".to_string()
         }
@@ -482,7 +484,7 @@ fn resolve_refresh(
         Refresh::Keep => Ok(current_refresh),
         Refresh::Fixed(r) => Ok(r),
         Refresh::Max => best_refresh(modes, width, height)
-            .ok_or_else(|| format!("{display} does not support {width}x{height}")),
+            .ok_or_else(|| format!("{display} does not support {width}x{height}, run 'rmod list --caps' to see supported modes")),
     }
 }
 
@@ -584,7 +586,9 @@ fn plan_max<'a>(
     for (index, name) in targets {
         let display = query::display_label(name, *index as u32 + 1);
         let Some(mode) = best_mode(capabilities::enumerate_modes(name)) else {
-            failures.push(format!("{display} has no supported modes"));
+            failures.push(format!(
+                "{display} has no supported modes, the display may be disabled or not connected"
+            ));
             continue;
         };
         let base = query::current_mode(name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
@@ -665,11 +669,11 @@ mod tests {
         );
         assert_eq!(
             describe_change_result(DISP_CHANGE_FAILED),
-            "the display change failed"
+            "the display change failed, the display may be disconnected or out of range"
         );
         assert_eq!(
             describe_change_result(DISP_CHANGE_NOTUPDATED),
-            "the display settings were not updated"
+            "the display settings were not updated, try a different resolution or refresh rate"
         );
         assert_eq!(
             describe_change_result(DISP_CHANGE_BADFLAGS),
@@ -698,7 +702,7 @@ mod tests {
         );
         assert_eq!(
             describe_change_failure(DISP_CHANGE_BADMODE, "Generic PnP Monitor [:1]", &devmode),
-            "Generic PnP Monitor [:1] does not support 9999x9999@1Hz"
+            "Generic PnP Monitor [:1] does not support 9999x9999@1Hz, run 'rmod list --caps' to see supported modes"
         );
     }
 
@@ -1038,7 +1042,7 @@ mod tests {
                 60,
                 "Generic PnP Monitor [:1]"
             ),
-            Err("Generic PnP Monitor [:1] does not support 320x200".to_string())
+            Err("Generic PnP Monitor [:1] does not support 320x200, run 'rmod list --caps' to see supported modes".to_string())
         );
     }
 

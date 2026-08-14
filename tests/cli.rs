@@ -13,7 +13,9 @@ fn stdout(out: &std::process::Output) -> String {
 }
 
 fn strip_ansi(s: &str) -> String {
-    s.replace("\x1b[92m", "").replace("\x1b[0m", "")
+    s.replace("\x1b[92m", "")
+        .replace("\x1b[4m", "")
+        .replace("\x1b[0m", "")
 }
 
 fn stderr(out: &std::process::Output) -> String {
@@ -24,7 +26,17 @@ fn stderr(out: &std::process::Output) -> String {
 fn no_args_prints_help() {
     let out = rmod(&[]);
     assert!(out.status.success());
-    assert!(stdout(&out).contains("Usage:"));
+    let text = strip_ansi(&stdout(&out));
+    assert!(text.contains("rmod <COMMAND> [OPTIONS]"));
+    assert!(text.contains("Commands:"));
+    assert!(text.contains("list    List displays and their current settings"));
+    assert!(text.contains("set     Apply resolution, refresh rate, and orientation"));
+    assert!(text.contains("layout  Show the monitor arrangement or move monitors"));
+    assert!(text.contains("--help     Print help"));
+    assert!(text.contains("--version  Print version"));
+    assert!(!text.contains("-y, --yes"), "top-level help must not advertise -y");
+    assert!(!text.contains("Profiles"), "profiles table must not appear at top level");
+    assert!(!text.contains("Alias"), "ls alias must not appear at top level");
 }
 
 #[test]
@@ -68,7 +80,12 @@ fn unknown_argument_for_command_exits_2() {
 #[test]
 fn list_is_alias_for_ls() {
     assert_eq!(stdout(&rmod(&["list"])), stdout(&rmod(&["ls"])));
-    assert!(rmod(&["list", "--help"]).status.success());
+    let out = rmod(&["list", "--help"]);
+    assert!(out.status.success());
+    assert!(
+        strip_ansi(&stdout(&out)).contains("Alias: ls"),
+        "list help must mention the ls alias"
+    );
 }
 
 #[test]
@@ -82,7 +99,7 @@ fn list_caps_works() {
 fn list_monitor_without_caps_is_error() {
     let out = rmod(&["list", "-m", "2"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("-m is only valid with --caps"));
+    assert!(stderr(&out).contains("'-m, --monitor' only works with '--caps'"));
 }
 
 #[test]
@@ -244,14 +261,14 @@ fn caps_unknown_monitor_exits_2() {
 fn caps_zero_monitor_exits_2() {
     let out = rmod(&["ls", "--caps", "-m", "0"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("monitor number must be >= 1"));
+    assert!(stderr(&out).contains("monitor numbers start at 1"));
 }
 
 #[test]
 fn ls_m_without_caps_is_error() {
     let out = rmod(&["ls", "-m", "2"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("-m is only valid with --caps"));
+    assert!(stderr(&out).contains("'-m, --monitor' only works with '--caps'"));
 }
 
 #[test]
@@ -309,7 +326,7 @@ fn set_max_nonexistent_monitor_yes_flag() {
 fn set_max_zero_monitor_is_error() {
     let out = rmod(&["set", "--max", "-m", "0"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("monitor number must be >= 1"));
+    assert!(stderr(&out).contains("monitor numbers start at 1"));
 }
 
 #[test]
@@ -323,7 +340,7 @@ fn set_nonexistent_monitor_is_error() {
 fn set_zero_monitor_is_error() {
     let out = rmod(&["set", "-w", "1920", "-h", "1080", "-r", "60", "-m", "0"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("monitor number must be >= 1"));
+    assert!(stderr(&out).contains("monitor numbers start at 1"));
 }
 
 #[test]
@@ -332,7 +349,7 @@ fn set_nonexistent_monitor_yes_flag() {
         "set", "-w", "1920", "-h", "1080", "-r", "60", "-m", "0", "-y",
     ]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("monitor number must be >= 1"));
+    assert!(stderr(&out).contains("monitor numbers start at 1"));
 }
 
 #[test]
@@ -404,21 +421,29 @@ fn orientation_invalid_is_error() {
 fn orientation_missing_value_is_error() {
     let out = rmod(&["set", "-w", "1920", "-h", "1080", "-o"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("missing value for -o"));
+    assert!(stderr(&out).contains("'-o, --orientation' needs a value"));
 }
 
 #[test]
 fn orientation_flag_help() {
     let out = rmod(&["set", "-w", "1920", "-h", "1080", "-o", "90", "--help"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert!(stdout(&out).contains("Options:"));
+    let text = strip_ansi(&stdout(&out));
+    assert!(text.contains("Options:"));
+    assert!(text.contains("-o, --orientation"));
 }
 
 #[test]
 fn set_help_flag() {
     let out = rmod(&["set", "--help"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert!(stdout(&out).contains("Apply a resolution"));
+    let text = strip_ansi(&stdout(&out));
+    assert!(text.contains("Apply resolution, refresh rate, and orientation to a display"));
+    assert!(text.contains("rmod set [OPTIONS]"));
+    assert!(text.contains("Profiles:"), "set page must show the profiles table");
+    assert!(text.contains("1280x720"), "set page must list profile resolutions");
+    assert!(text.contains("Orientations:"), "set page must show orientations");
+    assert!(text.contains("-y, --yes"), "set page must advertise -y");
 }
 
 #[test]
@@ -545,21 +570,21 @@ fn layout_missing_monitor_is_error() {
 fn layout_monitor_without_action_is_error() {
     let out = rmod(&["layout", "-m", "2"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("error: -m is only valid with a direction flag or --primary"));
+    assert!(stderr(&out).contains("error: '-m, --monitor' needs a direction flag or '--primary'"));
 }
 
 #[test]
 fn layout_missing_value_for_direction_is_error() {
     let out = rmod(&["layout", "-m", "2", "--left-of"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("error: missing value for --left-of"));
+    assert!(stderr(&out).contains("error: '--left-of' needs a value"));
 }
 
 #[test]
 fn layout_primary_with_direction_is_error() {
     let out = rmod(&["layout", "-m", "2", "--primary", "--left-of", "1"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("error: cannot combine --primary with a direction flag"));
+    assert!(stderr(&out).contains("error: use '--primary' or a direction flag, not both"));
 }
 
 #[test]
@@ -572,7 +597,12 @@ fn layout_unknown_argument_is_error() {
 #[test]
 fn layout_help_flag() {
     assert_eq!(rmod(&["layout", "-h"]).status.code(), Some(2));
-    assert!(rmod(&["layout", "--help"]).status.success());
+    let out = rmod(&["layout", "--help"]);
+    assert!(out.status.success());
+    let text = strip_ansi(&stdout(&out));
+    assert!(text.contains("rmod layout [OPTIONS]"));
+    assert!(text.contains("-y, --yes"), "layout page must advertise -y");
+    assert!(text.contains("--primary"), "layout page must advertise --primary");
     assert_eq!(rmod(&["layout", "-m", "2", "-h"]).status.code(), Some(2));
     assert!(rmod(&["layout", "-m", "2", "--help"]).status.success());
 }

@@ -113,16 +113,16 @@ pub(crate) fn resolve_device(
             names
                 .first()
                 .map(|name| (0, name.as_str()))
-                .ok_or_else(|| "no displays found".to_string())
+                .ok_or_else(|| "no displays found, connect a display and try again".to_string())
         }
         Some(n) => {
             let index = n
                 .checked_sub(1)
-                .ok_or_else(|| format!("monitor {n} not found"))? as usize;
+                .ok_or_else(|| format!("monitor {n} not found, run 'rmod list' to see connected displays"))? as usize;
             names
                 .get(index)
                 .map(|name| (index, name.as_str()))
-                .ok_or_else(|| format!("monitor {n} not found"))
+                .ok_or_else(|| format!("monitor {n} not found, run 'rmod list' to see connected displays"))
         }
     }
 }
@@ -135,7 +135,7 @@ pub(crate) fn resolve_device(
 /// Returns an error when no displays are attached.
 pub(crate) fn resolve_all(names: &[String]) -> Result<Vec<(usize, &str)>, String> {
     if names.is_empty() {
-        return Err("no displays found".to_string());
+        return Err("no displays found, connect a display and try again".to_string());
     }
     Ok(names
         .iter()

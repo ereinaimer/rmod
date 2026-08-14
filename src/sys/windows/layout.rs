@@ -75,7 +75,7 @@ pub(crate) fn apply_placement(
         query::resolve_device(Some(reference), names).map_err(|e| format!("reference {e}"))?;
     if reference_index == target_index {
         return Err(format!(
-            "cannot place monitor {} relative to itself",
+            "cannot place monitor {} relative to itself, use a different reference monitor",
             target_index + 1
         ));
     }
@@ -104,7 +104,7 @@ pub(crate) fn apply_placement(
     {
         let other_label = query::display_label(&names[other_index], other_index as u32 + 1);
         return Err(format!(
-            "cannot place monitor {}: {other_label} occupies its current position",
+            "cannot place monitor {}: {other_label} occupies its current position, move that monitor first",
             target_index + 1
         ));
     }
@@ -567,7 +567,7 @@ mod tests {
         let names = names3();
         assert_eq!(
             apply_placement(1, Direction::Left, 1, &names),
-            Err("cannot place monitor 1 relative to itself".to_string())
+            Err("cannot place monitor 1 relative to itself, use a different reference monitor".to_string())
         );
     }
 
@@ -576,7 +576,7 @@ mod tests {
         let names = names3();
         assert_eq!(
             apply_placement(5, Direction::Left, 1, &names),
-            Err("monitor 5 not found".to_string())
+            Err("monitor 5 not found, run 'rmod list' to see connected displays".to_string())
         );
     }
 
@@ -585,7 +585,7 @@ mod tests {
         let names = names3();
         assert_eq!(
             apply_placement(1, Direction::Left, 5, &names),
-            Err("reference monitor 5 not found".to_string())
+            Err("reference monitor 5 not found, run 'rmod list' to see connected displays".to_string())
         );
     }
 

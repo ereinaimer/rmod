@@ -37,7 +37,7 @@ pub fn list() -> Result<Vec<Monitor>, String> {
         .map(|(i, name)| query::describe(i, name))
         .collect();
     if monitors.is_empty() {
-        return Err("no displays found".into());
+        return Err("no displays found, connect a display and try again".into());
     }
     Ok(monitors)
 }
@@ -60,7 +60,7 @@ pub fn caps(monitor: Option<u32>) -> Result<(Monitor, Vec<Mode>), String> {
     let modes = capabilities::enumerate_modes(name);
     if modes.is_empty() {
         return Err(format!(
-            "{} has no supported modes",
+            "{} has no supported modes, the display may be disabled or not connected",
             query::display_label(name, index as u32 + 1)
         ));
     }
@@ -87,7 +87,7 @@ pub fn caps_all() -> Result<Vec<(Monitor, Vec<Mode>)>, String> {
         let modes = capabilities::enumerate_modes(name);
         if modes.is_empty() {
             return Err(format!(
-                "{} has no supported modes",
+                "{} has no supported modes, the display may be disabled or not connected",
                 query::display_label(name, index as u32 + 1)
             ));
         }
