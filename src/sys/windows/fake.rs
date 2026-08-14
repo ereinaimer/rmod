@@ -56,7 +56,7 @@ fn resolve(target: Option<u32>) -> Result<Monitor, String> {
     match target {
         None => Ok(monitor(1).expect("fake monitor 1 exists")),
         Some(n) => monitor(n).ok_or_else(|| {
-            format!("monitor {n} not found, run 'rmod list' to see connected displays")
+            format!("monitor {n} not found. run rmod list to see connected displays")
         }),
     }
 }
@@ -196,7 +196,7 @@ pub(crate) fn set(
         .any(|m| m.width == w && m.height == h && m.refresh == r)
     {
         return Err(format!(
-            "{} does not support {w}x{h} @ {r}Hz, run 'rmod list --caps' to see supported modes",
+            "{} does not support {w}x{h} @ {r}Hz. run rmod list --caps to see supported modes",
             display_label(&monitor)
         ));
     }
@@ -255,7 +255,7 @@ pub(crate) fn make_main(monitor: u32, _names: &[String]) -> Result<MainOutcome<'
             previous: vec![],
         })),
         n => Err(format!(
-            "monitor {n} not found, run 'rmod list' to see connected displays"
+"monitor {n} not found. run rmod list to see connected displays"
         )),
     }
 }
@@ -425,7 +425,7 @@ mod tests {
     fn caps_unknown_monitor_is_error() {
         assert_eq!(
             caps(Some(99)).err(),
-            Some("monitor 99 not found, run 'rmod list' to see connected displays".to_string())
+            Some("monitor 99 not found. run rmod list to see connected displays".to_string())
         );
     }
 
@@ -479,7 +479,7 @@ mod tests {
     fn set_unsupported_mode_is_error() {
         assert_eq!(
             set(None, Some(9999), Some(9999), Refresh::Fixed(1), None),
-            Err("RMOD Fake Monitor 1 [:1] does not support 9999x9999 @ 1Hz, run 'rmod list --caps' to see supported modes".to_string())
+            Err("RMOD Fake Monitor 1 [:1] does not support 9999x9999 @ 1Hz. run rmod list --caps to see supported modes".to_string())
         );
     }
 
@@ -487,7 +487,7 @@ mod tests {
     fn set_unknown_monitor_is_error() {
         assert_eq!(
             set(Some(99), Some(1920), Some(1080), Refresh::Keep, None),
-            Err("monitor 99 not found, run 'rmod list' to see connected displays".to_string())
+            Err("monitor 99 not found. run rmod list to see connected displays".to_string())
         );
     }
 
@@ -565,7 +565,7 @@ mod tests {
     fn make_main_unknown_is_error() {
         assert_eq!(
             make_main(99, &[]),
-            Err("monitor 99 not found, run 'rmod list' to see connected displays".to_string())
+            Err("monitor 99 not found. run rmod list to see connected displays".to_string())
         );
     }
 
@@ -641,7 +641,7 @@ mod tests {
     fn apply_placement_unknown_monitor_is_error() {
         assert_eq!(
             apply_placement(99, Direction::Left, 1),
-            Err("monitor 99 not found, run 'rmod list' to see connected displays".to_string())
+            Err("monitor 99 not found. run rmod list to see connected displays".to_string())
         );
     }
 
@@ -650,7 +650,7 @@ mod tests {
         assert_eq!(
             apply_placement(1, Direction::Left, 99),
             Err(
-                "reference monitor 99 not found, run 'rmod list' to see connected displays"
+                "reference monitor 99 not found. run rmod list to see connected displays"
                     .to_string()
             )
         );
@@ -698,7 +698,7 @@ mod tests {
     fn disable_unknown_monitor_is_error() {
         assert_eq!(
             disable(Some(99)),
-            Err("monitor 99 not found, run 'rmod list' to see connected displays".to_string())
+            Err("monitor 99 not found. run rmod list to see connected displays".to_string())
         );
     }
 
@@ -718,7 +718,7 @@ mod tests {
     fn enable_unknown_monitor_is_error() {
         assert_eq!(
             enable(Some(99)),
-            Err("monitor 99 not found, run 'rmod list' to see connected displays".to_string())
+            Err("monitor 99 not found. run rmod list to see connected displays".to_string())
         );
     }
 

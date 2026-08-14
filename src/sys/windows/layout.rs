@@ -579,7 +579,7 @@ mod tests {
         let names = names3();
         assert_eq!(
             apply_placement(5, Direction::Left, 1, &names),
-            Err("monitor 5 not found, run 'rmod list' to see connected displays".to_string())
+            Err("monitor 5 not found. run rmod list to see connected displays".to_string())
         );
     }
 
@@ -589,7 +589,7 @@ mod tests {
         assert_eq!(
             apply_placement(1, Direction::Left, 5, &names),
             Err(
-                "reference monitor 5 not found, run 'rmod list' to see connected displays"
+                "reference monitor 5 not found. run rmod list to see connected displays"
                     .to_string()
             )
         );

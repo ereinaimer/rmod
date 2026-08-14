@@ -321,7 +321,7 @@ Alias: ls
 
 Options:
   --caps         List supported modes instead of current settings
-  -m, --monitor  Monitor number or 'all' (requires --caps)
+  -m, --monitor  Monitor number or all (requires --caps)
   --help         Print help
 
 Examples:
@@ -342,9 +342,9 @@ Usage:
 Options:
   -w, --width        Resolution width (requires --height)
   -h, --height       Resolution height (requires --width)
-  -r, --refresh      Refresh rate in Hz, or 'max'
+  -r, --refresh      Refresh rate in Hz, or max
   -p, --profile      Resolution preset (see Profiles below)
-  -m, --monitor      Monitor number or 'all' (default: primary)
+  -m, --monitor      Monitor number or all (default: primary)
   -o, --orientation  Rotation angle (see Orientations below)
   -y, --yes          Skip the confirmation prompt
   --max              Use the display's highest supported mode
@@ -422,7 +422,7 @@ Actions:
   wake    Wake every monitor
 
 Options:
-  -m, --monitor  Monitor number or 'all' (required)
+  -m, --monitor  Monitor number or all (required)
   -y, --yes      Skip the confirmation prompt
   --help         Print help
 
@@ -458,7 +458,7 @@ Aliases:
   disable, off
 
 Options:
-  -m, --monitor  Monitor number or 'all' (required)
+  -m, --monitor  Monitor number or all (required)
   -y, --yes      Skip the confirmation prompt
   --help         Print help
 
@@ -480,7 +480,7 @@ Aliases:
   enable, on
 
 Options:
-  -m, --monitor  Monitor number or 'all' (required)
+  -m, --monitor  Monitor number or all (required)
   -y, --yes      Skip the confirmation prompt
   --help         Print help
 

@@ -152,13 +152,13 @@ pub(crate) fn resolve_device(
         }
         Some(n) => {
             let index = n.checked_sub(1).ok_or_else(|| {
-                format!("monitor {n} not found, run 'rmod list' to see connected displays")
+                format!("monitor {n} not found. run rmod list to see connected displays")
             })? as usize;
             names
                 .get(index)
                 .map(|name| (index, name.as_str()))
                 .ok_or_else(|| {
-                    format!("monitor {n} not found, run 'rmod list' to see connected displays")
+                    format!("monitor {n} not found. run rmod list to see connected displays")
                 })
         }
     }

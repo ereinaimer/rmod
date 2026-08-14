@@ -114,7 +114,7 @@ fn list_caps_works() {
 fn list_monitor_without_caps_is_error() {
     let out = rmod(&["list", "-m", "2"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("'-m, --monitor' only works with '--caps'"));
+    assert!(stderr(&out).contains("-m, --monitor only works with --caps"));
 }
 
 #[test]
@@ -283,7 +283,7 @@ fn caps_zero_monitor_exits_2() {
 fn ls_m_without_caps_is_error() {
     let out = rmod(&["ls", "-m", "2"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("'-m, --monitor' only works with '--caps'"));
+    assert!(stderr(&out).contains("-m, --monitor only works with --caps"));
 }
 
 #[test]
@@ -436,7 +436,7 @@ fn orientation_invalid_is_error() {
 fn orientation_missing_value_is_error() {
     let out = rmod(&["set", "-w", "1920", "-h", "1080", "-o"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("'-o, --orientation' needs a value"));
+    assert!(stderr(&out).contains("-o, --orientation needs a value"));
 }
 
 #[test]
@@ -586,7 +586,7 @@ fn layout_missing_monitor_is_error() {
     let out = rmod(&["layout", "--left-of", "1"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(
-        stderr(&out).contains("missing monitor for 'layout', e.g. 'rmod layout -m 2 --left-of 1'")
+        stderr(&out).contains("missing monitor for layout\ne.g. rmod layout -m 2 --left-of 1")
     );
 }
 
@@ -594,28 +594,28 @@ fn layout_missing_monitor_is_error() {
 fn layout_monitor_without_action_is_error() {
     let out = rmod(&["layout", "-m", "2"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("error: '-m, --monitor' needs a direction flag or '--primary'"));
+    assert!(stderr(&out).contains("error: -m, --monitor needs a direction flag or --primary"));
 }
 
 #[test]
 fn layout_missing_value_for_direction_is_error() {
     let out = rmod(&["layout", "-m", "2", "--left-of"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("error: '--left-of' needs a value"));
+    assert!(stderr(&out).contains("error: --left-of needs a value"));
 }
 
 #[test]
 fn layout_primary_with_direction_is_error() {
     let out = rmod(&["layout", "-m", "2", "--primary", "--left-of", "1"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("error: use '--primary' or a direction flag, not both"));
+    assert!(stderr(&out).contains("error: use --primary or a direction flag, not both"));
 }
 
 #[test]
 fn layout_unknown_argument_is_error() {
     let out = rmod(&["layout", "-m", "2", "foo"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("error: unexpected argument 'foo' for 'layout'"));
+    assert!(stderr(&out).contains("error: unexpected argument foo for layout"));
 }
 
 #[test]
@@ -716,7 +716,7 @@ fn main_command_removed_shows_hint() {
     let out = rmod(&["main", "2"]);
     assert_eq!(out.status.code(), Some(2));
     let err = stderr(&out);
-    assert!(err.contains("unknown command 'main'"), "stderr: {err}");
+    assert!(err.contains("unknown command main"), "stderr: {err}");
     assert!(err.contains("layout"), "missing migration hint: {err}");
 }
 
@@ -892,7 +892,7 @@ fn monitor_detach_without_monitor_is_error() {
         let out = rmod(args);
         assert_eq!(out.status.code(), Some(2), "args: {args:?}");
         assert!(
-            stderr(&out).contains("needs '-m, --monitor'"),
+            stderr(&out).contains("needs -m, --monitor"),
             "stderr: {}",
             stderr(&out)
         );
@@ -972,28 +972,28 @@ fn monitor_help_hides_aliases() {
 fn monitor_sleep_rejects_monitor_flag() {
     let out = rmod(&["monitor", "sleep", "-m", "2"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("not valid for 'monitor sleep'"));
+    assert!(stderr(&out).contains("not valid for monitor sleep"));
 }
 
 #[test]
 fn monitor_sleep_rejects_yes_flag() {
     let out = rmod(&["monitor", "sleep", "-y"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("not valid for 'monitor sleep'"));
+    assert!(stderr(&out).contains("not valid for monitor sleep"));
 }
 
 #[test]
 fn monitor_missing_action_is_error() {
     let out = rmod(&["monitor"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("'monitor' needs an action"));
+    assert!(stderr(&out).contains("monitor needs an action"));
 }
 
 #[test]
 fn monitor_unknown_action_is_error() {
     let out = rmod(&["monitor", "frobnicate"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("unknown action 'frobnicate' for 'monitor'"));
+    assert!(stderr(&out).contains("unknown action frobnicate for monitor"));
 }
 
 #[test]
