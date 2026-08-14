@@ -91,7 +91,7 @@ pub(crate) fn describe(index: usize, name: &str) -> Monitor {
 pub(crate) fn resolve_device(
     monitor: Option<u32>,
     names: &[String],
-) -> Result<(usize, String), String> {
+) -> Result<(usize, &str), String> {
     match monitor {
         None => {
             for (i, name) in names.iter().enumerate() {
@@ -99,13 +99,12 @@ pub(crate) fn resolve_device(
                     && mode.dm_position.x == 0
                     && mode.dm_position.y == 0
                 {
-                    return Ok((i, name.clone()));
+                    return Ok((i, name.as_str()));
                 }
             }
             names
                 .first()
-                .cloned()
-                .map(|name| (0, name))
+                .map(|name| (0, name.as_str()))
                 .ok_or_else(|| "no displays found".to_string())
         }
         Some(n) => {
@@ -114,8 +113,7 @@ pub(crate) fn resolve_device(
                 .ok_or_else(|| format!("monitor {n} not found"))? as usize;
             names
                 .get(index)
-                .cloned()
-                .map(|name| (index, name))
+                .map(|name| (index, name.as_str()))
                 .ok_or_else(|| format!("monitor {n} not found"))
         }
     }
@@ -127,13 +125,13 @@ pub(crate) fn resolve_device(
 ///
 /// # Errors
 /// Returns an error when no displays are attached.
-pub(crate) fn resolve_all(names: &[String]) -> Result<Vec<(usize, String)>, String> {
+pub(crate) fn resolve_all(names: &[String]) -> Result<Vec<(usize, &str)>, String> {
     if names.is_empty() {
         return Err("no displays found".to_string());
     }
     Ok(names
         .iter()
         .enumerate()
-        .map(|(i, n)| (i, n.clone()))
+        .map(|(i, n)| (i, n.as_str()))
         .collect())
 }

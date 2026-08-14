@@ -95,7 +95,8 @@ pub(crate) const PROFILES: &[(&str, u32, u32)] = &[
 /// Returns `Err` with a human-readable message for unknown commands,
 /// invalid numbers, or unexpected trailing arguments.
 pub fn parse() -> Result<Command, String> {
-    parse_from(env::args())
+    let args: Vec<String> = env::args().collect();
+    parse_from(&args)
 }
 
 /// Parses a command from an argument iterator; the first item is argv[0]
@@ -104,43 +105,50 @@ pub fn parse() -> Result<Command, String> {
 /// # Errors
 /// Returns `Err` with a human-readable message for unknown commands,
 /// invalid numbers, or unexpected trailing arguments.
-pub fn parse_from<I: Iterator<Item = String>>(args: I) -> Result<Command, String> {
-    let args: Vec<String> = args.skip(1).collect();
+pub fn parse_from<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
+    if args.is_empty() {
+        return Ok(Command::Help { topic: None });
+    }
+    let args = &args[1..];
     let Some(cmd) = args.first() else {
         return Ok(Command::Help { topic: None });
     };
-    let command = match cmd.as_str() {
+    let cmd_str = cmd.as_ref();
+    let command = match cmd_str {
         "-h" => {
-            if args.get(1).is_some_and(|t| t.parse::<u32>().is_ok()) {
-                return parse_flags(&args);
+            if args
+                .get(1)
+                .is_some_and(|t| t.as_ref().parse::<u32>().is_ok())
+            {
+                return parse_flags(args);
             }
             return match args.get(1) {
                 None => Ok(Command::Help { topic: None }),
-                Some(extra) => Err(format!("unexpected argument '{extra}'")),
+                Some(extra) => Err(format!("unexpected argument '{}'", extra.as_ref())),
             };
         }
         "--help" => {
             return match args.get(1) {
                 None => Ok(Command::Help { topic: None }),
-                Some(extra) => Err(format!("unexpected argument '{extra}'")),
+                Some(extra) => Err(format!("unexpected argument '{}'", extra.as_ref())),
             };
         }
         "-V" | "--version" => {
             return match args.get(1) {
                 None => Ok(Command::Version),
-                Some(extra) => Err(format!("unexpected argument '{extra}'")),
+                Some(extra) => Err(format!("unexpected argument '{}'", extra.as_ref())),
             };
         }
         "ls" => parse_tail(
             "ls",
-            args.get(1).cloned(),
+            args.get(1).map(|s| s.as_ref()),
             Command::List,
             HelpTopic::List,
             false,
         )?,
         "max" => parse_tail(
             "max",
-            args.get(1).cloned(),
+            args.get(1).map(|s| s.as_ref()),
             Command::Max {
                 target: Target::Primary,
                 yes: false,
@@ -149,8 +157,8 @@ pub fn parse_from<I: Iterator<Item = String>>(args: I) -> Result<Command, String
             true,
         )?,
         "main" => {
-            let tail = args.get(1).cloned();
-            match tail.as_deref() {
+            let tail = args.get(1).map(|s| s.as_ref());
+            match tail {
                 Some("-h") | Some("--help") => Ok(Command::Help {
                     topic: Some(HelpTopic::Main),
                 }),
@@ -162,25 +170,25 @@ pub fn parse_from<I: Iterator<Item = String>>(args: I) -> Result<Command, String
         }
         "caps" => parse_tail(
             "caps",
-            args.get(1).cloned(),
+            args.get(1).map(|s| s.as_ref()),
             Command::Caps {
                 target: Target::Primary,
             },
             HelpTopic::Caps,
             false,
         )?,
-        _ if cmd.starts_with("max:") => {
-            let target = parse_monitor(&cmd[4..], cmd)?;
+        _ if cmd_str.starts_with("max:") => {
+            let target = parse_monitor(&cmd_str[4..], cmd_str)?;
             parse_tail(
                 "max",
-                args.get(1).cloned(),
+                args.get(1).map(|s| s.as_ref()),
                 Command::Max { target, yes: false },
                 HelpTopic::Max,
                 true,
             )?
         }
-        _ if cmd.starts_with("main:") => {
-            let target = parse_monitor(&cmd[5..], cmd)?;
+        _ if cmd_str.starts_with("main:") => {
+            let target = parse_monitor(&cmd_str[5..], cmd_str)?;
             if target == Target::All {
                 return Err("main does not accept :*".to_string());
             }
@@ -189,39 +197,39 @@ pub fn parse_from<I: Iterator<Item = String>>(args: I) -> Result<Command, String
             }
             parse_tail(
                 "main",
-                args.get(1).cloned(),
+                args.get(1).map(|s| s.as_ref()),
                 Command::Main { target, yes: false },
                 HelpTopic::Main,
                 true,
             )?
         }
-        _ if cmd.starts_with("caps:") => {
-            let target = parse_monitor(&cmd[5..], cmd)?;
+        _ if cmd_str.starts_with("caps:") => {
+            let target = parse_monitor(&cmd_str[5..], cmd_str)?;
             parse_tail(
                 "caps",
-                args.get(1).cloned(),
+                args.get(1).map(|s| s.as_ref()),
                 Command::Caps { target },
                 HelpTopic::Caps,
                 false,
             )?
         }
-        _ if cmd.starts_with('-') => return parse_flags(&args),
-        _ => parse_set(cmd, args.get(1).cloned())?,
+        _ if cmd_str.starts_with('-') => return parse_flags(args),
+        _ => parse_set(cmd_str, args.get(1).map(|s| s.as_ref()))?,
     };
     if let Some(extra) = args.get(2) {
-        return Err(format!("unexpected argument '{extra}'"));
+        return Err(format!("unexpected argument '{}'", extra.as_ref()));
     }
     Ok(command)
 }
 
 fn parse_tail(
     name: &str,
-    tail: Option<String>,
+    tail: Option<&str>,
     cmd: Command,
     topic: HelpTopic,
     allow_yes: bool,
 ) -> Result<Command, String> {
-    match tail.as_deref() {
+    match tail {
         Some("-h" | "--help") => Ok(Command::Help { topic: Some(topic) }),
         Some("-y" | "--yes") if allow_yes => Ok(match cmd {
             Command::Max { target, .. } => Command::Max { target, yes: true },
@@ -254,7 +262,7 @@ fn parse_tail(
     }
 }
 
-fn parse_set(cmd: &str, tail: Option<String>) -> Result<Command, String> {
+fn parse_set(cmd: &str, tail: Option<&str>) -> Result<Command, String> {
     let (spec, orientation) = match cmd.split_once('/') {
         Some((spec, angle)) => (spec, Some(parse_orientation(angle, cmd)?)),
         None => (cmd, None),
@@ -281,7 +289,7 @@ fn parse_set(cmd: &str, tail: Option<String>) -> Result<Command, String> {
         },
     };
     let refresh = refresh.unwrap_or(Refresh::Keep);
-    match tail.as_deref() {
+    match tail {
         Some("-h" | "--help") => Ok(Command::Help {
             topic: Some(HelpTopic::Set),
         }),
@@ -345,7 +353,7 @@ fn parse_monitor(m: &str, cmd: &str) -> Result<Target, String> {
 /// # Errors
 /// Returns `Err` for missing or invalid flag values, unknown flags, or
 /// when no dimension/refresh flag was given.
-fn parse_flags(args: &[String]) -> Result<Command, String> {
+fn parse_flags<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
     let mut width: Option<u32> = None;
     let mut height: Option<u32> = None;
     let mut refresh: Option<Refresh> = None;
@@ -354,18 +362,19 @@ fn parse_flags(args: &[String]) -> Result<Command, String> {
     let mut yes = false;
     let mut i = 0;
     while i < args.len() {
-        let flag = args[i].as_str();
+        let flag = args[i].as_ref();
         i += 1;
         match flag {
             "-w" | "--width" => {
                 let Some(value) = args.get(i) else {
                     return Err("missing value for -w".to_string());
                 };
+                let value_str = value.as_ref();
                 i += 1;
                 width = Some(
-                    value
+                    value_str
                         .parse()
-                        .map_err(|_| format!("invalid width in '-w {value}'"))?,
+                        .map_err(|_| format!("invalid width in '-w {value_str}'"))?,
                 );
             }
             "-h" | "--height" => {
@@ -374,7 +383,8 @@ fn parse_flags(args: &[String]) -> Result<Command, String> {
                         topic: Some(HelpTopic::Set),
                     });
                 };
-                match value.parse::<u32>() {
+                let value_str = value.as_ref();
+                match value_str.parse::<u32>() {
                     Ok(h) => {
                         i += 1;
                         height = Some(h);
@@ -390,36 +400,39 @@ fn parse_flags(args: &[String]) -> Result<Command, String> {
                 let Some(value) = args.get(i) else {
                     return Err("missing value for -r".to_string());
                 };
+                let value_str = value.as_ref();
                 i += 1;
-                refresh = Some(match value.as_str() {
+                refresh = Some(match value_str {
                     "max" => Refresh::Max,
                     "keep" => Refresh::Keep,
-                    _ => value
+                    _ => value_str
                         .parse()
                         .map(Refresh::Fixed)
-                        .map_err(|_| format!("invalid refresh in '-r {value}'"))?,
+                        .map_err(|_| format!("invalid refresh in '-r {value_str}'"))?,
                 });
             }
             "-m" | "--monitor" => {
                 let Some(value) = args.get(i) else {
                     return Err("missing value for -m".to_string());
                 };
+                let value_str = value.as_ref();
                 i += 1;
-                target = if value == "*" {
+                target = if value_str == "*" {
                     Target::All
                 } else {
-                    value
+                    value_str
                         .parse()
                         .map(Target::Index)
-                        .map_err(|_| format!("invalid monitor id in '-m {value}'"))?
+                        .map_err(|_| format!("invalid monitor id in '-m {value_str}'"))?
                 };
             }
             "-o" | "--orientation" => {
                 let Some(value) = args.get(i) else {
                     return Err("missing value for -o".to_string());
                 };
+                let value_str = value.as_ref();
                 i += 1;
-                orientation = Some(parse_orientation(value, &format!("-o {value}"))?);
+                orientation = Some(parse_orientation(value_str, &format!("-o {value_str}"))?);
             }
             "-y" | "--yes" => yes = true,
             "--help" => {
@@ -455,7 +468,9 @@ mod tests {
     use super::*;
 
     fn parse(args: &[&str]) -> Result<Command, String> {
-        parse_from(std::iter::once("rmod".to_string()).chain(args.iter().map(|s| s.to_string())))
+        let mut full_args = vec!["rmod"];
+        full_args.extend_from_slice(args);
+        parse_from(&full_args)
     }
 
     fn set(width: u32, height: u32, refresh: Refresh, target: Target) -> Command {

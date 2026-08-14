@@ -9,7 +9,7 @@ pub(crate) mod apply;
 mod bindings;
 mod capabilities;
 mod fade;
-mod query;
+pub(crate) mod query;
 
 #[allow(unused_imports)]
 pub use apply::{
@@ -50,15 +50,15 @@ pub fn list() -> Result<Vec<Monitor>, String> {
 pub fn caps(monitor: Option<u32>) -> Result<(Monitor, Vec<Mode>), String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
-    let modes = capabilities::enumerate_modes(&name);
+    let modes = capabilities::enumerate_modes(name);
     if modes.is_empty() {
         return Err(format!(
             "{} has no supported modes",
-            query::display_label(&name, index as u32 + 1)
+            query::display_label(name, index as u32 + 1)
         ));
     }
     Ok((
-        query::describe(index, &name),
+        query::describe(index, name),
         capabilities::normalize_modes(modes),
     ))
 }
@@ -74,15 +74,15 @@ pub fn caps_all() -> Result<Vec<(Monitor, Vec<Mode>)>, String> {
     let targets = query::resolve_all(&names)?;
     let mut monitors = Vec::with_capacity(targets.len());
     for (index, name) in targets {
-        let modes = capabilities::enumerate_modes(&name);
+        let modes = capabilities::enumerate_modes(name);
         if modes.is_empty() {
             return Err(format!(
                 "{} has no supported modes",
-                query::display_label(&name, index as u32 + 1)
+                query::display_label(name, index as u32 + 1)
             ));
         }
         monitors.push((
-            query::describe(index, &name),
+            query::describe(index, name),
             capabilities::normalize_modes(modes),
         ));
     }

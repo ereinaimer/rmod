@@ -58,7 +58,7 @@ pub enum ApplyOutcome {
 
 /// A display that is being promoted to main display.
 #[derive(Debug, PartialEq)]
-pub struct MainChange {
+pub struct MainChange<'a> {
     /// The 1-based monitor number of the promoted display.
     pub monitor: u32,
     /// The display label of the promoted display.
@@ -66,17 +66,17 @@ pub struct MainChange {
     /// The `(device, devmode)` pairs to apply, in order: the promoted
     /// display moved to origin 0,0, then the old primary moved to the
     /// promoted display's previous position.
-    pub applied: Vec<(String, DevmodeW)>,
+    pub applied: Vec<(&'a str, DevmodeW)>,
     /// The original devmodes for revert, in order: the old primary back
     /// to origin 0,0, then the promoted display back to its old position.
-    pub previous: Vec<(String, DevmodeW)>,
+    pub previous: Vec<(&'a str, DevmodeW)>,
 }
 
 /// The result of promoting a display to main display.
 #[derive(Debug, PartialEq)]
-pub enum MainOutcome {
+pub enum MainOutcome<'a> {
     /// The display was promoted and can be reverted with the change.
-    Applied(MainChange),
+    Applied(MainChange<'a>),
     /// The display was already the main display; nothing was applied.
     Unchanged(String),
 }
@@ -156,10 +156,10 @@ pub fn set(
 ) -> Result<ApplyOutcome, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
-    let display = query::display_label(&name, index as u32 + 1);
-    let base = query::current_mode(&name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
+    let display = query::display_label(name, index as u32 + 1);
+    let base = query::current_mode(name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
     let (width, height) = effective_dims(width, height, orientation, &base);
-    let modes = capabilities::enumerate_modes(&name);
+    let modes = capabilities::enumerate_modes(name);
     let refresh = resolve_refresh(
         refresh,
         &modes,
@@ -185,8 +185,8 @@ pub fn set(
     );
     if let ApplyOutcome::Applied(change) = &result {
         let devmode = build_devmode(&change.mode, &base, change.orientation);
-        fade::transition(&name, &devmode, || {
-            apply_mode(&name, &change.display, &devmode)
+        fade::transition(name, &devmode, || {
+            apply_mode(name, &change.display, &devmode)
         })?;
     }
     Ok(result)
@@ -206,16 +206,16 @@ pub fn set(
 pub fn max(monitor: Option<u32>) -> Result<ApplyOutcome, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
-    let display = query::display_label(&name, index as u32 + 1);
-    let best = best_mode(capabilities::enumerate_modes(&name))
+    let display = query::display_label(name, index as u32 + 1);
+    let best = best_mode(capabilities::enumerate_modes(name))
         .ok_or_else(|| format!("{display} has no supported modes"))?;
-    let base = query::current_mode(&name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
+    let base = query::current_mode(name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
     let previous = mode_of(&base);
     let result = outcome_of(index as u32 + 1, display, best, previous, None, None);
     if let ApplyOutcome::Applied(change) = &result {
         let devmode = build_devmode(&change.mode, &base, None);
-        fade::transition(&name, &devmode, || {
-            apply_mode(&name, &change.display, &devmode)
+        fade::transition(name, &devmode, || {
+            apply_mode(name, &change.display, &devmode)
         })?;
     }
     Ok(result)
@@ -276,10 +276,10 @@ pub fn revert(
 ) -> Result<Mode, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
-    let display = query::display_label(&name, index as u32 + 1);
-    let base = query::current_mode(&name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
+    let display = query::display_label(name, index as u32 + 1);
+    let base = query::current_mode(name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
     let devmode = build_devmode(&previous, &base, previous_orientation);
-    fade::transition(&name, &devmode, || apply_mode(&name, &display, &devmode))?;
+    fade::transition(name, &devmode, || apply_mode(name, &display, &devmode))?;
     Ok(previous)
 }
 
@@ -295,23 +295,19 @@ pub fn revert(
 /// # Errors
 /// Unknown monitor number or a rejected display change.
 #[allow(dead_code)]
-pub fn make_main(monitor: u32) -> Result<MainOutcome, String> {
-    let names = query::enumerate_devices();
-    let (target_index, target_name) = query::resolve_device(Some(monitor), &names)?;
-    let (_, partner_name) = query::resolve_device(None, &names)?;
-    let display = query::display_label(&target_name, target_index as u32 + 1);
+pub fn make_main(monitor: u32, names: &[String]) -> Result<MainOutcome<'_>, String> {
+    let (target_index, target_name) = query::resolve_device(Some(monitor), names)?;
+    let (_, partner_name) = query::resolve_device(None, names)?;
+    let display = query::display_label(target_name, target_index as u32 + 1);
     let target_dev =
-        query::current_mode(&target_name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
+        query::current_mode(target_name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
     let partner_dev =
-        query::current_mode(&partner_name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
+        query::current_mode(partner_name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
     if is_primary(&target_dev) {
         return Ok(MainOutcome::Unchanged(display));
     }
     let (new_primary, new_partner) = build_swap(&target_dev, &partner_dev);
-    let applied = vec![
-        (target_name.clone(), new_primary),
-        (partner_name.clone(), new_partner),
-    ];
+    let applied = vec![(target_name, new_primary), (partner_name, new_partner)];
     for (name, devmode) in &applied {
         apply_position(name, devmode)?;
     }
@@ -331,7 +327,7 @@ pub fn make_main(monitor: u32) -> Result<MainOutcome, String> {
 /// # Errors
 /// A rejected display change.
 #[allow(dead_code)]
-pub fn revert_main(change: &MainChange) -> Result<(), String> {
+pub fn revert_main(change: &MainChange<'_>) -> Result<(), String> {
     for (name, devmode) in &change.previous {
         apply_position(name, devmode)?;
     }
@@ -487,8 +483,8 @@ fn resolve_refresh(
 
 /// A planned change for one monitor: everything needed to validate and
 /// apply a mode and report the resulting outcome.
-struct Planned {
-    name: String,
+struct Planned<'a> {
+    name: &'a str,
     devmode: DevmodeW,
     outcome: ApplyOutcome,
 }
@@ -527,13 +523,13 @@ fn effective_dims(
     }
 }
 
-fn plan_set(
-    targets: &[(usize, String)],
+fn plan_set<'a>(
+    targets: &'a [(usize, &'a str)],
     width: Option<u32>,
     height: Option<u32>,
     policy: Refresh,
     orientation: Option<u32>,
-) -> Result<Vec<Planned>, String> {
+) -> Result<Vec<Planned<'a>>, String> {
     let mut planned = Vec::new();
     for (index, name) in targets {
         let display = query::display_label(name, *index as u32 + 1);
@@ -565,7 +561,7 @@ fn plan_set(
             previous_orientation,
         );
         planned.push(Planned {
-            name: name.clone(),
+            name,
             devmode,
             outcome,
         });
@@ -573,7 +569,7 @@ fn plan_set(
     Ok(planned)
 }
 
-fn plan_max(targets: &[(usize, String)]) -> Result<Vec<Planned>, String> {
+fn plan_max<'a>(targets: &'a [(usize, &'a str)]) -> Result<Vec<Planned<'a>>, String> {
     let mut planned = Vec::new();
     let mut failures = Vec::new();
     for (index, name) in targets {
@@ -587,7 +583,7 @@ fn plan_max(targets: &[(usize, String)]) -> Result<Vec<Planned>, String> {
         let devmode = build_devmode(&mode, &base, None);
         let outcome = outcome_of(*index as u32 + 1, display, mode, previous, None, None);
         planned.push(Planned {
-            name: name.clone(),
+            name,
             devmode,
             outcome,
         });
@@ -601,30 +597,30 @@ fn plan_max(targets: &[(usize, String)]) -> Result<Vec<Planned>, String> {
 
 /// True when a plan contains at least one mode to apply; a batch with no
 /// changes must not fade.
-fn has_applied(planned: &[Planned]) -> bool {
+fn has_applied(planned: &[Planned<'_>]) -> bool {
     planned
         .iter()
         .any(|p| matches!(p.outcome, ApplyOutcome::Applied(_)))
 }
 
-fn apply_planned(planned: Vec<Planned>) -> Result<Vec<ApplyOutcome>, String> {
+fn apply_planned(planned: Vec<Planned<'_>>) -> Result<Vec<ApplyOutcome>, String> {
     let mut outcomes = Vec::with_capacity(planned.len());
     for p in planned {
         if let ApplyOutcome::Applied(change) = &p.outcome {
-            apply_mode(&p.name, &change.display, &p.devmode)?;
+            apply_mode(p.name, &change.display, &p.devmode)?;
         }
         outcomes.push(p.outcome);
     }
     Ok(outcomes)
 }
 
-fn apply_all(planned: Vec<Planned>) -> Result<Vec<ApplyOutcome>, String> {
+fn apply_all(planned: Vec<Planned<'_>>) -> Result<Vec<ApplyOutcome>, String> {
     let mut failures = Vec::new();
     for p in &planned {
         let ApplyOutcome::Applied(change) = &p.outcome else {
             continue;
         };
-        if let Err(e) = validate_mode(&p.name, &change.display, &p.devmode) {
+        if let Err(e) = validate_mode(p.name, &change.display, &p.devmode) {
             failures.push(e);
         }
     }
@@ -1375,17 +1371,17 @@ mod tests {
         assert!(has_applied(&planned));
     }
 
-    fn planned_unchanged() -> Planned {
+    fn planned_unchanged() -> Planned<'static> {
         let base = query::current_mode("").unwrap_or_else(|| unsafe { std::mem::zeroed() });
         let mode = mode_of(&base);
         Planned {
-            name: String::new(),
+            name: "",
             devmode: base,
             outcome: outcome_of(1, String::new(), mode, mode_of(&base), None, None),
         }
     }
 
-    fn planned_applied() -> Planned {
+    fn planned_applied() -> Planned<'static> {
         let base = query::current_mode("").unwrap_or_else(|| unsafe { std::mem::zeroed() });
         let previous = mode_of(&base);
         let mode = Mode {
@@ -1394,7 +1390,7 @@ mod tests {
             refresh: previous.refresh,
         };
         Planned {
-            name: String::new(),
+            name: "",
             devmode: base,
             outcome: outcome_of(1, String::new(), mode, previous, None, None),
         }

@@ -13,7 +13,8 @@ pub(super) fn run_main(target: Target, yes: bool) -> i32 {
     let Target::Index(monitor) = target else {
         unreachable!()
     };
-    match make_main(monitor) {
+    let names = crate::sys::windows::query::enumerate_devices();
+    match make_main(monitor, &names) {
         Ok(MainOutcome::Unchanged(display)) => {
             println!("{display} is already the main display");
             0
