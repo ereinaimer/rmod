@@ -137,12 +137,14 @@ pub fn version() -> String {
 mod tests {
     use super::*;
 
-#[test]
+    #[test]
     fn top_help_lists_all_commands() {
         let h = help();
         assert!(h.contains("Resolution modifier"));
         assert!(h.contains("rmod list [--caps]"));
-assert!(h.contains("rmod layout -m N [--primary | --left-of M | --right-of M | --above M | --below M]"));
+        assert!(h.contains(
+            "rmod layout -m N [--primary | --left-of M | --right-of M | --above M | --below M]"
+        ));
         assert!(h.contains("rmod layout -m 2 --left-of 1"));
         assert!(h.contains("M = monitor to position relative to (required)."));
     }
@@ -163,7 +165,7 @@ assert!(h.contains("rmod layout -m N [--primary | --left-of M | --right-of M | -
         }
     }
 
-#[test]
+    #[test]
     fn top_help_has_examples() {
         let h = help();
         assert!(h.contains("rmod list --caps"));
@@ -182,7 +184,7 @@ assert!(h.contains("rmod layout -m N [--primary | --left-of M | --right-of M | -
         assert!(h.contains("--version"));
     }
 
-#[test]
+    #[test]
     fn ls_help() {
         let h = ls();
         assert!(h.contains("rmod list"));
@@ -209,12 +211,12 @@ assert!(h.contains("rmod layout -m N [--primary | --left-of M | --right-of M | -
         assert!(h.contains("--help"));
     }
 
-#[test]
+    #[test]
     fn layout_help_page() {
         let h = layout();
         assert!(h.contains("rmod layout"));
         assert!(h.contains("Usage:"));
-        assert!(h.contains("--left"));
+        assert!(h.contains("--left-of"));
         assert!(h.contains("--primary"));
         assert!(h.contains("--help"));
         assert!(h.contains("--monitor"));
@@ -224,7 +226,9 @@ assert!(h.contains("rmod layout -m N [--primary | --left-of M | --right-of M | -
     #[test]
     fn top_help_lists_layout_command() {
         let h = help();
-        assert!(h.contains("rmod layout -m N [--primary | --left-of M | --right-of M | --above M | --below M]"));
+        assert!(h.contains(
+            "rmod layout -m N [--primary | --left-of M | --right-of M | --above M | --below M]"
+        ));
         assert!(h.contains("rmod layout -m 2 --left-of 1"));
         assert!(h.contains("M = monitor to position relative to (required)."));
     }

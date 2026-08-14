@@ -10,14 +10,14 @@
 pub(crate) mod apply;
 mod bindings;
 mod capabilities;
-mod fake;
 mod fade;
+mod fake;
 mod layout;
 pub(crate) mod query;
 
 pub use apply::{ApplyOutcome, Change, MainChange, MainOutcome, Refresh};
 pub use capabilities::Mode;
-pub use layout::{Direction, PlacementChange};
+pub use layout::{Direction, PlacementChange, PlacementOutcome};
 pub use query::Monitor;
 
 /// Lists every display attached to the desktop with its current settings.
@@ -201,14 +201,14 @@ pub fn revert_main(change: &MainChange<'_>) -> Result<(), String> {
 /// monitor to position relative to.
 ///
 /// # Errors
-/// Unknown monitor, placing a monitor relative to itself, or a rejected
-/// position change.
+/// Unknown monitor or reference, placing a monitor relative to itself, a
+/// blocked swap destination, or a rejected position change.
 #[allow(dead_code)]
 pub fn apply_placement(
     monitor: u32,
     direction: Direction,
     reference: u32,
-) -> Result<PlacementChange, String> {
+) -> Result<PlacementOutcome, String> {
     if fake::enabled() {
         fake::apply_placement(monitor, direction, reference)
     } else {

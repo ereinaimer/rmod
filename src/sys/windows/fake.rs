@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 use super::apply::{ApplyOutcome, Change, MainChange, MainOutcome, Refresh};
 use super::bindings::{DM_POSITION, DevmodeW, Pointl};
 use super::capabilities::Mode;
-use super::layout::{self, Direction, PlacementChange};
+use super::layout::{self, Direction, PlacementChange, PlacementOutcome};
 use super::query::Monitor;
 
 const MONITOR_1_NAME: &str = "RMOD Fake Monitor 1";
@@ -61,19 +61,51 @@ fn resolve(target: Option<u32>) -> Result<Monitor, String> {
 /// The supported modes of every fake monitor.
 fn modes() -> Vec<Mode> {
     vec![
-        Mode { width: 1280, height: 720, refresh: 60 },
-        Mode { width: 1920, height: 1080, refresh: 60 },
-        Mode { width: 1920, height: 1080, refresh: 144 },
-        Mode { width: 2560, height: 1440, refresh: 60 },
-        Mode { width: 2560, height: 1440, refresh: 144 },
-        Mode { width: 3840, height: 2160, refresh: 60 },
-        Mode { width: 3840, height: 2160, refresh: 144 },
+        Mode {
+            width: 1280,
+            height: 720,
+            refresh: 60,
+        },
+        Mode {
+            width: 1920,
+            height: 1080,
+            refresh: 60,
+        },
+        Mode {
+            width: 1920,
+            height: 1080,
+            refresh: 144,
+        },
+        Mode {
+            width: 2560,
+            height: 1440,
+            refresh: 60,
+        },
+        Mode {
+            width: 2560,
+            height: 1440,
+            refresh: 144,
+        },
+        Mode {
+            width: 3840,
+            height: 2160,
+            refresh: 60,
+        },
+        Mode {
+            width: 3840,
+            height: 2160,
+            refresh: 144,
+        },
     ]
 }
 
 /// The best supported mode, used by `max`.
 fn best_mode() -> Mode {
-    Mode { width: 3840, height: 2160, refresh: 144 }
+    Mode {
+        width: 3840,
+        height: 2160,
+        refresh: 144,
+    }
 }
 
 /// The display label used in output and error messages.
@@ -83,15 +115,15 @@ fn display_label(monitor: &Monitor) -> String {
 
 /// The mode currently reported for a fake monitor.
 fn current_mode(monitor: &Monitor) -> Mode {
-    Mode { width: monitor.width, height: monitor.height, refresh: monitor.refresh }
+    Mode {
+        width: monitor.width,
+        height: monitor.height,
+        refresh: monitor.refresh,
+    }
 }
 
 /// Builds a change and classifies it, mirroring `apply::outcome_of`.
-fn outcome(
-    monitor: &Monitor,
-    mode: Mode,
-    orientation: Option<u32>,
-) -> ApplyOutcome {
+fn outcome(monitor: &Monitor, mode: Mode, orientation: Option<u32>) -> ApplyOutcome {
     let change = Change {
         monitor: monitor.number,
         display: display_label(monitor),
@@ -142,7 +174,10 @@ pub(crate) fn set(
     orientation: Option<u32>,
 ) -> Result<ApplyOutcome, String> {
     let monitor = resolve(monitor)?;
-    let (w, h) = (width.unwrap_or(monitor.width), height.unwrap_or(monitor.height));
+    let (w, h) = (
+        width.unwrap_or(monitor.width),
+        height.unwrap_or(monitor.height),
+    );
     let r = match refresh {
         Refresh::Keep => monitor.refresh,
         Refresh::Max => modes()
@@ -153,13 +188,24 @@ pub(crate) fn set(
             .unwrap_or(monitor.refresh),
         Refresh::Fixed(f) => f,
     };
-    if !modes().iter().any(|m| m.width == w && m.height == h && m.refresh == r) {
+    if !modes()
+        .iter()
+        .any(|m| m.width == w && m.height == h && m.refresh == r)
+    {
         return Err(format!(
             "{} does not support {w}x{h} @ {r}Hz",
             display_label(&monitor)
         ));
     }
-    Ok(outcome(&monitor, Mode { width: w, height: h, refresh: r }, orientation))
+    Ok(outcome(
+        &monitor,
+        Mode {
+            width: w,
+            height: h,
+            refresh: r,
+        },
+        orientation,
+    ))
 }
 
 /// Applies the best supported mode to a fake monitor.
@@ -170,10 +216,7 @@ pub(crate) fn max(monitor: Option<u32>, orientation: Option<u32>) -> Result<Appl
 
 /// Applies the best supported mode to every fake monitor.
 pub(crate) fn max_all(orientation: Option<u32>) -> Result<Vec<ApplyOutcome>, String> {
-    Ok(vec![
-        max(Some(1), orientation)?,
-        max(Some(2), orientation)?,
-    ])
+    Ok(vec![max(Some(1), orientation)?, max(Some(2), orientation)?])
 }
 
 /// Applies a resolution, refresh and orientation policy to every fake monitor.
@@ -221,7 +264,10 @@ pub(crate) fn revert_main(_change: &MainChange<'_>) -> Result<(), String> {
 #[allow(dead_code)]
 fn fake_devmode(monitor: &Monitor) -> DevmodeW {
     let mut devmode: DevmodeW = unsafe { std::mem::zeroed() };
-    devmode.dm_position = Pointl { x: monitor.x, y: monitor.y };
+    devmode.dm_position = Pointl {
+        x: monitor.x,
+        y: monitor.y,
+    };
     devmode.dm_pels_width = monitor.width;
     devmode.dm_pels_height = monitor.height;
     devmode.dm_display_frequency = monitor.refresh;
@@ -235,9 +281,9 @@ pub(crate) fn apply_placement(
     monitor: u32,
     direction: Direction,
     reference: u32,
-) -> Result<PlacementChange, String> {
+) -> Result<PlacementOutcome, String> {
     let target = resolve(Some(monitor))?;
-    let reference_monitor = resolve(Some(reference))?;
+    let reference_monitor = resolve(Some(reference)).map_err(|e| format!("reference {e}"))?;
     if reference_monitor.number == target.number {
         return Err(format!(
             "cannot place monitor {} relative to itself",
@@ -247,18 +293,24 @@ pub(crate) fn apply_placement(
     let target_dev = fake_devmode(&target);
     let reference_dev = fake_devmode(&reference_monitor);
     let landing = layout::landing_position(direction, &reference_dev, &target_dev);
+    if landing == target_dev.dm_position {
+        return Ok(PlacementOutcome::Unchanged {
+            display: display_label(&target),
+            reference_display: display_label(&reference_monitor),
+        });
+    }
     let mut moved = target_dev;
     moved.dm_position = landing;
     moved.dm_fields |= DM_POSITION;
     let names = enumerate_devices();
     let target_name = names[target.number as usize - 1].clone();
-    Ok(PlacementChange {
+    Ok(PlacementOutcome::Applied(PlacementChange {
         display: display_label(&target),
         reference_display: display_label(&reference_monitor),
         swap_display: None,
         applied: vec![(target_name.clone(), moved)],
         previous: vec![(target_name, target_dev)],
-    })
+    }))
 }
 
 /// Undoes a fake placement; the fake never persists anything.
@@ -299,7 +351,11 @@ mod tests {
         let (monitor, modes) = caps(None).unwrap();
         assert_eq!(monitor.number, 1);
         assert_eq!(modes.len(), 7);
-        assert!(modes.contains(&Mode { width: 1920, height: 1080, refresh: 60 }));
+        assert!(modes.contains(&Mode {
+            width: 1920,
+            height: 1080,
+            refresh: 60
+        }));
     }
 
     #[test]
@@ -317,8 +373,16 @@ mod tests {
             Ok(ApplyOutcome::Unchanged(Change {
                 monitor: 1,
                 display: "RMOD Fake Monitor 1 [:1]".to_string(),
-                mode: Mode { width: 1920, height: 1080, refresh: 60 },
-                previous: Mode { width: 1920, height: 1080, refresh: 60 },
+                mode: Mode {
+                    width: 1920,
+                    height: 1080,
+                    refresh: 60
+                },
+                previous: Mode {
+                    width: 1920,
+                    height: 1080,
+                    refresh: 60
+                },
                 orientation: None,
                 previous_orientation: None,
             }))
@@ -332,8 +396,16 @@ mod tests {
             Ok(ApplyOutcome::Applied(Change {
                 monitor: 1,
                 display: "RMOD Fake Monitor 1 [:1]".to_string(),
-                mode: Mode { width: 1920, height: 1080, refresh: 144 },
-                previous: Mode { width: 1920, height: 1080, refresh: 60 },
+                mode: Mode {
+                    width: 1920,
+                    height: 1080,
+                    refresh: 144
+                },
+                previous: Mode {
+                    width: 1920,
+                    height: 1080,
+                    refresh: 60
+                },
                 orientation: None,
                 previous_orientation: None,
             }))
@@ -363,8 +435,16 @@ mod tests {
             Ok(ApplyOutcome::Applied(Change {
                 monitor: 1,
                 display: "RMOD Fake Monitor 1 [:1]".to_string(),
-                mode: Mode { width: 1920, height: 1080, refresh: 144 },
-                previous: Mode { width: 1920, height: 1080, refresh: 60 },
+                mode: Mode {
+                    width: 1920,
+                    height: 1080,
+                    refresh: 144
+                },
+                previous: Mode {
+                    width: 1920,
+                    height: 1080,
+                    refresh: 60
+                },
                 orientation: None,
                 previous_orientation: None,
             }))
@@ -389,7 +469,14 @@ mod tests {
         let outcome = max(None, None).unwrap();
         match outcome {
             ApplyOutcome::Applied(change) => {
-                assert_eq!(change.mode, Mode { width: 3840, height: 2160, refresh: 144 });
+                assert_eq!(
+                    change.mode,
+                    Mode {
+                        width: 3840,
+                        height: 2160,
+                        refresh: 144
+                    }
+                );
             }
             ApplyOutcome::Unchanged(_) => panic!("best mode differs from current"),
         }
@@ -418,7 +505,10 @@ mod tests {
 
     #[test]
     fn apply_placement_places_monitor_left_of_primary() {
-        let change = apply_placement(2, Direction::Left, 1).unwrap();
+        let outcome = apply_placement(2, Direction::Left, 1).unwrap();
+        let PlacementOutcome::Applied(change) = outcome else {
+            panic!("placement must be applied");
+        };
         assert_eq!(change.display, "RMOD Fake Monitor 2 [:2]");
         assert_eq!(change.reference_display, "RMOD Fake Monitor 1 [:1]");
         assert_eq!(change.swap_display, None);
@@ -433,9 +523,34 @@ mod tests {
 
     #[test]
     fn apply_placement_below_explicit_reference() {
-        let change = apply_placement(2, Direction::Below, 1).unwrap();
+        let outcome = apply_placement(2, Direction::Below, 1).unwrap();
+        let PlacementOutcome::Applied(change) = outcome else {
+            panic!("placement must be applied");
+        };
         assert_eq!(change.reference_display, "RMOD Fake Monitor 1 [:1]");
         assert_eq!(change.applied[0].1.dm_position, Pointl { x: 0, y: 1080 });
+    }
+
+    #[test]
+    fn apply_placement_noop_right_of_primary_is_unchanged() {
+        assert_eq!(
+            apply_placement(2, Direction::Right, 1),
+            Ok(PlacementOutcome::Unchanged {
+                display: "RMOD Fake Monitor 2 [:2]".to_string(),
+                reference_display: "RMOD Fake Monitor 1 [:1]".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn apply_placement_noop_left_of_second_is_unchanged() {
+        assert_eq!(
+            apply_placement(1, Direction::Left, 2),
+            Ok(PlacementOutcome::Unchanged {
+                display: "RMOD Fake Monitor 1 [:1]".to_string(),
+                reference_display: "RMOD Fake Monitor 2 [:2]".to_string(),
+            })
+        );
     }
 
     #[test]
@@ -459,8 +574,19 @@ mod tests {
     }
 
     #[test]
+    fn apply_placement_unknown_reference_is_error() {
+        assert_eq!(
+            apply_placement(1, Direction::Left, 99),
+            Err("reference monitor 99 not found".to_string())
+        );
+    }
+
+    #[test]
     fn revert_placement_restores_fake_positions() {
-        let change = apply_placement(2, Direction::Left, 1).unwrap();
+        let outcome = apply_placement(2, Direction::Left, 1).unwrap();
+        let PlacementOutcome::Applied(change) = outcome else {
+            panic!("placement must be applied");
+        };
         assert_eq!(revert_placement(&change), Ok(()));
     }
 }

@@ -10,7 +10,11 @@ use crate::sys::windows::{self, ApplyOutcome, Refresh};
 use super::{confirm_or_revert, confirm_or_revert_all, describe_outcome, monitor_of};
 
 /// Resolves a SetSpec to width, height, and refresh using current display state.
-fn resolve_spec(spec: &SetSpec, _current_width: u32, _current_height: u32) -> (Option<u32>, Option<u32>, Refresh) {
+fn resolve_spec(
+    spec: &SetSpec,
+    _current_width: u32,
+    _current_height: u32,
+) -> (Option<u32>, Option<u32>, Refresh) {
     use crate::cli::parser::PROFILES;
     match spec {
         SetSpec::Profile(name) => {
@@ -21,15 +25,13 @@ fn resolve_spec(spec: &SetSpec, _current_width: u32, _current_height: u32) -> (O
             let (_, w, h) = PROFILES.iter().find(|(n, _, _)| *n == name).unwrap();
             (Some(*w), Some(*h), *refresh)
         }
-        SetSpec::Explicit { width, height, refresh } => {
-            (Some(*width), Some(*height), *refresh)
-        }
-        SetSpec::RefreshOnly(refresh) => {
-            (None, None, *refresh)
-        }
-        SetSpec::Keep => {
-            (None, None, Refresh::Keep)
-        }
+        SetSpec::Explicit {
+            width,
+            height,
+            refresh,
+        } => (Some(*width), Some(*height), *refresh),
+        SetSpec::RefreshOnly(refresh) => (None, None, *refresh),
+        SetSpec::Keep => (None, None, Refresh::Keep),
         SetSpec::Max => unreachable!(),
     }
 }
@@ -67,10 +69,16 @@ pub(super) fn run_set(
                     for outcome in outcomes {
                         match outcome {
                             ApplyOutcome::Unchanged(change) => {
-                                println!("{}", describe_outcome(&change, Some(&change.display), true))
+                                println!(
+                                    "{}",
+                                    describe_outcome(&change, Some(&change.display), true)
+                                )
                             }
                             ApplyOutcome::Applied(change) => {
-                                println!("{}", describe_outcome(&change, Some(&change.display), true));
+                                println!(
+                                    "{}",
+                                    describe_outcome(&change, Some(&change.display), true)
+                                );
                                 applied.push(change);
                             }
                         }
@@ -105,7 +113,8 @@ pub(super) fn run_set(
                         }
                     }
                 };
-                let mode_requested = width.is_some() || height.is_some() || refresh != Refresh::Keep;
+                let mode_requested =
+                    width.is_some() || height.is_some() || refresh != Refresh::Keep;
                 match windows::set(monitor_idx, width, height, refresh, orientation) {
                     Ok(ApplyOutcome::Unchanged(change)) => {
                         println!("{}", describe_outcome(&change, None, mode_requested));
@@ -136,8 +145,10 @@ pub(super) fn run_set(
                             continue;
                         }
                     };
-                    let (width, height, refresh) = resolve_spec(&spec, current.width, current.height);
-                    let mode_requested = width.is_some() || height.is_some() || refresh != Refresh::Keep;
+                    let (width, height, refresh) =
+                        resolve_spec(&spec, current.width, current.height);
+                    let mode_requested =
+                        width.is_some() || height.is_some() || refresh != Refresh::Keep;
                     match windows::set(Some(monitor_num), width, height, refresh, orientation) {
                         Ok(ApplyOutcome::Unchanged(change)) => println!(
                             "{}",

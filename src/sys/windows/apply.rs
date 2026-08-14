@@ -14,6 +14,7 @@ use super::bindings::{
 };
 use super::capabilities::{self, Mode};
 use super::fade;
+use super::layout::apply_with_rollback;
 use super::query;
 
 /// Refresh rate handling for the set command.
@@ -317,10 +318,8 @@ pub fn make_main(monitor: u32, names: &[String]) -> Result<MainOutcome<'_>, Stri
     }
     let (new_primary, new_partner) = build_swap(&target_dev, &partner_dev);
     let applied = vec![(target_name, new_primary), (partner_name, new_partner)];
-    for (name, devmode) in &applied {
-        apply_position(name, devmode)?;
-    }
     let previous = vec![(partner_name, partner_dev), (target_name, target_dev)];
+    fade::transition_all(|| apply_with_rollback(&applied, &previous, apply_position))?;
     Ok(MainOutcome::Applied(MainChange {
         monitor,
         display,
@@ -331,16 +330,13 @@ pub fn make_main(monitor: u32, names: &[String]) -> Result<MainOutcome<'_>, Stri
 
 /// Undoes a promotion by re-applying the original positions captured in a
 /// [`MainChange`]: the old primary back to origin 0,0, then the promoted
-/// display back to its previous position.
+/// display back to its previous position, under a full-screen fade.
 ///
 /// # Errors
 /// A rejected display change.
 #[allow(dead_code)]
 pub fn revert_main(change: &MainChange<'_>) -> Result<(), String> {
-    for (name, devmode) in &change.previous {
-        apply_position(name, devmode)?;
-    }
-    Ok(())
+    fade::transition_all(|| apply_with_rollback(&change.previous, &change.applied, apply_position))
 }
 
 /// True when a device mode sits at desktop origin (0,0), the definition

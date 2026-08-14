@@ -45,7 +45,7 @@ fn subcommand_help_flags_exit_zero() {
     assert_eq!(rmod(&["ls", "-h"]).status.code(), Some(2));
     assert!(rmod(&["ls", "--help"]).status.success());
     assert!(rmod(&["ls", "--caps", "--help"]).status.success());
-assert_eq!(rmod(&["set", "-p", "1080", "-h"]).status.code(), Some(2));
+    assert_eq!(rmod(&["set", "-p", "1080", "-h"]).status.code(), Some(2));
     assert!(rmod(&["set", "-p", "4k", "--help"]).status.success());
     assert_eq!(rmod(&["layout", "-h"]).status.code(), Some(2));
     assert!(rmod(&["layout", "--help"]).status.success());
@@ -208,8 +208,14 @@ fn ls_shows_fake_environment() {
     let out = rmod(&["ls"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let stdout = stdout(&out);
-    assert!(stdout.contains("RMOD Fake Monitor"), "expected fake monitor names: {stdout}");
-    assert!(stdout.contains("1920x1080"), "expected fake resolution: {stdout}");
+    assert!(
+        stdout.contains("RMOD Fake Monitor"),
+        "expected fake monitor names: {stdout}"
+    );
+    assert!(
+        stdout.contains("1920x1080"),
+        "expected fake resolution: {stdout}"
+    );
 }
 
 #[test]
@@ -322,7 +328,9 @@ fn set_zero_monitor_is_error() {
 
 #[test]
 fn set_nonexistent_monitor_yes_flag() {
-    let out = rmod(&["set", "-w", "1920", "-h", "1080", "-r", "60", "-m", "0", "-y"]);
+    let out = rmod(&[
+        "set", "-w", "1920", "-h", "1080", "-r", "60", "-m", "0", "-y",
+    ]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("monitor number must be >= 1"));
 }
@@ -332,9 +340,7 @@ fn set_unsupported_mode_is_error() {
     let out = rmod(&["set", "-w", "9999", "-h", "9999", "-r", "1"]);
     assert_eq!(out.status.code(), Some(2));
     let err = stderr(&out);
-    assert!(
-        err.contains("does not support") || err.contains("the display change failed")
-    );
+    assert!(err.contains("does not support") || err.contains("the display change failed"));
 }
 
 #[test]
@@ -420,10 +426,22 @@ fn layout_show_lists_positions() {
     let out = rmod(&["layout"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let stdout = stdout(&out);
-    assert!(stdout.contains("RELATIVE TO"), "missing RELATIVE TO header: {stdout}");
-    assert!(stdout.contains("RMOD Fake Monitor"), "expected fake monitor names: {stdout}");
-    assert!(stdout.contains("(primary)"), "missing primary marker: {stdout}");
-    assert!(stdout.contains("right of 1"), "missing relative position: {stdout}");
+    assert!(
+        stdout.contains("RELATIVE TO"),
+        "missing RELATIVE TO header: {stdout}"
+    );
+    assert!(
+        stdout.contains("RMOD Fake Monitor"),
+        "expected fake monitor names: {stdout}"
+    );
+    assert!(
+        stdout.contains("(primary)"),
+        "missing primary marker: {stdout}"
+    );
+    assert!(
+        stdout.contains("right of 1"),
+        "missing relative position: {stdout}"
+    );
 }
 
 #[test]
@@ -431,15 +449,68 @@ fn layout_places_monitor_left_of_primary() {
     let out = rmod(&["layout", "-m", "2", "--left-of", "1", "-y"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let stdout = stdout(&out);
-    assert!(stdout.contains("placed"), "missing placement line: {stdout}");
-    assert!(stdout.contains("to the left of"), "missing direction wording: {stdout}");
+    assert!(
+        stdout.contains("placed"),
+        "missing placement line: {stdout}"
+    );
+    assert!(
+        stdout.contains("to the left of"),
+        "missing direction wording: {stdout}"
+    );
 }
 
 #[test]
 fn layout_places_monitor_below_explicit_reference() {
     let out = rmod(&["layout", "-m", "2", "--below", "1", "-y"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert!(stdout(&out).contains("below"), "missing direction wording: {}", stdout(&out));
+    assert!(
+        stdout(&out).contains("below"),
+        "missing direction wording: {}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn layout_noop_placement_reports_already() {
+    let out = rmod(&["layout", "-m", "2", "--right-of", "1", "-y"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let stdout = stdout(&out);
+    assert!(
+        stdout.contains(
+            "RMOD Fake Monitor 2 [:2] is already to the right of RMOD Fake Monitor 1 [:1]"
+        ),
+        "expected already-there message: {stdout}"
+    );
+    assert!(
+        !stdout.contains("placed"),
+        "no placement line expected: {stdout}"
+    );
+    assert!(
+        !stdout.contains("keep changes"),
+        "no prompt expected: {stdout}"
+    );
+}
+
+#[test]
+fn layout_places_monitor_right_of_explicit_reference() {
+    let out = rmod(&["layout", "-m", "1", "--right-of", "2", "-y"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let stdout = stdout(&out);
+    assert!(
+        stdout.contains("placed") && stdout.contains("to the right of"),
+        "missing placement line: {stdout}"
+    );
+}
+
+#[test]
+fn layout_places_monitor_above_explicit_reference() {
+    let out = rmod(&["layout", "-m", "2", "--above", "1", "-y"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let stdout = stdout(&out);
+    assert!(
+        stdout.contains("placed") && stdout.contains("above"),
+        "missing placement line: {stdout}"
+    );
 }
 
 #[test]
@@ -465,7 +536,16 @@ fn layout_self_reference_is_error() {
 fn layout_missing_monitor_is_error() {
     let out = rmod(&["layout", "--left-of", "1"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("missing monitor for 'layout', e.g. 'rmod layout -m 2 --left-of 1'"));
+    assert!(
+        stderr(&out).contains("missing monitor for 'layout', e.g. 'rmod layout -m 2 --left-of 1'")
+    );
+}
+
+#[test]
+fn layout_monitor_without_action_is_error() {
+    let out = rmod(&["layout", "-m", "2"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("error: -m is only valid with a direction flag or --primary"));
 }
 
 #[test]
@@ -689,7 +769,12 @@ fn set_all_profiles() {
         let out = rmod(&["set", "-p", profile]);
         if !out.status.success() {
             let err = stderr(&out);
-            assert!(!err.contains("unknown command"), "profile {}: {}", profile, err);
+            assert!(
+                !err.contains("unknown command"),
+                "profile {}: {}",
+                profile,
+                err
+            );
             assert!(!err.contains("unexpected argument"), "profile {}", profile);
         }
     }

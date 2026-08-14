@@ -177,21 +177,19 @@ where
     }
     match confirm() {
         Confirm::Keep => 0,
-        Confirm::Revert => {
-            match revert(monitor, change.previous, change.previous_orientation) {
-                Ok(mode) => {
-                    println!(
-                        "{}",
-                        describe_revert(&mode, change.previous_orientation, None)
-                    );
-                    0
-                }
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    2
-                }
+        Confirm::Revert => match revert(monitor, change.previous, change.previous_orientation) {
+            Ok(mode) => {
+                println!(
+                    "{}",
+                    describe_revert(&mode, change.previous_orientation, None)
+                );
+                0
             }
-        }
+            Err(e) => {
+                eprintln!("error: {e}");
+                2
+            }
+        },
     }
 }
 
@@ -214,12 +212,7 @@ fn confirm_or_revert(monitor: Option<u32>, change: Change, yes: bool) -> i32 {
 /// Injectable variant of [`confirm_or_revert_all`]: the confirm prompt and
 /// the revert call are supplied as closures so tests can exercise the
 /// Revert branch without touching the display.
-fn confirm_or_revert_all_with<C, R>(
-    applied: Vec<Change>,
-    yes: bool,
-    confirm: C,
-    revert: R,
-) -> i32
+fn confirm_or_revert_all_with<C, R>(applied: Vec<Change>, yes: bool, confirm: C, revert: R) -> i32
 where
     C: FnOnce() -> Confirm,
     R: Fn(Option<u32>, Mode, Option<u32>) -> Result<Mode, String>,

@@ -9,7 +9,7 @@
 
 use crate::cli::{Confirm, Direction, LayoutAction, confirm_keep};
 use crate::sys::windows::{
-    MainChange, MainOutcome, Monitor, PlacementChange, make_main, revert_main,
+    MainChange, MainOutcome, Monitor, PlacementChange, PlacementOutcome, make_main, revert_main,
 };
 
 use super::CONFIRM_TIMEOUT_SECS;
@@ -86,12 +86,7 @@ pub(super) fn run_show() -> i32 {
                 .max()
                 .unwrap_or(4)
                 .max(4);
-            let rel_width = rels
-                .iter()
-                .map(|r| r.len())
-                .max()
-                .unwrap_or(11)
-                .max(11);
+            let rel_width = rels.iter().map(|r| r.len()).max().unwrap_or(11).max(11);
             let res_width = monitors
                 .iter()
                 .map(|m| format!("{}x{}", m.width, m.height).len())
@@ -125,9 +120,15 @@ pub(super) fn run_show() -> i32 {
 
 /// Where `monitor` sits relative to the primary display, e.g. `right of 1`;
 /// `(primary)` for the main display itself. Positions on diagonals are
-/// described by the dominant axis, horizontal winning ties.
+/// described by the dominant axis, horizontal winning ties. When no
+/// monitor is primary, the first monitor is the reference (mirrors
+/// [`crate::sys::windows::resolve_device`]).
 fn relative_to(monitors: &[Monitor], monitor: &Monitor) -> String {
-    let Some(primary) = monitors.iter().find(|m| m.is_primary) else {
+    let Some(primary) = monitors
+        .iter()
+        .find(|m| m.is_primary)
+        .or_else(|| monitors.first())
+    else {
         return String::new();
     };
     if monitor.number == primary.number {
@@ -136,11 +137,7 @@ fn relative_to(monitors: &[Monitor], monitor: &Monitor) -> String {
     let dx = monitor.x - primary.x;
     let dy = monitor.y - primary.y;
     let side = if dx.abs() >= dy.abs() {
-        if dx > 0 {
-            "right of"
-        } else {
-            "left of"
-        }
+        if dx > 0 { "right of" } else { "left of" }
     } else if dy > 0 {
         "below"
     } else {
@@ -152,14 +149,19 @@ fn relative_to(monitors: &[Monitor], monitor: &Monitor) -> String {
 /// Places a monitor on a side of another monitor and runs the keep-or-revert
 /// confirmation flow; `yes` skips the prompt. Reverts the placement and
 /// prints the revert line on Revert.
-pub(super) fn run_place(
-    monitor: u32,
-    direction: Direction,
-    reference: u32,
-    yes: bool,
-) -> i32 {
+pub(super) fn run_place(monitor: u32, direction: Direction, reference: u32, yes: bool) -> i32 {
     match crate::sys::windows::apply_placement(monitor, direction, reference) {
-        Ok(change) => {
+        Ok(PlacementOutcome::Unchanged {
+            display,
+            reference_display,
+        }) => {
+            println!(
+                "{display} is already {} {reference_display}",
+                side_phrase(direction)
+            );
+            0
+        }
+        Ok(PlacementOutcome::Applied(change)) => {
             println!("{}", describe_placement(&change, direction));
             confirm_placement_revert(
                 &change,
@@ -175,18 +177,23 @@ pub(super) fn run_place(
     }
 }
 
+/// The phrase for a side, shared by the applied and already-there messages.
+fn side_phrase(direction: Direction) -> &'static str {
+    match direction {
+        Direction::Left => "to the left of",
+        Direction::Right => "to the right of",
+        Direction::Above => "above",
+        Direction::Below => "below",
+    }
+}
+
 /// Runs the keep-or-revert confirmation for an applied placement; `yes`
 /// skips the prompt. Reverts the placement and prints the revert line.
 ///
 /// Injectable variant: the confirm prompt and the revert call are supplied
 /// as closures so tests can exercise the Revert branch without touching the
 /// display.
-fn confirm_placement_revert<C, R>(
-    change: &PlacementChange,
-    yes: bool,
-    confirm: C,
-    revert: R,
-) -> i32
+fn confirm_placement_revert<C, R>(change: &PlacementChange, yes: bool, confirm: C, revert: R) -> i32
 where
     C: FnOnce() -> Confirm,
     R: FnOnce(&PlacementChange) -> Result<(), String>,
@@ -212,18 +219,12 @@ where
 /// Describes an applied placement: where the monitor was placed relative to
 /// its reference, with the swapped occupant appended when a swap happened.
 fn describe_placement(change: &PlacementChange, direction: Direction) -> String {
-    let mut message = match direction {
-        Direction::Left => format!(
-            "placed {} to the left of {}",
-            change.display, change.reference_display
-        ),
-        Direction::Right => format!(
-            "placed {} to the right of {}",
-            change.display, change.reference_display
-        ),
-        Direction::Above => format!("placed {} above {}", change.display, change.reference_display),
-        Direction::Below => format!("placed {} below {}", change.display, change.reference_display),
-    };
+    let mut message = format!(
+        "placed {} {} {}",
+        change.display,
+        side_phrase(direction),
+        change.reference_display
+    );
     if let Some(swap) = &change.swap_display {
         message.push_str(&format!(" (swapped with {swap})"));
     }
@@ -474,5 +475,16 @@ mod tests {
         assert_eq!(relative_to(&monitors, &monitors[1]), "right of 1");
         let monitors = vec![monitor(1, 0, 0, true), monitor(2, -200, 1080, false)];
         assert_eq!(relative_to(&monitors, &monitors[1]), "below 1");
+    }
+
+    #[test]
+    fn relative_to_without_primary_uses_first_as_reference() {
+        let monitors = vec![monitor(2, 1920, 0, false), monitor(1, 0, 0, false)];
+        assert_eq!(relative_to(&monitors, &monitors[1]), "left of 2");
+    }
+
+    #[test]
+    fn relative_to_empty_list_is_empty() {
+        assert_eq!(relative_to(&[], &monitor(1, 0, 0, true)), "");
     }
 }
