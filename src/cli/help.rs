@@ -15,7 +15,7 @@ pub fn help() -> String {
 Resolution modifier
 
 {usage}
-  rmod <COMMAND> [OPTIONS]
+  rmod [COMMAND] [OPTIONS]
 
 {commands}
 {command_rows}
@@ -270,7 +270,7 @@ mod tests {
 Resolution modifier
 
 Usage:
-  rmod <COMMAND> [OPTIONS]
+  rmod [COMMAND] [OPTIONS]
 
 Commands:
   list     List displays and their current settings

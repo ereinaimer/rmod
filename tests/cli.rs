@@ -32,7 +32,7 @@ fn no_args_prints_help() {
     let out = rmod(&[]);
     assert!(out.status.success());
     let text = strip_ansi(&stdout(&out));
-    assert!(text.contains("rmod <COMMAND> [OPTIONS]"));
+    assert!(text.contains("rmod [COMMAND] [OPTIONS]"));
     assert!(text.contains("Commands:"));
     assert!(text.contains("list     List displays and their current settings"));
     assert!(text.contains("set      Apply resolution, refresh rate, and orientation"));
