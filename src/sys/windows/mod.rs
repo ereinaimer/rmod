@@ -10,15 +10,18 @@
 pub(crate) mod apply;
 pub(crate) mod attach;
 pub(crate) mod bindings;
+mod brightness;
 mod capabilities;
 mod fade;
 mod fake;
 mod layout;
 pub(crate) mod power;
 pub(crate) mod query;
+mod wmi;
 
 pub use apply::{ApplyOutcome, Change, MainChange, MainOutcome, Refresh};
 pub use attach::{AttachAction, AttachChange, AttachOutcome};
+pub use brightness::{BrightnessBackend, BrightnessOutcome};
 pub use capabilities::Mode;
 pub use layout::{Direction, PlacementChange, PlacementOutcome};
 pub use query::Monitor;
@@ -378,5 +381,26 @@ pub fn get_primary_mode() -> Result<Monitor, String> {
         fake::get_primary_mode()
     } else {
         query::get_primary_mode()
+    }
+}
+
+/// Sets a display's brightness to `value` (0-100), auto-detecting the
+/// backend chain `ddc -> slider -> gamma`, or forcing the backend in `via`.
+///
+/// `monitor` is the 1-based number from `rmod list`; `None` selects the
+/// primary display.
+///
+/// # Errors
+/// Unknown monitor, a forced backend the display does not support, or no
+/// brightness-control path at all.
+pub fn set_brightness(
+    monitor: Option<u32>,
+    value: u32,
+    via: Option<BrightnessBackend>,
+) -> Result<BrightnessOutcome, String> {
+    if fake::enabled() {
+        fake::set_brightness(monitor, value, via)
+    } else {
+        brightness::set_brightness(monitor, value, via)
     }
 }

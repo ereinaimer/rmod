@@ -11,6 +11,7 @@ use std::sync::OnceLock;
 use super::apply::{ApplyOutcome, Change, MainChange, MainOutcome, Refresh};
 use super::attach::{AttachAction, AttachChange, AttachOutcome};
 use super::bindings::{DM_POSITION, DevmodeW, Pointl};
+use super::brightness::{BrightnessBackend, BrightnessOutcome};
 use super::capabilities::Mode;
 use super::layout::{self, Direction, PlacementChange, PlacementOutcome};
 use super::query::Monitor;
@@ -397,6 +398,38 @@ pub(crate) fn enumerate_all_devices() -> Vec<String> {
     enumerate_devices()
 }
 
+/// Sets a fake monitor's brightness. Monitor 1 supports `ddc` and `slider`
+/// (current 60); monitor 2 is gamma-only (current 40).
+pub(crate) fn set_brightness(
+    monitor: Option<u32>,
+    value: u32,
+    via: Option<BrightnessBackend>,
+) -> Result<BrightnessOutcome, String> {
+    let monitor = resolve(monitor)?;
+    let display = display_label(&monitor);
+    let current = if monitor.number == 1 { 60 } else { 40 };
+    let backend = match via {
+        Some(backend) => backend,
+        None if monitor.number == 1 => BrightnessBackend::Ddc,
+        None => BrightnessBackend::Gamma,
+    };
+    if let Some(backend) = via
+        && monitor.number == 2
+        && matches!(backend, BrightnessBackend::Ddc | BrightnessBackend::Slider)
+    {
+        return Err(format!(
+            "{display} does not support {} brightness control",
+            backend.name()
+        ));
+    }
+    Ok(BrightnessOutcome {
+        display,
+        value,
+        backend,
+        unchanged: current == value,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -754,6 +787,56 @@ mod tests {
         assert_eq!(
             enumerate_all_devices(),
             vec![r"\\.\DISPLAY1".to_string(), r"\\.\DISPLAY2".to_string()]
+        );
+    }
+
+    #[test]
+    fn set_brightness_primary_auto_uses_ddc() {
+        let outcome = set_brightness(None, 30, None).unwrap();
+        assert_eq!(outcome.display, "RMOD Fake Monitor 1 [:1]");
+        assert_eq!(outcome.backend, BrightnessBackend::Ddc);
+        assert!(!outcome.unchanged);
+    }
+
+    #[test]
+    fn set_brightness_already_at_is_unchanged() {
+        let outcome = set_brightness(None, 60, None).unwrap();
+        assert_eq!(outcome.backend, BrightnessBackend::Ddc);
+        assert!(outcome.unchanged);
+    }
+
+    #[test]
+    fn set_brightness_second_monitor_auto_falls_back_to_gamma() {
+        let outcome = set_brightness(Some(2), 30, None).unwrap();
+        assert_eq!(outcome.display, "RMOD Fake Monitor 2 [:2]");
+        assert_eq!(outcome.backend, BrightnessBackend::Gamma);
+        assert!(!outcome.unchanged);
+    }
+
+    #[test]
+    fn set_brightness_forced_unsupported_backend_is_error() {
+        assert_eq!(
+            set_brightness(Some(2), 30, Some(BrightnessBackend::Ddc)).err(),
+            Some("RMOD Fake Monitor 2 [:2] does not support ddc brightness control".to_string())
+        );
+        assert_eq!(
+            set_brightness(Some(2), 30, Some(BrightnessBackend::Slider)).err(),
+            Some("RMOD Fake Monitor 2 [:2] does not support slider brightness control".to_string())
+        );
+    }
+
+    #[test]
+    fn set_brightness_forced_gamma_on_ddc_monitor_applies() {
+        let outcome = set_brightness(Some(1), 30, Some(BrightnessBackend::Gamma)).unwrap();
+        assert_eq!(outcome.backend, BrightnessBackend::Gamma);
+        assert!(!outcome.unchanged);
+    }
+
+    #[test]
+    fn set_brightness_unknown_monitor_is_error() {
+        assert_eq!(
+            set_brightness(Some(99), 30, None).err(),
+            Some("monitor 99 not found. run rmod list to see connected displays".to_string())
         );
     }
 }
