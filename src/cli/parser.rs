@@ -15,6 +15,7 @@ pub enum HelpTopic {
     List,
     Set,
     Layout,
+    Temp,
     Monitor {
         /// The action whose page to show; `None` is the top-level page.
         action: Option<MonitorAction>,
@@ -55,6 +56,17 @@ pub enum MonitorAction {
     },
 }
 
+/// What the `temp` command should do.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum TempAction {
+    /// Set the temperature to a clamped Kelvin value.
+    Set(u32),
+    /// Restore the identity ramp (6500K).
+    Reset,
+    /// Show the current approximate temperature.
+    Show,
+}
+
 /// Every top-level command rmod accepts.
 #[derive(Debug, PartialEq)]
 pub enum Command {
@@ -76,6 +88,10 @@ pub enum Command {
         action: MonitorAction,
         monitor: MonitorTarget,
         yes: bool,
+    },
+    Temp {
+        action: TempAction,
+        monitor: MonitorTarget,
     },
     Help {
         topic: Option<HelpTopic>,
@@ -115,6 +131,7 @@ pub(crate) const TOP_COMMANDS: &[(&str, &str)] = &[
     ("set", "Apply resolution, refresh rate, and orientation"),
     ("layout", "Show the monitor arrangement or move monitors"),
     ("monitor", "Attach, detach, sleep, or wake monitors"),
+    ("temp", "Set or show the display color temperature"),
 ];
 
 pub(crate) const TOP_FLAGS: &[Flag] = &[
@@ -275,6 +292,33 @@ pub(crate) const BRIGHTNESS_FLAGS: &[Flag] = &[
     },
 ];
 
+pub(crate) const TEMP_FLAGS: &[Flag] = &[
+    Flag {
+        flag: "-m, --monitor",
+        doc: "Monitor number or all (default: primary)",
+        example: &["temp", "-m", "2", "4000"],
+    },
+    Flag {
+        flag: "--help",
+        doc: "Print help",
+        example: &["temp", "--help"],
+    },
+];
+
+/// Named temperature presets (name, alias, Kelvin).
+pub(crate) const TEMP_PRESETS: &[(&str, &str, u32)] = &[
+    ("candle", "ember", 1900),
+    ("warm", "incandescent", 2700),
+    ("neutral", "halogen", 3400),
+    ("cool", "fluorescent", 4500),
+    ("daylight", "sunlight", 6500),
+];
+
+/// Lowest accepted Kelvin value for `temp`; mirrors the backend bounds.
+pub(crate) const TEMP_MIN_KELVIN: u32 = 1000;
+/// Highest accepted Kelvin value for `temp`; mirrors the backend bounds.
+pub(crate) const TEMP_MAX_KELVIN: u32 = 6500;
+
 pub(crate) const ORIENTATIONS: &[(u32, &str, &str)] = &[
     (0, "landscape", "l"),
     (90, "portrait", "p"),
@@ -347,6 +391,7 @@ pub fn parse_from<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
         "main" => Err("unknown command main. use rmod layout -m N --primary".to_string()),
         "set" => parse_set(args),
         "monitor" => parse_monitor(args),
+        "temp" => parse_temp(args),
         _ => Err(format!(
             "unknown command {}. run rmod --help to list commands",
             cmd_str
@@ -932,6 +977,74 @@ fn parse_backend(arg: &str) -> Result<BrightnessBackend, String> {
         "gamma" => Ok(BrightnessBackend::Gamma),
         _ => Err(format!("unknown backend {arg}. use ddc, slider, or gamma")),
     }
+}
+
+fn parse_temp(args: &[impl AsRef<str>]) -> Result<Command, String> {
+    let mut action = TempAction::Show;
+    let mut monitor = MonitorTarget::Primary;
+    let mut i = 1;
+
+    while i < args.len() {
+        let arg = args[i].as_ref();
+        match arg {
+            "--help" => {
+                return Ok(Command::Help {
+                    topic: Some(HelpTopic::Temp),
+                });
+            }
+            "-m" | "--monitor" => {
+                i += 1;
+                let Some(val) = args.get(i) else {
+                    return Err(
+                        "-m, --monitor needs a value. a monitor number or all\ne.g. -m 2"
+                            .to_string(),
+                    );
+                };
+                let val = val.as_ref();
+                if val.starts_with('-') {
+                    return Err(
+                        "-m, --monitor needs a value. a monitor number or all\ne.g. -m 2"
+                            .to_string(),
+                    );
+                }
+                monitor = parse_monitor_target(val)?;
+                i += 1;
+            }
+            other => {
+                if !matches!(action, TempAction::Show) {
+                    return Err(format!(
+                        "unexpected argument {other} for temp. use a Kelvin value, a preset, or reset"
+                    ));
+                }
+                action = parse_temp_value(other)?;
+                i += 1;
+            }
+        }
+    }
+
+    Ok(Command::Temp { action, monitor })
+}
+
+fn parse_temp_value(arg: &str) -> Result<TempAction, String> {
+    if arg == "reset" {
+        return Ok(TempAction::Reset);
+    }
+    let lower = arg.to_lowercase();
+    if let Some((_, _, kelvin)) = TEMP_PRESETS
+        .iter()
+        .find(|(name, alias, _)| *name == lower || *alias == lower)
+    {
+        return Ok(TempAction::Set(*kelvin));
+    }
+    let digits = lower.strip_suffix('k').unwrap_or(&lower);
+    if let Ok(kelvin) = digits.parse::<u32>()
+        && (TEMP_MIN_KELVIN..=TEMP_MAX_KELVIN).contains(&kelvin)
+    {
+        return Ok(TempAction::Set(kelvin));
+    }
+    Err(format!(
+        "invalid temperature {arg}. use a Kelvin value (1000-6500), a preset, or reset\ne.g. rmod temp 3400"
+    ))
 }
 
 fn parse_monitor_target(arg: &str) -> Result<MonitorTarget, String> {
@@ -2143,6 +2256,198 @@ Err("-m, --monitor needs a direction flag or --primary\ne.g. rmod layout -m 2 --
     }
 
     #[test]
+    fn temp_no_args_is_show() {
+        assert_eq!(
+            parse(&["temp"]),
+            Ok(Command::Temp {
+                action: TempAction::Show,
+                monitor: MonitorTarget::Primary
+            })
+        );
+    }
+
+    #[test]
+    fn temp_kelvin_sets_value() {
+        assert_eq!(
+            parse(&["temp", "3400"]),
+            Ok(Command::Temp {
+                action: TempAction::Set(3400),
+                monitor: MonitorTarget::Primary
+            })
+        );
+    }
+
+    #[test]
+    fn temp_kelvin_k_suffix() {
+        for arg in ["4000k", "4000K"] {
+            assert_eq!(
+                parse(&["temp", arg]),
+                Ok(Command::Temp {
+                    action: TempAction::Set(4000),
+                    monitor: MonitorTarget::Primary
+                }),
+                "arg '{arg}'"
+            );
+        }
+    }
+
+    #[test]
+    fn temp_preset_sets_value() {
+        assert_eq!(
+            parse(&["temp", "warm"]),
+            Ok(Command::Temp {
+                action: TempAction::Set(2700),
+                monitor: MonitorTarget::Primary
+            })
+        );
+    }
+
+    #[test]
+    fn temp_alias_sets_value() {
+        assert_eq!(
+            parse(&["temp", "incandescent"]),
+            Ok(Command::Temp {
+                action: TempAction::Set(2700),
+                monitor: MonitorTarget::Primary
+            })
+        );
+        assert_eq!(
+            parse(&["temp", "ember"]),
+            Ok(Command::Temp {
+                action: TempAction::Set(1900),
+                monitor: MonitorTarget::Primary
+            })
+        );
+    }
+
+    #[test]
+    fn temp_all_presets_and_aliases() {
+        for (name, alias, kelvin) in TEMP_PRESETS {
+            let expected = Ok(Command::Temp {
+                action: TempAction::Set(*kelvin),
+                monitor: MonitorTarget::Primary,
+            });
+            assert_eq!(parse(&["temp", name]), expected, "name '{name}'");
+            assert_eq!(parse(&["temp", alias]), expected, "alias '{alias}'");
+        }
+    }
+
+    #[test]
+    fn temp_preset_case_insensitive() {
+        assert_eq!(parse(&["temp", "Warm"]), parse(&["temp", "warm"]));
+    }
+
+    #[test]
+    fn temp_reset() {
+        assert_eq!(
+            parse(&["temp", "reset"]),
+            Ok(Command::Temp {
+                action: TempAction::Reset,
+                monitor: MonitorTarget::Primary
+            })
+        );
+    }
+
+    #[test]
+    fn temp_with_monitor() {
+        assert_eq!(
+            parse(&["temp", "-m", "2", "4000"]),
+            Ok(Command::Temp {
+                action: TempAction::Set(4000),
+                monitor: MonitorTarget::Index(2)
+            })
+        );
+    }
+
+    #[test]
+    fn temp_with_all() {
+        assert_eq!(
+            parse(&["temp", "-m", "all", "3000"]),
+            Ok(Command::Temp {
+                action: TempAction::Set(3000),
+                monitor: MonitorTarget::All
+            })
+        );
+    }
+
+    #[test]
+    fn temp_monitor_only_is_show() {
+        assert_eq!(
+            parse(&["temp", "-m", "2"]),
+            Ok(Command::Temp {
+                action: TempAction::Show,
+                monitor: MonitorTarget::Index(2)
+            })
+        );
+    }
+
+    #[test]
+    fn temp_help_flag() {
+        assert!(parse(&["temp", "-h"]).is_err());
+        assert_eq!(
+            parse(&["temp", "--help"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::Temp)
+            })
+        );
+    }
+
+    #[test]
+    fn temp_invalid_value_is_error() {
+        assert_eq!(
+            parse(&["temp", "bogus"]),
+            Err("invalid temperature bogus. use a Kelvin value (1000-6500), a preset, or reset\ne.g. rmod temp 3400".to_string())
+        );
+    }
+
+    #[test]
+    fn temp_out_of_range_is_error() {
+        for arg in ["0", "500", "999", "6501", "9000", "19200"] {
+            let expected = Err(format!(
+                "invalid temperature {arg}. use a Kelvin value (1000-6500), a preset, or reset\ne.g. rmod temp 3400"
+            ));
+            assert_eq!(parse(&["temp", arg]), expected, "arg '{arg}'");
+            assert_eq!(
+                parse(&["temp", &format!("{arg}k")]),
+                Err(format!(
+                    "invalid temperature {arg}k. use a Kelvin value (1000-6500), a preset, or reset\ne.g. rmod temp 3400"
+                )),
+                "arg '{arg}k'"
+            );
+        }
+    }
+
+    #[test]
+    fn temp_range_boundaries_are_accepted() {
+        for arg in ["1000", "6500"] {
+            assert_eq!(
+                parse(&["temp", arg]),
+                Ok(Command::Temp {
+                    action: TempAction::Set(arg.parse().unwrap()),
+                    monitor: MonitorTarget::Primary
+                }),
+                "arg '{arg}'"
+            );
+        }
+    }
+
+    #[test]
+    fn temp_second_positional_is_error() {
+        assert_eq!(
+            parse(&["temp", "3000", "4000"]),
+            Err("unexpected argument 4000 for temp. use a Kelvin value, a preset, or reset".to_string())
+        );
+    }
+
+    #[test]
+    fn temp_missing_monitor_value_is_error() {
+        assert_eq!(
+            parse(&["temp", "-m"]),
+            Err("-m, --monitor needs a value. a monitor number or all\ne.g. -m 2".to_string())
+        );
+    }
+
+    #[test]
     fn unknown_command_is_error() {
         assert!(parse(&["foo"]).is_err());
     }
@@ -2376,6 +2681,13 @@ Err("-m, --monitor needs a direction flag or --primary\ne.g. rmod layout -m 2 --
             (
                 &["ls", "-m", "x", "--caps"],
                 "parse_monitor_target invalid target",
+            ),
+            (&["temp", "bogus"], "parse_temp invalid value"),
+            (&["temp", "9000"], "parse_temp out-of-range value"),
+            (&["temp", "-m"], "parse_temp -m missing value"),
+            (
+                &["temp", "3000", "4000"],
+                "parse_temp second positional",
             ),
         ];
         for (args, label) in cases {

@@ -6,7 +6,7 @@
 
 use crate::cli::parser::{
     BRIGHTNESS_FLAGS, Flag, LAYOUT_FLAGS, LS_FLAGS, MONITOR_FLAGS, ORIENTATIONS, SET_FLAGS,
-    TOP_COMMANDS, TOP_FLAGS,
+    TEMP_FLAGS, TEMP_PRESETS, TOP_COMMANDS, TOP_FLAGS,
 };
 
 /// Top-level help page: command index, global options, and examples.
@@ -27,7 +27,8 @@ Resolution modifier
 {examples}
   rmod list --caps
   rmod set -p 1080
-  rmod layout -m 2 --primary",
+  rmod layout -m 2 --primary
+  rmod temp 3400",
         env!("CARGO_PKG_VERSION"),
         usage = section("Usage:"),
         commands = section("Commands:"),
@@ -238,6 +239,36 @@ Set the display backlight level (0-100)
     )
 }
 
+/// Help page for the `temp` command.
+pub fn temp() -> String {
+    format!(
+        "rmod temp
+Set or show the display color temperature
+
+{usage}
+  rmod temp [TEMPERATURE] [OPTIONS]
+
+{options}
+{option_rows}
+
+{presets}
+{preset_rows}
+
+{examples}
+  rmod temp
+  rmod temp 3400
+  rmod temp warm
+  rmod temp reset
+  rmod temp -m 2 4000",
+        usage = section("Usage:"),
+        options = section("Options:"),
+        option_rows = options(TEMP_FLAGS),
+        presets = section("Presets:"),
+        preset_rows = temp_presets_table(),
+        examples = section("Examples:"),
+    )
+}
+
 /// Version string, e.g. `rmod 0.1.0`.
 pub fn version() -> String {
     format!("rmod {}", env!("CARGO_PKG_VERSION"))
@@ -279,6 +310,16 @@ pub(crate) fn profiles_table() -> String {
         .join("\n")
 }
 
+/// Render the temperature presets table from `parser::TEMP_PRESETS`, joined
+/// by `\n`.
+pub(crate) fn temp_presets_table() -> String {
+    TEMP_PRESETS
+        .iter()
+        .map(|(name, alias, kelvin)| format!("  {name:<9}{alias:<13}{kelvin}K"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,6 +344,7 @@ Commands:
   set      Apply resolution, refresh rate, and orientation
   layout   Show the monitor arrangement or move monitors
   monitor  Attach, detach, sleep, or wake monitors
+  temp     Set or show the display color temperature
 
 Options:
   --help     Print help
@@ -311,7 +353,8 @@ Options:
 Examples:
   rmod list --caps
   rmod set -p 1080
-  rmod layout -m 2 --primary",
+  rmod layout -m 2 --primary
+  rmod temp 3400",
             env!("CARGO_PKG_VERSION")
         );
         assert_eq!(strip_ansi(&help()), expected);
@@ -539,6 +582,42 @@ Examples:
     }
 
     #[test]
+    fn temp_help_matches_spec_mockup() {
+        let expected = "rmod temp
+Set or show the display color temperature
+
+Usage:
+  rmod temp [TEMPERATURE] [OPTIONS]
+
+Options:
+  -m, --monitor  Monitor number or all (default: primary)
+  --help         Print help
+
+Presets:
+  candle   ember        1900K
+  warm     incandescent 2700K
+  neutral  halogen      3400K
+  cool     fluorescent  4500K
+  daylight sunlight     6500K
+
+Examples:
+  rmod temp
+  rmod temp 3400
+  rmod temp warm
+  rmod temp reset
+  rmod temp -m 2 4000";
+        assert_eq!(strip_ansi(&temp()), expected);
+    }
+
+    #[test]
+    fn temp_help_renders_presets_table() {
+        assert!(
+            strip_ansi(&temp()).contains(&temp_presets_table()),
+            "temp page must embed the presets table"
+        );
+    }
+
+    #[test]
     fn version_matches_package_version() {
         assert_eq!(version(), format!("rmod {}", env!("CARGO_PKG_VERSION")));
     }
@@ -620,6 +699,7 @@ Examples:
             (layout(), LAYOUT_FLAGS, "layout"),
             (monitor(), MONITOR_FLAGS, "monitor"),
             (monitor_brightness(), BRIGHTNESS_FLAGS, "monitor_brightness"),
+            (temp(), TEMP_FLAGS, "temp"),
         ] {
             let rendered = strip_ansi(&page);
             for f in registry {
@@ -635,7 +715,15 @@ Examples:
     #[test]
     fn registry_flags_parse_successfully() {
         // parse_from skips argv[0], so each example is prefixed with the program name.
-        let registries = [TOP_FLAGS, LS_FLAGS, SET_FLAGS, LAYOUT_FLAGS, MONITOR_FLAGS, BRIGHTNESS_FLAGS];
+        let registries = [
+            TOP_FLAGS,
+            LS_FLAGS,
+            SET_FLAGS,
+            LAYOUT_FLAGS,
+            MONITOR_FLAGS,
+            BRIGHTNESS_FLAGS,
+            TEMP_FLAGS,
+        ];
         for flags in registries {
             for f in flags {
                 let mut argv = vec!["rmod"];
@@ -673,6 +761,10 @@ Examples:
         assert!(
             parse_from(&["rmod", "monitor", "disable", "-m", "2"]).is_ok(),
             "command 'monitor' should parse"
+        );
+        assert!(
+            parse_from(&["rmod", "temp", "3400"]).is_ok(),
+            "command 'temp' should parse"
         );
     }
 

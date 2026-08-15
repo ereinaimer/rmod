@@ -11,8 +11,8 @@ mod parser;
 
 pub use commands::run;
 pub use confirm::{Confirm, confirm_keep};
-pub use help::{help, layout, ls, monitor, monitor_attach, monitor_brightness, monitor_detach, set, version};
+pub use help::{help, layout, ls, monitor, monitor_attach, monitor_brightness, monitor_detach, set, temp, version};
 pub use parser::{
     BrightnessBackend, Command, Direction, HelpTopic, LayoutAction, MonitorAction, MonitorTarget,
-    SetSpec, parse,
+    SetSpec, TempAction, parse,
 };

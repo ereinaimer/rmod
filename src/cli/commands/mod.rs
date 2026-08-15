@@ -9,11 +9,12 @@ mod layout;
 mod ls;
 mod monitor;
 mod set;
+mod temp;
 
 use crate::cli::{
     Command, Confirm, HelpTopic, MonitorAction, MonitorTarget, confirm_keep, help,
     layout as layout_help, ls, monitor as monitor_help, monitor_attach, monitor_brightness,
-    monitor_detach, set as set_help, version,
+    monitor_detach, set as set_help, temp as temp_help, version,
 };
 use crate::sys::windows::{self, AttachAction, AttachChange, Change, Mode};
 
@@ -21,6 +22,7 @@ use layout::run_layout;
 use ls::run_list;
 use monitor::run_monitor;
 use set::run_set;
+use temp::run_temp;
 
 const CONFIRM_TIMEOUT_SECS: u64 = 5;
 
@@ -62,6 +64,12 @@ pub fn run(command: Command) -> i32 {
             println!("{page}");
             0
         }
+        Command::Help {
+            topic: Some(HelpTopic::Temp),
+        } => {
+            println!("{}", temp_help());
+            0
+        }
         Command::Version => {
             println!("{}", version());
             0
@@ -79,6 +87,7 @@ pub fn run(command: Command) -> i32 {
             monitor,
             yes,
         } => run_monitor(action, monitor, yes),
+        Command::Temp { action, monitor } => run_temp(action, monitor),
     }
 }
 
