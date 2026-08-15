@@ -15,6 +15,31 @@ use super::bindings::{
     SetMonitorBrightness, SetVCPFeature, encode_wide, wide_to_string,
 };
 use super::{query, wmi};
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
+
+/// Budget for DDC/CI and dxva2 probe operations.
+const DDC_BUDGET: Duration = Duration::from_millis(500);
+
+/// Runs `f` on a spawned thread with a time budget.
+/// Returns the closure's result if it completes within `budget`,
+/// otherwise returns `Ok(None)` (treated as "backend unsupported").
+/// A panicking closure also yields `Ok(None)`.
+fn timed<F>(budget: Duration, f: F) -> Result<Option<bool>, String>
+where
+    F: FnOnce() -> Result<Option<bool>, String> + Send + 'static,
+{
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    match rx.recv_timeout(budget) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Ok(None),
+    }
+}
 
 /// The brightness-control backend used for a change.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -214,21 +239,24 @@ fn current_vcp(monitor: usize) -> Option<u32> {
 /// Sets brightness through the DDC/CI VCP register; `Ok(None)` when the
 /// display does not support DDC/CI.
 fn set_via_ddc(name: &str, value: u32) -> Result<Option<bool>, String> {
-    let Some(monitors) = physical_monitors(name)? else {
-        return Ok(None);
-    };
-    let monitor = monitors.handles[0].handle;
-    match current_vcp(monitor) {
-        None => Ok(None),
-        Some(current) if current == value => Ok(Some(true)),
-        Some(_) => {
-            let ok = unsafe { SetVCPFeature(monitor, MCCS_BRIGHTNESS, value) };
-            if ok == 0 {
-                return Err("the DDC/CI brightness change failed".to_string());
+    let name = name.to_string();
+    timed(DDC_BUDGET, move || {
+        let Some(monitors) = physical_monitors(&name)? else {
+            return Ok(None);
+        };
+        let monitor = monitors.handles[0].handle;
+        match current_vcp(monitor) {
+            None => Ok(None),
+            Some(current) if current == value => Ok(Some(true)),
+            Some(_) => {
+                let ok = unsafe { SetVCPFeature(monitor, MCCS_BRIGHTNESS, value) };
+                if ok == 0 {
+                    return Err("the DDC/CI brightness change failed".to_string());
+                }
+                Ok(Some(false))
             }
-            Ok(Some(false))
         }
-    }
+    })
 }
 
 /// Sets brightness through the native slider APIs; `Ok(None)` when the
@@ -248,25 +276,28 @@ fn set_via_slider(name: &str, index: usize, value: u32) -> Result<Option<bool>, 
 /// The dxva2 physical-monitor path; `Ok(None)` when the display exposes no
 /// dxva2 brightness control.
 fn set_via_slider_dxva2(name: &str, value: u32) -> Result<Option<bool>, String> {
-    let Some(monitors) = physical_monitors(name)? else {
-        return Ok(None);
-    };
-    let monitor = monitors.handles[0].handle;
-    let mut minimum = 0u32;
-    let mut current = 0u32;
-    let mut maximum = 0u32;
-    let ok = unsafe { GetMonitorBrightness(monitor, &mut minimum, &mut current, &mut maximum) };
-    if ok == 0 {
-        return Ok(None);
-    }
-    if current == value {
-        return Ok(Some(true));
-    }
-    let set = unsafe { SetMonitorBrightness(monitor, value) };
-    if set == 0 {
-        return Err("the brightness slider change failed".to_string());
-    }
-    Ok(Some(false))
+    let name = name.to_string();
+    timed(DDC_BUDGET, move || {
+        let Some(monitors) = physical_monitors(&name)? else {
+            return Ok(None);
+        };
+        let monitor = monitors.handles[0].handle;
+        let mut minimum = 0u32;
+        let mut current = 0u32;
+        let mut maximum = 0u32;
+        let ok = unsafe { GetMonitorBrightness(monitor, &mut minimum, &mut current, &mut maximum) };
+        if ok == 0 {
+            return Ok(None);
+        }
+        if current == value {
+            return Ok(Some(true));
+        }
+        let set = unsafe { SetMonitorBrightness(monitor, value) };
+        if set == 0 {
+            return Err("the brightness slider change failed".to_string());
+        }
+        Ok(Some(false))
+    })
 }
 
 /// Sets brightness through a gamma ramp; this is the fallback that works on
@@ -392,5 +423,31 @@ mod tests {
         assert_eq!(BrightnessBackend::Ddc.name(), "ddc");
         assert_eq!(BrightnessBackend::Slider.name(), "slider");
         assert_eq!(BrightnessBackend::Gamma.name(), "gamma");
+    }
+
+    #[test]
+    fn timed_fast_closure_returns_result() {
+        use std::time::Duration;
+        let result = timed(Duration::from_millis(50), || Ok(Some(true)));
+        assert_eq!(result, Ok(Some(true)));
+    }
+
+    #[test]
+    fn timed_slow_closure_returns_none() {
+        use std::time::Duration;
+        let result = timed(Duration::from_millis(30), || {
+            std::thread::sleep(Duration::from_millis(100));
+            Ok(Some(false))
+        });
+        assert_eq!(result, Ok(None));
+    }
+
+    #[test]
+    fn timed_panicking_closure_returns_none() {
+        use std::time::Duration;
+        let result = timed(Duration::from_millis(50), || {
+            panic!("intentional panic");
+        });
+        assert_eq!(result, Ok(None));
     }
 }
