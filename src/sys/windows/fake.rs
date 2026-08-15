@@ -6,7 +6,7 @@
 //! world: two monitors with a known set of supported modes and error
 //! strings matching the real backend.
 
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use super::apply::{ApplyOutcome, Change, MainChange, MainOutcome, Refresh};
 use super::attach::{AttachAction, AttachChange, AttachOutcome};
@@ -15,6 +15,7 @@ use super::brightness::{BrightnessBackend, BrightnessOutcome};
 use super::capabilities::Mode;
 use super::layout::{self, Direction, PlacementChange, PlacementOutcome};
 use super::query::Monitor;
+use super::temp::TempChange;
 
 const MONITOR_1_NAME: &str = "RMOD Fake Monitor 1";
 const MONITOR_2_NAME: &str = "RMOD Fake Monitor 2";
@@ -23,6 +24,13 @@ const MONITOR_2_NAME: &str = "RMOD Fake Monitor 2";
 pub(crate) fn enabled() -> bool {
     static ACTIVE: OnceLock<bool> = OnceLock::new();
     *ACTIVE.get_or_init(|| std::env::var("RMOD_SYS_FAKE").is_ok_and(|v| v == "1"))
+}
+
+/// Per-monitor temperature state, indexed by 1-based monitor number.
+static TEMPERATURES: OnceLock<Mutex<Vec<u32>>> = OnceLock::new();
+
+fn temperatures() -> &'static Mutex<Vec<u32>> {
+    TEMPERATURES.get_or_init(|| Mutex::new(vec![6500, 6500]))
 }
 
 /// The monitor with the given 1-based number, or `None` when unknown.
@@ -427,6 +435,41 @@ pub(crate) fn set_brightness(
         value,
         backend,
         unchanged: current == value,
+    })
+}
+
+/// Sets the temperature of a fake monitor.
+pub(crate) fn set_temp(monitor: Option<u32>, kelvin: u32) -> Result<TempChange, String> {
+    let monitor = resolve(monitor)?;
+    if !(super::temp::MIN_KELVIN..=super::temp::MAX_KELVIN).contains(&kelvin) {
+        return Err(format!(
+            "invalid temperature {kelvin}. use a Kelvin value (1000-6500), a preset, or reset\ne.g. rmod temp 3400"
+        ));
+    }
+    temperatures().lock().unwrap()[monitor.number as usize - 1] = kelvin;
+    Ok(TempChange {
+        display: display_label(&monitor),
+        kelvin,
+    })
+}
+
+/// Restores a fake monitor to the `6500K` baseline.
+pub(crate) fn reset_temp(monitor: Option<u32>) -> Result<TempChange, String> {
+    let monitor = resolve(monitor)?;
+    temperatures().lock().unwrap()[monitor.number as usize - 1] = 6500;
+    Ok(TempChange {
+        display: display_label(&monitor),
+        kelvin: 6500,
+    })
+}
+
+/// Reports the current temperature of a fake monitor.
+pub(crate) fn get_temp(monitor: Option<u32>) -> Result<TempChange, String> {
+    let monitor = resolve(monitor)?;
+    let kelvin = temperatures().lock().unwrap()[monitor.number as usize - 1];
+    Ok(TempChange {
+        display: display_label(&monitor),
+        kelvin,
     })
 }
 
@@ -836,6 +879,53 @@ mod tests {
     fn set_brightness_unknown_monitor_is_error() {
         assert_eq!(
             set_brightness(Some(99), 30, None).err(),
+            Some("monitor 99 not found. run rmod list to see connected displays".to_string())
+        );
+    }
+
+    #[test]
+    fn get_temp_defaults_to_6500() {
+        reset_temp(Some(2)).unwrap();
+        assert_eq!(get_temp(Some(2)).unwrap().kelvin, 6500);
+    }
+
+    #[test]
+    fn set_temp_updates_temp() {
+        set_temp(Some(1), 3400).unwrap();
+        assert_eq!(get_temp(Some(1)).unwrap().kelvin, 3400);
+    }
+
+    #[test]
+    fn set_temp_out_of_range_is_error() {
+        for kelvin in [0, 500, 999, 6501, 9000] {
+            assert_eq!(
+                set_temp(Some(1), kelvin).err(),
+                Some(format!(
+                    "invalid temperature {kelvin}. use a Kelvin value (1000-6500), a preset, or reset\ne.g. rmod temp 3400"
+                )),
+                "kelvin {kelvin}"
+            );
+        }
+    }
+
+    #[test]
+    fn reset_temp_restores_6500() {
+        set_temp(Some(1), 3400).unwrap();
+        let change = reset_temp(Some(1)).unwrap();
+        assert_eq!(change.kelvin, 6500);
+        assert_eq!(get_temp(Some(1)).unwrap().kelvin, 6500);
+    }
+
+    #[test]
+    fn set_temp_primary_is_monitor_1() {
+        let change = set_temp(None, 3000).unwrap();
+        assert_eq!(change.display, "RMOD Fake Monitor 1 [:1]");
+    }
+
+    #[test]
+    fn set_temp_unknown_monitor_is_error() {
+        assert_eq!(
+            set_temp(Some(99), 3000).err(),
             Some("monitor 99 not found. run rmod list to see connected displays".to_string())
         );
     }

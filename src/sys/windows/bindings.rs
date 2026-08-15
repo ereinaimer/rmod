@@ -107,6 +107,14 @@ pub(crate) struct Msg {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Ramp {
+    pub red: [u16; 256],
+    pub green: [u16; 256],
+    pub blue: [u16; 256],
+}
+
+#[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct WndClassExW {
     pub cb_size: u32,
@@ -404,6 +412,11 @@ mod tests {
     #[test]
     fn wnd_class_layout_is_80_bytes_on_x64() {
         assert_eq!(std::mem::size_of::<WndClassExW>(), 80);
+    }
+
+    #[test]
+    fn gamma_ramp_layout_is_1536_bytes() {
+        assert_eq!(std::mem::size_of::<Ramp>(), 1536);
     }
 
     #[test]

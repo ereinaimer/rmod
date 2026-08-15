@@ -18,6 +18,7 @@ mod layout;
 pub(crate) mod power;
 pub(crate) mod query;
 mod wmi;
+pub(crate) mod temp;
 
 pub use apply::{ApplyOutcome, Change, MainChange, MainOutcome, Refresh};
 pub use attach::{AttachAction, AttachChange, AttachOutcome};
@@ -25,6 +26,7 @@ pub use brightness::{BrightnessBackend, BrightnessOutcome};
 pub use capabilities::Mode;
 pub use layout::{Direction, PlacementChange, PlacementOutcome};
 pub use query::Monitor;
+pub use temp::TempChange;
 
 /// Lists every display attached to the desktop with its current settings.
 ///
@@ -402,5 +404,42 @@ pub fn set_brightness(
         fake::set_brightness(monitor, value, via)
     } else {
         brightness::set_brightness(monitor, value, via)
+    }
+}
+
+/// Sets the color temperature of a display (see [`temp::set_temp`]).
+///
+/// # Errors
+/// Unknown monitor or a display that rejects the gamma ramp change.
+pub fn set_temp(monitor: Option<u32>, kelvin: u32) -> Result<TempChange, String> {
+    if fake::enabled() {
+        fake::set_temp(monitor, kelvin)
+    } else {
+        temp::set_temp(monitor, kelvin)
+    }
+}
+
+/// Restores the identity gamma ramp of a display (see [`temp::reset_temp`]).
+///
+/// # Errors
+/// Unknown monitor or a display that rejects the gamma ramp change.
+pub fn reset_temp(monitor: Option<u32>) -> Result<TempChange, String> {
+    if fake::enabled() {
+        fake::reset_temp(monitor)
+    } else {
+        temp::reset_temp(monitor)
+    }
+}
+
+/// Reports the current approximate temperature of a display (see
+/// [`temp::get_temp`]).
+///
+/// # Errors
+/// Unknown monitor or a display that rejects the gamma ramp read.
+pub fn get_temp(monitor: Option<u32>) -> Result<TempChange, String> {
+    if fake::enabled() {
+        fake::get_temp(monitor)
+    } else {
+        temp::get_temp(monitor)
     }
 }
