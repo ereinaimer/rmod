@@ -264,9 +264,9 @@ pub(crate) const BRIGHTNESS_FLAGS: &[Flag] = &[
         example: &["monitor", "brightness", "60", "-m", "2"],
     },
     Flag {
-        flag: "--via",
+        flag: "-v, --via",
         doc: "Backend: ddc, slider, or gamma (default: auto)",
-        example: &["monitor", "brightness", "60", "--via", "ddc"],
+        example: &["monitor", "brightness", "60", "-v", "ddc"],
     },
     Flag {
         flag: "--help",
@@ -886,18 +886,18 @@ fn parse_monitor_brightness(args: &[impl AsRef<str>]) -> Result<Command, String>
                 monitor = parse_monitor_target(val)?;
                 i += 1;
             }
-            "--via" => {
+            "-v" | "--via" => {
                 i += 1;
                 let Some(val) = args.get(i) else {
                     return Err(
-                        "--via needs a value. ddc, slider, or gamma\ne.g. --via ddc"
+                        "-v, --via needs a value. ddc, slider, or gamma\ne.g. -v ddc"
                             .to_string(),
                     );
                 };
                 let val = val.as_ref();
                 if val.starts_with('-') {
                     return Err(
-                        "--via needs a value. ddc, slider, or gamma\ne.g. --via ddc"
+                        "-v, --via needs a value. ddc, slider, or gamma\ne.g. -v ddc"
                             .to_string(),
                     );
                 }
@@ -912,7 +912,7 @@ fn parse_monitor_brightness(args: &[impl AsRef<str>]) -> Result<Command, String>
             }
             other => {
                 return Err(format!(
-                    "unexpected argument {other} for monitor brightness. use --monitor or --via"
+                    "unexpected argument {other} for monitor brightness. use -m/--monitor or -v/--via"
                 ));
             }
         }
@@ -1698,6 +1698,37 @@ Err("-m, --monitor needs a direction flag or --primary\ne.g. rmod layout -m 2 --
     }
 
     #[test]
+    fn monitor_brightness_via_short_flag() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "80", "-v", "slider"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Brightness {
+                    value: 80,
+                    via: Some(BrightnessBackend::Slider)
+                },
+                monitor: MonitorTarget::Primary,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_brightness_via_short_flag_missing_value() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "60", "-v"]),
+            Err("-v, --via needs a value. ddc, slider, or gamma\ne.g. -v ddc".to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_brightness_via_short_flag_flag_like_value() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "60", "-v", "-m"]),
+            Err("-v, --via needs a value. ddc, slider, or gamma\ne.g. -v ddc".to_string())
+        );
+    }
+
+    #[test]
     fn monitor_brightness_zero_is_valid() {
         assert_eq!(
             parse(&["monitor", "brightness", "0", "-m", "1"]),
@@ -1744,7 +1775,7 @@ Err("-m, --monitor needs a direction flag or --primary\ne.g. rmod layout -m 2 --
     fn monitor_brightness_missing_backend_value_is_error() {
         assert_eq!(
             parse(&["monitor", "brightness", "60", "--via"]),
-            Err("--via needs a value. ddc, slider, or gamma\ne.g. --via ddc".to_string())
+            Err("-v, --via needs a value. ddc, slider, or gamma\ne.g. -v ddc".to_string())
         );
     }
 
@@ -1786,7 +1817,7 @@ Err("-m, --monitor needs a direction flag or --primary\ne.g. rmod layout -m 2 --
     fn monitor_brightness_unknown_argument_is_error() {
         assert_eq!(
             parse(&["monitor", "brightness", "60", "foo"]),
-            Err("unexpected argument foo for monitor brightness. use --monitor or --via".to_string())
+            Err("unexpected argument foo for monitor brightness. use -m/--monitor or -v/--via".to_string())
         );
     }
 
@@ -1802,7 +1833,7 @@ Err("-m, --monitor needs a direction flag or --primary\ne.g. rmod layout -m 2 --
     fn monitor_brightness_flag_like_backend_value_is_error() {
         assert_eq!(
             parse(&["monitor", "brightness", "60", "--via", "-y"]),
-            Err("--via needs a value. ddc, slider, or gamma\ne.g. --via ddc".to_string())
+            Err("-v, --via needs a value. ddc, slider, or gamma\ne.g. -v ddc".to_string())
         );
     }
 

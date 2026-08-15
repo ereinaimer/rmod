@@ -1059,6 +1059,13 @@ fn monitor_brightness_via_flag() {
 }
 
 #[test]
+fn monitor_brightness_via_short_flag() {
+    let out = rmod(&["monitor", "brightness", "30", "-v", "gamma"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("via gamma"));
+}
+
+#[test]
 fn monitor_brightness_forced_unsupported_backend_is_error() {
     let out = rmod(&["monitor", "brightness", "30", "-m", "2", "--via", "ddc"]);
     assert_eq!(out.status.code(), Some(2));

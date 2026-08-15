@@ -229,7 +229,7 @@ Set the display backlight level (0-100)
 
 {examples}
   rmod monitor brightness 60
-  rmod monitor brightness 40 -m 2 --via gamma
+  rmod monitor brightness 40 -m 2 -v gamma
   rmod monitor brightness 75 -m all",
         usage = section("Usage:"),
         options = section("Options:"),
@@ -528,12 +528,12 @@ Usage:
 
 Options:
   -m, --monitor  Monitor number or all (default: primary)
-  --via          Backend: ddc, slider, or gamma (default: auto)
+  -v, --via      Backend: ddc, slider, or gamma (default: auto)
   --help         Print help
 
 Examples:
   rmod monitor brightness 60
-  rmod monitor brightness 40 -m 2 --via gamma
+  rmod monitor brightness 40 -m 2 -v gamma
   rmod monitor brightness 75 -m all";
         assert_eq!(strip_ansi(&monitor_brightness()), expected);
     }
