@@ -42,6 +42,7 @@ pub(crate) const SWP_NOACTIVATE: u32 = 0x0010;
 pub(crate) const SWP_SHOWWINDOW: u32 = 0x0040;
 pub(crate) const HWND_TOPMOST: isize = -1;
 pub(crate) const PM_REMOVE: u32 = 0x1;
+pub(crate) const MCCS_BRIGHTNESS: u8 = 0x10;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -122,6 +123,32 @@ pub(crate) struct WndClassExW {
     pub h_icon_sm: usize,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Rect {
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct MonitorInfoExW {
+    pub cb_size: u32,
+    pub rc_monitor: Rect,
+    pub rc_work: Rect,
+    pub dw_flags: u32,
+    pub sz_device: [u16; 32],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct PhysicalMonitor {
+    pub handle: usize,
+    pub description: [u16; 128],
+}
+
 #[link(name = "user32")]
 unsafe extern "system" {
     pub(crate) fn EnumDisplayDevicesW(
@@ -190,6 +217,20 @@ unsafe extern "system" {
         w_param: usize,
         l_param: isize,
     ) -> isize;
+    pub(crate) fn EnumDisplayMonitors(
+        h_dc: usize,
+        lprc_clip: *const (),
+        lpfn_enum: Option<
+            unsafe extern "system" fn(
+                h_monitor: usize,
+                h_dc: usize,
+                lprc_clip: *mut Rect,
+                l_param: isize,
+            ) -> i32,
+        >,
+        dw_data: isize,
+    ) -> i32;
+    pub(crate) fn GetMonitorInfoW(h_monitor: usize, lpmi: *mut MonitorInfoExW) -> i32;
 }
 
 #[link(name = "kernel32")]
@@ -200,6 +241,43 @@ unsafe extern "system" {
 #[link(name = "gdi32")]
 unsafe extern "system" {
     pub(crate) fn GetStockObject(i: i32) -> usize;
+    pub(crate) fn CreateDCW(
+        pwsz_driver: *const u16,
+        pwsz_device: *const u16,
+        pszdta: *const u16,
+        pdvta: *const (),
+    ) -> usize;
+    pub(crate) fn DeleteDC(h_dc: usize) -> i32;
+    pub(crate) fn GetDeviceGammaRamp(h_dc: usize, lp_ramp: *mut u16) -> i32;
+    pub(crate) fn SetDeviceGammaRamp(h_dc: usize, lp_ramp: *mut u16) -> i32;
+}
+
+#[link(name = "dxva2")]
+unsafe extern "system" {
+    pub(crate) fn GetPhysicalMonitorsFromHMONITOR(
+        h_monitor: usize,
+        pdw_number_of_physical_monitors: *mut u32,
+        p_physical_monitor_array: *mut PhysicalMonitor,
+    ) -> i32;
+    pub(crate) fn GetVCPFeatureAndVCPFeatureReply(
+        h_monitor: usize,
+        b_vcp_code: u8,
+        p_vct: *mut u32,
+        pdw_current_value: *mut u32,
+        pdw_maximum_value: *mut u32,
+    ) -> i32;
+    pub(crate) fn SetVCPFeature(h_monitor: usize, b_vcp_code: u8, dw_new_value: u32) -> i32;
+    pub(crate) fn GetMonitorBrightness(
+        h_monitor: usize,
+        pdw_minimum_brightness: *mut u32,
+        pdw_current_brightness: *mut u32,
+        pdw_maximum_brightness: *mut u32,
+    ) -> i32;
+    pub(crate) fn SetMonitorBrightness(h_monitor: usize, dw_new_brightness: u32) -> i32;
+    pub(crate) fn DestroyPhysicalMonitors(
+        dw_number_of_physical_monitors: u32,
+        p_physical_monitor_array: *mut PhysicalMonitor,
+    ) -> i32;
 }
 
 pub(crate) fn encode_wide(s: &str) -> Vec<u16> {
@@ -335,5 +413,56 @@ mod tests {
         assert_eq!(offset_of!(WndClassExW, h_background), 48);
         assert_eq!(offset_of!(WndClassExW, lpsz_class_name), 64);
         assert_eq!(offset_of!(WndClassExW, h_icon_sm), 72);
+    }
+
+    #[test]
+    fn brightness_constants() {
+        assert_eq!(MCCS_BRIGHTNESS, 0x10);
+    }
+
+    #[test]
+    fn rect_layout_is_16_bytes() {
+        assert_eq!(std::mem::size_of::<Rect>(), 16);
+    }
+
+    #[test]
+    fn monitor_info_ex_layout_is_104_bytes() {
+        assert_eq!(std::mem::size_of::<MonitorInfoExW>(), 104);
+    }
+
+    #[test]
+    fn monitor_info_ex_field_offsets() {
+        assert_eq!(offset_of!(MonitorInfoExW, cb_size), 0);
+        assert_eq!(offset_of!(MonitorInfoExW, rc_monitor), 4);
+        assert_eq!(offset_of!(MonitorInfoExW, rc_work), 20);
+        assert_eq!(offset_of!(MonitorInfoExW, dw_flags), 36);
+        assert_eq!(offset_of!(MonitorInfoExW, sz_device), 40);
+    }
+
+    #[test]
+    fn physical_monitor_layout_is_264_bytes_on_x64() {
+        assert_eq!(std::mem::size_of::<PhysicalMonitor>(), 264);
+    }
+
+    #[test]
+    fn physical_monitor_field_offsets() {
+        assert_eq!(offset_of!(PhysicalMonitor, handle), 0);
+        assert_eq!(offset_of!(PhysicalMonitor, description), 8);
+    }
+
+    #[test]
+    fn brightness_externs_are_resolvable() {
+        let _: unsafe extern "system" fn(usize, *const (), Option<unsafe extern "system" fn(usize, usize, *mut Rect, isize) -> i32>, isize) -> i32 = EnumDisplayMonitors;
+        let _: unsafe extern "system" fn(usize, *mut MonitorInfoExW) -> i32 = GetMonitorInfoW;
+        let _: unsafe extern "system" fn(usize, *mut u32, *mut PhysicalMonitor) -> i32 = GetPhysicalMonitorsFromHMONITOR;
+        let _: unsafe extern "system" fn(usize, u8, *mut u32, *mut u32, *mut u32) -> i32 = GetVCPFeatureAndVCPFeatureReply;
+        let _: unsafe extern "system" fn(usize, u8, u32) -> i32 = SetVCPFeature;
+        let _: unsafe extern "system" fn(usize, *mut u32, *mut u32, *mut u32) -> i32 = GetMonitorBrightness;
+        let _: unsafe extern "system" fn(usize, u32) -> i32 = SetMonitorBrightness;
+        let _: unsafe extern "system" fn(u32, *mut PhysicalMonitor) -> i32 = DestroyPhysicalMonitors;
+        let _: unsafe extern "system" fn(*const u16, *const u16, *const u16, *const ()) -> usize = CreateDCW;
+        let _: unsafe extern "system" fn(usize) -> i32 = DeleteDC;
+        let _: unsafe extern "system" fn(usize, *mut u16) -> i32 = GetDeviceGammaRamp;
+        let _: unsafe extern "system" fn(usize, *mut u16) -> i32 = SetDeviceGammaRamp;
     }
 }
