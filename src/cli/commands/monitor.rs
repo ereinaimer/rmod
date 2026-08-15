@@ -5,8 +5,8 @@
 //! confirmation flow. Sleeping and waking are global broadcasts with no
 //! confirmation and no revert.
 
-use crate::cli::{MonitorAction, MonitorTarget};
-use crate::sys::windows::{self, AttachOutcome};
+use crate::cli::{BrightnessBackend, MonitorAction, MonitorTarget};
+use crate::sys::windows::{self, AttachOutcome, BrightnessOutcome};
 
 use super::{confirm_or_revert_attach, confirm_or_revert_attach_all, describe_attach};
 
@@ -38,6 +38,7 @@ pub(super) fn run_monitor(action: MonitorAction, monitor: MonitorTarget, yes: bo
             }
         },
         MonitorAction::Disable | MonitorAction::Enable => run_attach(action, monitor, yes),
+        MonitorAction::Brightness { value, via } => run_brightness(value, via, monitor),
     }
 }
 
@@ -96,6 +97,57 @@ fn report_all(action: MonitorAction, yes: bool) -> i32 {
     }
 }
 
+/// Runs the brightness command against the targeted display(s).
+fn run_brightness(value: u32, via: Option<BrightnessBackend>, monitor: MonitorTarget) -> i32 {
+    match monitor {
+        MonitorTarget::Primary => report_brightness(windows::set_brightness(None, value, via)),
+        MonitorTarget::Index(n) => report_brightness(windows::set_brightness(Some(n), value, via)),
+        MonitorTarget::All => {
+            let count = windows::enumerate_devices().len();
+            let mut any_error = false;
+            for n in 1..=count as u32 {
+                match windows::set_brightness(Some(n), value, via) {
+                    Ok(outcome) => println!("{}", describe_brightness(&outcome)),
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        any_error = true;
+                    }
+                }
+            }
+            if any_error { 2 } else { 0 }
+        }
+    }
+}
+
+/// Reports a single-display brightness outcome.
+fn report_brightness(outcome: Result<BrightnessOutcome, String>) -> i32 {
+    match outcome {
+        Ok(outcome) => {
+            println!("{}", describe_brightness(&outcome));
+            0
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            2
+        }
+    }
+}
+
+/// Describes a brightness outcome: the applied line with its backend, or
+/// the already-at line.
+fn describe_brightness(outcome: &BrightnessOutcome) -> String {
+    if outcome.unchanged {
+        format!("{} is already at {}%", outcome.display, outcome.value)
+    } else {
+        format!(
+            "set {} brightness to {}% via {}",
+            outcome.display,
+            outcome.value,
+            outcome.backend.name()
+        )
+    }
+}
+
 /// Reports a single-display attach outcome and runs the confirmation flow
 /// when the change was applied.
 fn report_single(outcome: Result<AttachOutcome, String>, yes: bool) -> i32 {
@@ -112,5 +164,36 @@ fn report_single(outcome: Result<AttachOutcome, String>, yes: bool) -> i32 {
             eprintln!("error: {e}");
             2
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sys::windows::BrightnessBackend;
+
+    fn outcome(value: u32, backend: BrightnessBackend, unchanged: bool) -> BrightnessOutcome {
+        BrightnessOutcome {
+            display: "RMOD Fake Monitor 1 [:1]".to_string(),
+            value,
+            backend,
+            unchanged,
+        }
+    }
+
+    #[test]
+    fn describe_brightness_applied_mentions_backend() {
+        assert_eq!(
+            describe_brightness(&outcome(30, BrightnessBackend::Gamma, false)),
+            "set RMOD Fake Monitor 1 [:1] brightness to 30% via gamma"
+        );
+    }
+
+    #[test]
+    fn describe_brightness_unchanged_omits_backend() {
+        assert_eq!(
+            describe_brightness(&outcome(60, BrightnessBackend::Ddc, true)),
+            "RMOD Fake Monitor 1 [:1] is already at 60%"
+        );
     }
 }

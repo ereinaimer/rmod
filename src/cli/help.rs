@@ -5,7 +5,8 @@
 //! `parser`; this module only renders them.
 
 use crate::cli::parser::{
-    Flag, LAYOUT_FLAGS, LS_FLAGS, MONITOR_FLAGS, ORIENTATIONS, SET_FLAGS, TOP_COMMANDS, TOP_FLAGS,
+    BRIGHTNESS_FLAGS, Flag, LAYOUT_FLAGS, LS_FLAGS, MONITOR_FLAGS, ORIENTATIONS, SET_FLAGS,
+    TOP_COMMANDS, TOP_FLAGS,
 };
 
 /// Top-level help page: command index, global options, and examples.
@@ -138,10 +139,11 @@ Attach, detach, sleep, or wake monitors
   rmod monitor <ACTION> [OPTIONS]
 
 {actions}
-  detach  Detach a monitor from the desktop
-  attach  Re-attach a monitor to the desktop
-  sleep   Put every monitor to sleep
-  wake    Wake every monitor
+  detach     Detach a monitor from the desktop
+  attach     Re-attach a monitor to the desktop
+  brightness Set the display backlight level (0-100)
+  sleep      Put every monitor to sleep
+  wake       Wake every monitor
 
 {options}
 {option_rows}
@@ -150,6 +152,7 @@ Attach, detach, sleep, or wake monitors
   rmod monitor detach -m 2
   rmod monitor disable -m 2 -y
   rmod monitor attach -m 2
+  rmod monitor brightness 60
   rmod monitor sleep
   rmod monitor wake",
         usage = section("Usage:"),
@@ -208,6 +211,29 @@ Re-attach a monitor to the desktop
         aliases = section("Aliases:"),
         options = section("Options:"),
         option_rows = options(MONITOR_FLAGS),
+        examples = section("Examples:"),
+    )
+}
+
+/// Help page for `rmod monitor brightness`.
+pub fn monitor_brightness() -> String {
+    format!(
+        "rmod monitor brightness
+Set the display backlight level (0-100)
+
+{usage}
+  rmod monitor brightness <VALUE> [OPTIONS]
+
+{options}
+{option_rows}
+
+{examples}
+  rmod monitor brightness 60
+  rmod monitor brightness 40 -m 2 --via gamma
+  rmod monitor brightness 75 -m all",
+        usage = section("Usage:"),
+        options = section("Options:"),
+        option_rows = options(BRIGHTNESS_FLAGS),
         examples = section("Examples:"),
     )
 }
@@ -416,10 +442,11 @@ Usage:
   rmod monitor <ACTION> [OPTIONS]
 
 Actions:
-  detach  Detach a monitor from the desktop
-  attach  Re-attach a monitor to the desktop
-  sleep   Put every monitor to sleep
-  wake    Wake every monitor
+  detach     Detach a monitor from the desktop
+  attach     Re-attach a monitor to the desktop
+  brightness Set the display backlight level (0-100)
+  sleep      Put every monitor to sleep
+  wake       Wake every monitor
 
 Options:
   -m, --monitor  Monitor number or all (required)
@@ -430,6 +457,7 @@ Examples:
   rmod monitor detach -m 2
   rmod monitor disable -m 2 -y
   rmod monitor attach -m 2
+  rmod monitor brightness 60
   rmod monitor sleep
   rmod monitor wake";
         assert_eq!(strip_ansi(&monitor()), expected);
@@ -488,6 +516,26 @@ Examples:
   rmod monitor attach -m 2
   rmod monitor attach -m 2 -y";
         assert_eq!(strip_ansi(&monitor_attach()), expected);
+    }
+
+    #[test]
+    fn monitor_brightness_help_matches_spec_mockup() {
+        let expected = "rmod monitor brightness
+Set the display backlight level (0-100)
+
+Usage:
+  rmod monitor brightness <VALUE> [OPTIONS]
+
+Options:
+  -m, --monitor  Monitor number or all (default: primary)
+  --via          Backend: ddc, slider, or gamma (default: auto)
+  --help         Print help
+
+Examples:
+  rmod monitor brightness 60
+  rmod monitor brightness 40 -m 2 --via gamma
+  rmod monitor brightness 75 -m all";
+        assert_eq!(strip_ansi(&monitor_brightness()), expected);
     }
 
     #[test]
@@ -571,6 +619,7 @@ Examples:
             (set(), SET_FLAGS, "set"),
             (layout(), LAYOUT_FLAGS, "layout"),
             (monitor(), MONITOR_FLAGS, "monitor"),
+            (monitor_brightness(), BRIGHTNESS_FLAGS, "monitor_brightness"),
         ] {
             let rendered = strip_ansi(&page);
             for f in registry {
@@ -586,7 +635,7 @@ Examples:
     #[test]
     fn registry_flags_parse_successfully() {
         // parse_from skips argv[0], so each example is prefixed with the program name.
-        let registries = [TOP_FLAGS, LS_FLAGS, SET_FLAGS, LAYOUT_FLAGS, MONITOR_FLAGS];
+        let registries = [TOP_FLAGS, LS_FLAGS, SET_FLAGS, LAYOUT_FLAGS, MONITOR_FLAGS, BRIGHTNESS_FLAGS];
         for flags in registries {
             for f in flags {
                 let mut argv = vec!["rmod"];

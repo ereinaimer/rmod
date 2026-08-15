@@ -5,6 +5,7 @@
 
 use std::env;
 
+pub use crate::sys::windows::BrightnessBackend;
 pub use crate::sys::windows::Direction;
 pub use crate::sys::windows::apply::Refresh;
 
@@ -45,6 +46,13 @@ pub enum MonitorAction {
     Sleep,
     /// Wake every monitor.
     Wake,
+    /// Set the backlight level of a display.
+    Brightness {
+        /// Backlight level, 0-100.
+        value: u32,
+        /// Forced backend, or `None` for auto-detect.
+        via: Option<BrightnessBackend>,
+    },
 }
 
 /// Every top-level command rmod accepts.
@@ -246,6 +254,24 @@ pub(crate) const MONITOR_FLAGS: &[Flag] = &[
         flag: "--help",
         doc: "Print help",
         example: &["monitor", "--help"],
+    },
+];
+
+pub(crate) const BRIGHTNESS_FLAGS: &[Flag] = &[
+    Flag {
+        flag: "-m, --monitor",
+        doc: "Monitor number or all (default: primary)",
+        example: &["monitor", "brightness", "60", "-m", "2"],
+    },
+    Flag {
+        flag: "--via",
+        doc: "Backend: ddc, slider, or gamma (default: auto)",
+        example: &["monitor", "brightness", "60", "--via", "ddc"],
+    },
+    Flag {
+        flag: "--help",
+        doc: "Print help",
+        example: &["monitor", "brightness", "--help"],
     },
 ];
 
@@ -700,13 +726,16 @@ fn parse_set(args: &[impl AsRef<str>]) -> Result<Command, String> {
 
 fn parse_monitor(args: &[impl AsRef<str>]) -> Result<Command, String> {
     if args.len() < 2 {
-        return Err("monitor needs an action. attach, detach, sleep, or wake\ne.g. rmod monitor detach -m 2".to_string());
+        return Err("monitor needs an action. attach, detach, sleep, wake, or brightness\ne.g. rmod monitor detach -m 2".to_string());
     }
     let action_str = args[1].as_ref();
     if action_str == "--help" {
         return Ok(Command::Help {
             topic: Some(HelpTopic::Monitor { action: None }),
         });
+    }
+    if action_str == "brightness" {
+        return parse_monitor_brightness(args);
     }
     let action = match action_str {
         "detach" | "disable" | "off" => MonitorAction::Disable,
@@ -715,7 +744,7 @@ fn parse_monitor(args: &[impl AsRef<str>]) -> Result<Command, String> {
         "wake" => MonitorAction::Wake,
         other => {
             return Err(format!(
-                "unknown action {} for monitor. use attach, detach, sleep, or wake",
+                "unknown action {} for monitor. use attach, detach, sleep, wake, or brightness",
                 other
             ));
         }
@@ -791,6 +820,118 @@ fn parse_monitor(args: &[impl AsRef<str>]) -> Result<Command, String> {
         monitor,
         yes,
     })
+}
+
+/// Parses `rmod monitor brightness <VALUE> [OPTIONS]`.
+fn parse_monitor_brightness(args: &[impl AsRef<str>]) -> Result<Command, String> {
+    let Some(value_arg) = args.get(2) else {
+        return Err(
+            "monitor brightness needs a value. a number between 0 and 100\ne.g. rmod monitor brightness 60"
+                .to_string(),
+        );
+    };
+    let value_arg = value_arg.as_ref();
+    if value_arg == "--help" {
+        return Ok(Command::Help {
+            topic: Some(HelpTopic::Monitor {
+                action: Some(MonitorAction::Brightness {
+                    value: 0,
+                    via: None,
+                }),
+            }),
+        });
+    }
+    if value_arg.starts_with('-') {
+        return Err(
+            "monitor brightness needs a value. a number between 0 and 100\ne.g. rmod monitor brightness 60"
+                .to_string(),
+        );
+    }
+    let value = value_arg.parse::<u32>().map_err(|_| {
+        format!("invalid brightness {value_arg}. use a number between 0 and 100")
+    })?;
+    if value > 100 {
+        return Err(format!(
+            "invalid brightness {value_arg}. use a number between 0 and 100"
+        ));
+    }
+    let mut monitor = MonitorTarget::Primary;
+    let mut via = None;
+    let mut i = 3;
+    while i < args.len() {
+        let arg = args[i].as_ref();
+        match arg {
+            "--help" => {
+                return Ok(Command::Help {
+                    topic: Some(HelpTopic::Monitor {
+                        action: Some(MonitorAction::Brightness { value, via }),
+                    }),
+                });
+            }
+            "-m" | "--monitor" => {
+                i += 1;
+                let Some(val) = args.get(i) else {
+                    return Err(
+                        "-m, --monitor needs a value. a monitor number or all\ne.g. -m 2"
+                            .to_string(),
+                    );
+                };
+                let val = val.as_ref();
+                if val.starts_with('-') {
+                    return Err(
+                        "-m, --monitor needs a value. a monitor number or all\ne.g. -m 2"
+                            .to_string(),
+                    );
+                }
+                monitor = parse_monitor_target(val)?;
+                i += 1;
+            }
+            "--via" => {
+                i += 1;
+                let Some(val) = args.get(i) else {
+                    return Err(
+                        "--via needs a value. ddc, slider, or gamma\ne.g. --via ddc"
+                            .to_string(),
+                    );
+                };
+                let val = val.as_ref();
+                if val.starts_with('-') {
+                    return Err(
+                        "--via needs a value. ddc, slider, or gamma\ne.g. --via ddc"
+                            .to_string(),
+                    );
+                }
+                via = Some(parse_backend(val)?);
+                i += 1;
+            }
+            "-y" | "--yes" => {
+                return Err(
+                    "-y, --yes is not valid for monitor brightness. brightness does not prompt for confirmation"
+                        .to_string(),
+                );
+            }
+            other => {
+                return Err(format!(
+                    "unexpected argument {other} for monitor brightness. use --monitor or --via"
+                ));
+            }
+        }
+    }
+    Ok(Command::Monitor {
+        action: MonitorAction::Brightness { value, via },
+        monitor,
+        yes: false,
+    })
+}
+
+/// Parses a `--via` backend name.
+fn parse_backend(arg: &str) -> Result<BrightnessBackend, String> {
+    match arg {
+        "ddc" => Ok(BrightnessBackend::Ddc),
+        "slider" => Ok(BrightnessBackend::Slider),
+        "gamma" => Ok(BrightnessBackend::Gamma),
+        _ => Err(format!("unknown backend {arg}. use ddc, slider, or gamma")),
+    }
 }
 
 fn parse_monitor_target(arg: &str) -> Result<MonitorTarget, String> {
@@ -1428,7 +1569,7 @@ Err("-m, --monitor needs a direction flag or --primary\ne.g. rmod layout -m 2 --
         assert_eq!(
             parse(&["monitor"]),
             Err(
-                "monitor needs an action. attach, detach, sleep, or wake\ne.g. rmod monitor detach -m 2"
+                "monitor needs an action. attach, detach, sleep, wake, or brightness\ne.g. rmod monitor detach -m 2"
                     .to_string()
             )
         );
@@ -1439,7 +1580,7 @@ Err("-m, --monitor needs a direction flag or --primary\ne.g. rmod layout -m 2 --
         assert_eq!(
             parse(&["monitor", "frobnicate"]),
             Err(
-                "unknown action frobnicate for monitor. use attach, detach, sleep, or wake"
+                "unknown action frobnicate for monitor. use attach, detach, sleep, wake, or brightness"
                     .to_string()
             )
         );
@@ -1511,6 +1652,171 @@ Err("-m, --monitor needs a direction flag or --primary\ne.g. rmod layout -m 2 --
                 topic: Some(HelpTopic::Monitor {
                     action: Some(MonitorAction::Sleep)
                 })
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_brightness_primary_default() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "60"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Brightness {
+                    value: 60,
+                    via: None
+                },
+                monitor: MonitorTarget::Primary,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_brightness_with_monitor_and_backend() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "40", "-m", "2", "--via", "ddc"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Brightness {
+                    value: 40,
+                    via: Some(BrightnessBackend::Ddc)
+                },
+                monitor: MonitorTarget::Index(2),
+                yes: false,
+            })
+        );
+        assert_eq!(
+            parse(&["monitor", "brightness", "40", "-m", "all", "--via", "gamma"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Brightness {
+                    value: 40,
+                    via: Some(BrightnessBackend::Gamma)
+                },
+                monitor: MonitorTarget::All,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_brightness_zero_is_valid() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "0", "-m", "1"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Brightness {
+                    value: 0,
+                    via: None
+                },
+                monitor: MonitorTarget::Index(1),
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_brightness_missing_value_is_error() {
+        assert_eq!(
+            parse(&["monitor", "brightness"]),
+            Err("monitor brightness needs a value. a number between 0 and 100\ne.g. rmod monitor brightness 60".to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_brightness_out_of_range_is_error() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "150"]),
+            Err("invalid brightness 150. use a number between 0 and 100".to_string())
+        );
+        assert_eq!(
+            parse(&["monitor", "brightness", "abc"]),
+            Err("invalid brightness abc. use a number between 0 and 100".to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_brightness_unknown_backend_is_error() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "60", "--via", "gamma2"]),
+            Err("unknown backend gamma2. use ddc, slider, or gamma".to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_brightness_missing_backend_value_is_error() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "60", "--via"]),
+            Err("--via needs a value. ddc, slider, or gamma\ne.g. --via ddc".to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_brightness_rejects_yes_flag() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "60", "-y"]),
+            Err("-y, --yes is not valid for monitor brightness. brightness does not prompt for confirmation".to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_brightness_help_routes() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "--help"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::Monitor {
+                    action: Some(MonitorAction::Brightness {
+                        value: 0,
+                        via: None
+                    })
+                })
+            })
+        );
+        assert_eq!(
+            parse(&["monitor", "brightness", "60", "--help"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::Monitor {
+                    action: Some(MonitorAction::Brightness {
+                        value: 60,
+                        via: None
+                    })
+                })
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_brightness_unknown_argument_is_error() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "60", "foo"]),
+            Err("unexpected argument foo for monitor brightness. use --monitor or --via".to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_brightness_flag_like_monitor_value_is_error() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "60", "-m", "--via"]),
+            Err("-m, --monitor needs a value. a monitor number or all\ne.g. -m 2".to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_brightness_flag_like_backend_value_is_error() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "60", "--via", "-y"]),
+            Err("--via needs a value. ddc, slider, or gamma\ne.g. --via ddc".to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_brightness_max_is_valid() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "100"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Brightness {
+                    value: 100,
+                    via: None
+                },
+                monitor: MonitorTarget::Primary,
+                yes: false,
             })
         );
     }

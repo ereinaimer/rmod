@@ -12,8 +12,8 @@ mod set;
 
 use crate::cli::{
     Command, Confirm, HelpTopic, MonitorAction, MonitorTarget, confirm_keep, help,
-    layout as layout_help, ls, monitor as monitor_help, monitor_attach, monitor_detach,
-    set as set_help, version,
+    layout as layout_help, ls, monitor as monitor_help, monitor_attach, monitor_brightness,
+    monitor_detach, set as set_help, version,
 };
 use crate::sys::windows::{self, AttachAction, AttachChange, Change, Mode};
 
@@ -56,6 +56,7 @@ pub fn run(command: Command) -> i32 {
             let page = match action {
                 Some(MonitorAction::Disable) => monitor_detach(),
                 Some(MonitorAction::Enable) => monitor_attach(),
+                Some(MonitorAction::Brightness { .. }) => monitor_brightness(),
                 _ => monitor_help(),
             };
             println!("{page}");
