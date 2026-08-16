@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ask a question
+    url: https://github.com/ereinaimer/rmod/discussions/new?category=q-a
+    about: Need help or have a question about rmod? Ask it here.
