@@ -1216,6 +1216,95 @@ fn monitor_brightness_unknown_monitor_is_error() {
     assert!(stderr(&out).contains("monitor 99 not found"));
 }
 
+#[test]
+fn monitor_brightness_mode_min_sets_primary() {
+    let out = rmod(&["monitor", "brightness", "min"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out)
+            .contains("set RMOD Fake Monitor 1 [:1] brightness to min (slider 5 + gamma 50%)"),
+        "got: {}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn monitor_brightness_mode_min_on_second_monitor_is_gamma_only() {
+    let out = rmod(&["monitor", "brightness", "min", "-m", "2"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("set RMOD Fake Monitor 2 [:2] brightness to min (gamma 50%)"),
+        "got: {}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn monitor_brightness_mode_max_sets_primary() {
+    let out = rmod(&["monitor", "brightness", "max", "-m", "1"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out)
+            .contains("set RMOD Fake Monitor 1 [:1] brightness to max (ddc 100 + gamma 100%)"),
+        "got: {}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn monitor_brightness_mode_boost_applies_and_warns_clipping() {
+    let out = rmod(&["monitor", "brightness", "boost"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains("set RMOD Fake Monitor 1 [:1] brightness to boost (slider 100 + gamma 130%)"),
+        "got: {text}"
+    );
+    assert!(
+        text.contains("boost clips highlights above ~77%"),
+        "got: {text}"
+    );
+}
+
+#[test]
+fn monitor_brightness_mode_min_all_targets_every_display() {
+    let out = rmod(&["monitor", "brightness", "min", "-m", "all"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains("set RMOD Fake Monitor 1 [:1] brightness to min (slider 5 + gamma 50%)"),
+        "got: {text}"
+    );
+    assert!(
+        text.contains("set RMOD Fake Monitor 2 [:2] brightness to min (gamma 50%)"),
+        "got: {text}"
+    );
+}
+
+#[test]
+fn monitor_brightness_mode_rejects_via_flag() {
+    for args in [
+        &["monitor", "brightness", "min", "-v", "ddc"][..],
+        &["monitor", "brightness", "min", "--via", "ddc"][..],
+    ] {
+        let out = rmod(args);
+        assert_eq!(out.status.code(), Some(2), "args: {args:?}");
+        assert!(
+            stderr(&out).contains(
+                "-v, --via is not valid with min, max, or boost. use a number to choose a backend"
+            ),
+            "args: {args:?}: {}",
+            stderr(&out)
+        );
+    }
+}
+
+#[test]
+fn monitor_brightness_unknown_mode_word_is_error() {
+    let out = rmod(&["monitor", "brightness", "dimm"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("invalid brightness dimm. use a number between 0 and 100"));
+}
 
 #[test]
 fn temp_no_args_shows_primary() {
@@ -1340,7 +1429,9 @@ fn monitor_help_lists_brightness() {
     let out = rmod(&["monitor", "--help"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let text = strip_ansi(&stdout(&out));
-    assert!(text.contains("brightness Set the display backlight level (0-100)"));
+    assert!(
+        text.contains("brightness Set the display backlight level (0-100, or min, max, boost)")
+    );
 }
 
 

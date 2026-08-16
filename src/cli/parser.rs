@@ -6,6 +6,7 @@
 use std::env;
 
 pub use crate::sys::windows::BrightnessBackend;
+pub use crate::sys::windows::BrightnessValue;
 pub use crate::sys::windows::Direction;
 pub use crate::sys::windows::apply::Refresh;
 
@@ -49,8 +50,8 @@ pub enum MonitorAction {
     Wake,
     /// Set the backlight level of a display.
     Brightness {
-        /// Backlight level, 0-100.
-        value: u32,
+        /// Backlight level 0-100, or a composite mode: min, max, or boost.
+        value: BrightnessValue,
         /// Forced backend, or `None` for auto-detect.
         via: Option<BrightnessBackend>,
     },
@@ -270,8 +271,13 @@ pub(crate) const BRIGHTNESS_FLAGS: &[Flag] = &[
     },
     Flag {
         flag: "-v, --via",
-        doc: "Backend: ddc, slider, or gamma (default: auto)",
+        doc: "Backend: ddc, slider, or gamma (default: auto; not valid with min, max, boost)",
         example: &["monitor", "brightness", "60", "-v", "ddc"],
+    },
+    Flag {
+        flag: "min, max, boost",
+        doc: "Composite modes: min (barely lit), max (hardware 100 + gamma 100), boost (hardware 100 + overdriven gamma)",
+        example: &["monitor", "brightness", "min", "-m", "2"],
     },
     Flag {
         flag: "--help",
@@ -826,7 +832,7 @@ fn parse_monitor_brightness(args: &[impl AsRef<str>]) -> Result<Command, String>
         return Ok(Command::Help {
             topic: Some(HelpTopic::Monitor {
                 action: Some(MonitorAction::Brightness {
-                    value: 0,
+                    value: BrightnessValue::Percent(0),
                     via: None,
                 }),
             }),
@@ -838,10 +844,17 @@ fn parse_monitor_brightness(args: &[impl AsRef<str>]) -> Result<Command, String>
                 .to_string(),
         );
     }
-    let value = value_arg.parse::<u32>().map_err(|_| {
-        format!("invalid brightness {value_arg}. use a number between 0 and 100")
-    })?;
-    if value > 100 {
+    let value = match value_arg.to_lowercase().as_str() {
+        "min" => BrightnessValue::Min,
+        "max" => BrightnessValue::Max,
+        "boost" => BrightnessValue::Boost,
+        _ => BrightnessValue::Percent(value_arg.parse::<u32>().map_err(|_| {
+            format!("invalid brightness {value_arg}. use a number between 0 and 100")
+        })?),
+    };
+    if let BrightnessValue::Percent(v) = value
+        && v > 100
+    {
         return Err(format!(
             "invalid brightness {value_arg}. use a number between 0 and 100"
         ));
@@ -878,6 +891,12 @@ fn parse_monitor_brightness(args: &[impl AsRef<str>]) -> Result<Command, String>
                 i += 1;
             }
             "-v" | "--via" => {
+                if matches!(
+                    value,
+                    BrightnessValue::Min | BrightnessValue::Max | BrightnessValue::Boost
+                ) {
+                    return Err("-v, --via is not valid with min, max, or boost. use a number to choose a backend".to_string());
+                }
                 i += 1;
                 let Some(val) = args.get(i) else {
                     return Err(
@@ -1804,7 +1823,7 @@ mod tests {
             parse(&["monitor", "brightness", "60"]),
             Ok(Command::Monitor {
                 action: MonitorAction::Brightness {
-                    value: 60,
+                    value: BrightnessValue::Percent(60),
                     via: None
                 },
                 monitor: MonitorTarget::Primary,
@@ -1819,7 +1838,7 @@ mod tests {
             parse(&["monitor", "brightness", "40", "-m", "2", "--via", "ddc"]),
             Ok(Command::Monitor {
                 action: MonitorAction::Brightness {
-                    value: 40,
+                    value: BrightnessValue::Percent(40),
                     via: Some(BrightnessBackend::Ddc)
                 },
                 monitor: MonitorTarget::Index(2),
@@ -1830,7 +1849,7 @@ mod tests {
             parse(&["monitor", "brightness", "40", "-m", "all", "--via", "gamma"]),
             Ok(Command::Monitor {
                 action: MonitorAction::Brightness {
-                    value: 40,
+                    value: BrightnessValue::Percent(40),
                     via: Some(BrightnessBackend::Gamma)
                 },
                 monitor: MonitorTarget::All,
@@ -1845,7 +1864,7 @@ mod tests {
             parse(&["monitor", "brightness", "80", "-v", "slider"]),
             Ok(Command::Monitor {
                 action: MonitorAction::Brightness {
-                    value: 80,
+                    value: BrightnessValue::Percent(80),
                     via: Some(BrightnessBackend::Slider)
                 },
                 monitor: MonitorTarget::Primary,
@@ -1876,7 +1895,7 @@ mod tests {
             parse(&["monitor", "brightness", "0", "-m", "1"]),
             Ok(Command::Monitor {
                 action: MonitorAction::Brightness {
-                    value: 0,
+                    value: BrightnessValue::Percent(0),
                     via: None
                 },
                 monitor: MonitorTarget::Index(1),
@@ -1936,7 +1955,7 @@ mod tests {
             Ok(Command::Help {
                 topic: Some(HelpTopic::Monitor {
                     action: Some(MonitorAction::Brightness {
-                        value: 0,
+                        value: BrightnessValue::Percent(0),
                         via: None
                     })
                 })
@@ -1947,7 +1966,7 @@ mod tests {
             Ok(Command::Help {
                 topic: Some(HelpTopic::Monitor {
                     action: Some(MonitorAction::Brightness {
-                        value: 60,
+                        value: BrightnessValue::Percent(60),
                         via: None
                     })
                 })
@@ -1985,12 +2004,139 @@ mod tests {
             parse(&["monitor", "brightness", "100"]),
             Ok(Command::Monitor {
                 action: MonitorAction::Brightness {
-                    value: 100,
+                    value: BrightnessValue::Percent(100),
                     via: None
                 },
                 monitor: MonitorTarget::Primary,
                 yes: false,
             })
+        );
+    }
+
+    #[test]
+    fn monitor_brightness_min_keyword() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "min"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Brightness {
+                    value: BrightnessValue::Min,
+                    via: None
+                },
+                monitor: MonitorTarget::Primary,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_brightness_max_keyword() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "max"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Brightness {
+                    value: BrightnessValue::Max,
+                    via: None
+                },
+                monitor: MonitorTarget::Primary,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_brightness_boost_keyword() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "boost"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Brightness {
+                    value: BrightnessValue::Boost,
+                    via: None
+                },
+                monitor: MonitorTarget::Primary,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_brightness_keyword_with_monitor() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "min", "-m", "2"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Brightness {
+                    value: BrightnessValue::Min,
+                    via: None
+                },
+                monitor: MonitorTarget::Index(2),
+                yes: false,
+            })
+        );
+        assert_eq!(
+            parse(&["monitor", "brightness", "max", "-m", "all"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Brightness {
+                    value: BrightnessValue::Max,
+                    via: None
+                },
+                monitor: MonitorTarget::All,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_brightness_keywords_are_case_insensitive() {
+        for (arg, value) in [
+            ("Min", BrightnessValue::Min),
+            ("MIN", BrightnessValue::Min),
+            ("mAx", BrightnessValue::Max),
+            ("BOOST", BrightnessValue::Boost),
+        ] {
+            assert_eq!(
+                parse(&["monitor", "brightness", arg]),
+                Ok(Command::Monitor {
+                    action: MonitorAction::Brightness { value, via: None },
+                    monitor: MonitorTarget::Primary,
+                    yes: false,
+                }),
+                "arg '{arg}'"
+            );
+        }
+    }
+
+    #[test]
+    fn monitor_brightness_keyword_rejects_via() {
+        for args in [
+            &["monitor", "brightness", "min", "-v", "ddc"][..],
+            &["monitor", "brightness", "min", "--via", "ddc"][..],
+            &["monitor", "brightness", "max", "-v", "slider"][..],
+            &["monitor", "brightness", "boost", "--via", "gamma"][..],
+        ] {
+            assert_eq!(
+                parse(args),
+                Err("-v, --via is not valid with min, max, or boost. use a number to choose a backend".to_string()),
+                "args: {:?}",
+                args
+            );
+        }
+    }
+
+    #[test]
+    fn monitor_brightness_keyword_still_rejects_yes_flag() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "min", "-y"]),
+            Err("-y, --yes is not valid for monitor brightness. brightness does not prompt for confirmation".to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_brightness_keyword_still_rejects_unknown_arguments() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "max", "foo"]),
+            Err(
+                "unexpected argument foo for monitor brightness. use -m/--monitor or -v/--via"
+                    .to_string()
+            )
         );
     }
 
@@ -2647,6 +2793,10 @@ mod tests {
             (
                 &["temp", "3000", "4000"],
                 "parse_temp second positional",
+            ),
+            (
+                &["monitor", "brightness", "min", "-v", "ddc"],
+                "parse_monitor_brightness keyword plus backend",
             ),
         ];
         for (args, label) in cases {

@@ -6,7 +6,9 @@
 //! confirmation and no revert.
 
 use crate::cli::{BrightnessBackend, MonitorAction, MonitorTarget};
-use crate::sys::windows::{self, AttachOutcome, BrightnessOutcome};
+use crate::sys::windows::{
+    self, AttachOutcome, BrightnessLayer, BrightnessOutcome, BrightnessValue, brightness::mode_word,
+};
 
 use super::{confirm_or_revert_attach, confirm_or_revert_attach_all, describe_attach, resolve_target};
 
@@ -102,7 +104,11 @@ fn report_all(action: MonitorAction, yes: bool) -> i32 {
 }
 
 /// Runs the brightness command against the targeted display(s).
-fn run_brightness(value: u32, via: Option<BrightnessBackend>, monitor: MonitorTarget) -> i32 {
+fn run_brightness(
+    value: BrightnessValue,
+    via: Option<BrightnessBackend>,
+    monitor: MonitorTarget,
+) -> i32 {
     match monitor {
         MonitorTarget::Primary => report_brightness(windows::set_brightness(None, value, via)),
         MonitorTarget::Index(n) => report_brightness(windows::set_brightness(Some(n), value, via)),
@@ -118,7 +124,7 @@ fn run_brightness(value: u32, via: Option<BrightnessBackend>, monitor: MonitorTa
             let mut any_error = false;
             for n in 1..=count as u32 {
                 match windows::set_brightness(Some(n), value, via) {
-                    Ok(outcome) => println!("{}", describe_brightness(&outcome)),
+                    Ok(outcome) => print_brightness(&outcome),
                     Err(e) => {
                         eprintln!("error: {e}");
                         any_error = true;
@@ -134,7 +140,7 @@ fn run_brightness(value: u32, via: Option<BrightnessBackend>, monitor: MonitorTa
 fn report_brightness(outcome: Result<BrightnessOutcome, String>) -> i32 {
     match outcome {
         Ok(outcome) => {
-            println!("{}", describe_brightness(&outcome));
+            print_brightness(&outcome);
             0
         }
         Err(e) => {
@@ -147,15 +153,82 @@ fn report_brightness(outcome: Result<BrightnessOutcome, String>) -> i32 {
 /// Describes a brightness outcome: the applied line with its backend, or
 /// the already-at line.
 fn describe_brightness(outcome: &BrightnessOutcome) -> String {
-    if outcome.unchanged {
-        format!("{} is already at {}%", outcome.display, outcome.value)
+    match outcome.kind {
+        BrightnessValue::Percent(value) => {
+            if outcome.unchanged {
+                format!("{} is already at {}%", outcome.display, value)
+            } else {
+                format!(
+                    "set {} brightness to {}% via {}",
+                    outcome.display,
+                    value,
+                    layer_backend(outcome)
+                )
+            }
+        }
+        BrightnessValue::Min | BrightnessValue::Max | BrightnessValue::Boost => {
+            if outcome.unchanged {
+                format!(
+                    "{} is already at {}",
+                    outcome.display,
+                    mode_word(outcome.kind)
+                )
+            } else {
+                format!(
+                    "set {} brightness to {} ({})",
+                    outcome.display,
+                    mode_word(outcome.kind),
+                    describe_layers(outcome)
+                )
+            }
+        }
+    }
+}
+
+/// The joined layer descriptions of a mode outcome, e.g. `slider 5 + gamma 50%`.
+fn describe_layers(outcome: &BrightnessOutcome) -> String {
+    outcome
+        .layers
+        .iter()
+        .map(describe_layer)
+        .collect::<Vec<_>>()
+        .join(" + ")
+}
+
+/// Describes one write of a brightness change: a backend word with its
+/// level, or the gamma ramp as a percentage.
+fn describe_layer(layer: &BrightnessLayer) -> String {
+    match layer {
+        BrightnessLayer::Hardware { backend, level } => format!("{} {}", backend.name(), level),
+        BrightnessLayer::Gamma { level } => format!("gamma {level}%"),
+    }
+}
+
+/// The clip warning printed after an applied boost, or `None` otherwise.
+fn clip_warning(outcome: &BrightnessOutcome) -> Option<&'static str> {
+    if outcome.clipped && !outcome.unchanged {
+        Some("boost clips highlights above ~77%")
     } else {
-        format!(
-            "set {} brightness to {}% via {}",
-            outcome.display,
-            outcome.value,
-            outcome.backend.name()
-        )
+        None
+    }
+}
+
+/// Prints a brightness outcome's report lines: the describe line, then the
+/// clip warning when the applied boost ramp was clipped.
+fn print_brightness(outcome: &BrightnessOutcome) {
+    println!("{}", describe_brightness(outcome));
+    if let Some(warning) = clip_warning(outcome) {
+        println!("{warning}");
+    }
+}
+
+/// The backend word of the outcome's hardware layer, or `gamma` for a
+/// gamma layer.
+fn layer_backend(outcome: &BrightnessOutcome) -> &str {
+    match outcome.layers.first() {
+        Some(BrightnessLayer::Hardware { backend, .. }) => backend.name(),
+        Some(BrightnessLayer::Gamma { .. }) => "gamma",
+        None => unreachable!("outcomes always carry at least one layer"),
     }
 }
 
@@ -184,11 +257,35 @@ mod tests {
     use crate::sys::windows::BrightnessBackend;
 
     fn outcome(value: u32, backend: BrightnessBackend, unchanged: bool) -> BrightnessOutcome {
+        let layer = match backend {
+            BrightnessBackend::Gamma => BrightnessLayer::Gamma { level: value },
+            backend => BrightnessLayer::Hardware {
+                backend,
+                level: value,
+            },
+        };
         BrightnessOutcome {
             display: "RMOD Fake Monitor 1 [:1]".to_string(),
-            value,
-            backend,
+            kind: BrightnessValue::Percent(value),
             unchanged,
+            layers: vec![layer],
+            clipped: false,
+        }
+    }
+
+    fn mode_outcome(
+        display: &str,
+        kind: BrightnessValue,
+        layers: Vec<BrightnessLayer>,
+        unchanged: bool,
+        clipped: bool,
+    ) -> BrightnessOutcome {
+        BrightnessOutcome {
+            display: display.to_string(),
+            kind,
+            unchanged,
+            layers,
+            clipped,
         }
     }
 
@@ -206,5 +303,143 @@ mod tests {
             describe_brightness(&outcome(60, BrightnessBackend::Ddc, true)),
             "RMOD Fake Monitor 1 [:1] is already at 60%"
         );
+    }
+
+    #[test]
+    fn describe_brightness_mode_min_joins_layers() {
+        let out = mode_outcome(
+            "RMOD Fake Monitor 1 [:1]",
+            BrightnessValue::Min,
+            vec![
+                BrightnessLayer::Hardware {
+                    backend: BrightnessBackend::Slider,
+                    level: 5,
+                },
+                BrightnessLayer::Gamma { level: 50 },
+            ],
+            false,
+            false,
+        );
+        assert_eq!(
+            describe_brightness(&out),
+            "set RMOD Fake Monitor 1 [:1] brightness to min (slider 5 + gamma 50%)"
+        );
+    }
+
+    #[test]
+    fn describe_brightness_mode_max_joins_layers() {
+        let out = mode_outcome(
+            "RMOD Fake Monitor 1 [:1]",
+            BrightnessValue::Max,
+            vec![
+                BrightnessLayer::Hardware {
+                    backend: BrightnessBackend::Ddc,
+                    level: 100,
+                },
+                BrightnessLayer::Gamma { level: 100 },
+            ],
+            false,
+            false,
+        );
+        assert_eq!(
+            describe_brightness(&out),
+            "set RMOD Fake Monitor 1 [:1] brightness to max (ddc 100 + gamma 100%)"
+        );
+    }
+
+    #[test]
+    fn describe_brightness_mode_boost_joins_layers() {
+        let out = mode_outcome(
+            "RMOD Fake Monitor 1 [:1]",
+            BrightnessValue::Boost,
+            vec![
+                BrightnessLayer::Hardware {
+                    backend: BrightnessBackend::Slider,
+                    level: 100,
+                },
+                BrightnessLayer::Gamma { level: 130 },
+            ],
+            false,
+            true,
+        );
+        assert_eq!(
+            describe_brightness(&out),
+            "set RMOD Fake Monitor 1 [:1] brightness to boost (slider 100 + gamma 130%)"
+        );
+    }
+
+    #[test]
+    fn describe_brightness_mode_gamma_only() {
+        let out = mode_outcome(
+            "RMOD Fake Monitor 2 [:2]",
+            BrightnessValue::Min,
+            vec![BrightnessLayer::Gamma { level: 50 }],
+            false,
+            false,
+        );
+        assert_eq!(
+            describe_brightness(&out),
+            "set RMOD Fake Monitor 2 [:2] brightness to min (gamma 50%)"
+        );
+    }
+
+    #[test]
+    fn describe_brightness_mode_unchanged() {
+        let out = mode_outcome(
+            "RMOD Fake Monitor 1 [:1]",
+            BrightnessValue::Min,
+            vec![
+                BrightnessLayer::Hardware {
+                    backend: BrightnessBackend::Slider,
+                    level: 5,
+                },
+                BrightnessLayer::Gamma { level: 50 },
+            ],
+            true,
+            false,
+        );
+        assert_eq!(
+            describe_brightness(&out),
+            "RMOD Fake Monitor 1 [:1] is already at min"
+        );
+    }
+
+    #[test]
+    fn clip_warning_present_for_applied_boost() {
+        let out = mode_outcome(
+            "RMOD Fake Monitor 1 [:1]",
+            BrightnessValue::Boost,
+            vec![BrightnessLayer::Gamma { level: 130 }],
+            false,
+            true,
+        );
+        assert_eq!(
+            clip_warning(&out),
+            Some("boost clips highlights above ~77%")
+        );
+    }
+
+    #[test]
+    fn clip_warning_omitted_for_unchanged_boost() {
+        let out = mode_outcome(
+            "RMOD Fake Monitor 1 [:1]",
+            BrightnessValue::Boost,
+            vec![BrightnessLayer::Gamma { level: 130 }],
+            true,
+            true,
+        );
+        assert_eq!(clip_warning(&out), None);
+    }
+
+    #[test]
+    fn clip_warning_omitted_when_not_clipped() {
+        let out = mode_outcome(
+            "RMOD Fake Monitor 1 [:1]",
+            BrightnessValue::Boost,
+            vec![BrightnessLayer::Gamma { level: 130 }],
+            false,
+            false,
+        );
+        assert_eq!(clip_warning(&out), None);
     }
 }

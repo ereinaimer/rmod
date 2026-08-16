@@ -26,9 +26,10 @@ const DDC_BUDGET: Duration = Duration::from_millis(500);
 /// Returns the closure's result if it completes within `budget`,
 /// otherwise returns `Ok(None)` (treated as "backend unsupported").
 /// A panicking closure also yields `Ok(None)`.
-fn timed<F>(budget: Duration, f: F) -> Result<Option<bool>, String>
+fn timed<T, F>(budget: Duration, f: F) -> Result<Option<T>, String>
 where
-    F: FnOnce() -> Result<Option<bool>, String> + Send + 'static,
+    F: FnOnce() -> Result<Option<T>, String> + Send + 'static,
+    T: Send + 'static,
 {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
@@ -63,43 +64,126 @@ impl BrightnessBackend {
     }
 }
 
+/// The requested brightness change: a numeric level or a composite mode.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[allow(dead_code)]
+pub enum BrightnessValue {
+    /// A numeric level, 0-100.
+    Percent(u32),
+    /// The hardware floor with a gamma dim layer.
+    Min,
+    /// Hardware 100 with the identity gamma ramp.
+    Max,
+    /// Hardware 100 with an overdriven gamma ramp.
+    Boost,
+}
+
+/// One write of a brightness change: a hardware backlight write or a gamma
+/// ramp write. A [`BrightnessOutcome`] always carries at least one layer.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum BrightnessLayer {
+    /// A hardware backlight write through `backend`.
+    Hardware {
+        backend: BrightnessBackend,
+        level: u32,
+    },
+    /// A gamma ramp write representing `level` percent.
+    Gamma { level: u32 },
+}
+
 /// The outcome of a brightness change against one display.
 pub struct BrightnessOutcome {
     /// Display label, e.g. `Generic PnP Monitor [:1]`.
     pub display: String,
-    /// The requested brightness level, 0-100.
-    pub value: u32,
-    /// The backend that carried the change.
-    pub backend: BrightnessBackend,
-    /// True when the display was already at `value`.
+    /// The requested brightness value.
+    pub kind: BrightnessValue,
+    /// True when the display was already at `kind`.
     pub unchanged: bool,
+    /// The writes that carried the change, hardware first when present.
+    pub layers: Vec<BrightnessLayer>,
+    /// True when the change overdrives the ramp past full scale.
+    #[allow(dead_code)]
+    pub clipped: bool,
 }
 
-/// Sets a display's brightness to `value` (0-100), auto-detecting the
-/// backend chain `ddc -> slider -> gamma`, or forcing the backend in `via`.
+/// Sets a display's brightness, auto-detecting the backend chain
+/// `ddc -> slider -> gamma`, or forcing the backend in `via`.
+///
+/// `value` is a 0-100 [`BrightnessValue::Percent`] or one of the composite
+/// modes [`BrightnessValue::Min`], [`BrightnessValue::Max`], and
+/// [`BrightnessValue::Boost`], which compose a hardware write with a gamma
+/// ramp. Modes reject a forced backend.
 ///
 /// `monitor` is the 1-based number from `rmod list`; `None` selects the
 /// primary display.
 ///
 /// # Errors
-/// Unknown monitor, a forced backend the display does not support, or no
-/// brightness-control path at all.
+/// Unknown monitor, a forced backend the display does not support, a mode
+/// with a forced backend, or no brightness-control path at all.
 pub fn set_brightness(
     monitor: Option<u32>,
-    value: u32,
+    value: BrightnessValue,
     via: Option<BrightnessBackend>,
 ) -> Result<BrightnessOutcome, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
     let display = query::display_label(name, index as u32 + 1);
+    match value {
+        BrightnessValue::Percent(level) => set_percent(name, level, via, &display),
+        mode => {
+            if via.is_some() {
+                return Err(mode_backend_error(mode));
+            }
+            set_mode(name, mode, &display)
+        }
+    }
+}
+
+/// The defensive error for a mode passed with a forced backend.
+fn mode_backend_error(mode: BrightnessValue) -> String {
+    format!(
+        "{} does not take a backend. use a number to choose a backend",
+        mode_word(mode)
+    )
+}
+
+/// The lowercase CLI word of a mode, used in errors and output.
+pub(crate) fn mode_word(mode: BrightnessValue) -> &'static str {
+    match mode {
+        BrightnessValue::Min => "min",
+        BrightnessValue::Max => "max",
+        BrightnessValue::Boost => "boost",
+        BrightnessValue::Percent(_) => unreachable!("percent is not a mode"),
+    }
+}
+
+/// The gamma layer level of a mode.
+pub(crate) fn gamma_level_for(mode: BrightnessValue) -> u32 {
+    match mode {
+        BrightnessValue::Min => 50,
+        BrightnessValue::Max => 100,
+        BrightnessValue::Boost => 130,
+        BrightnessValue::Percent(_) => unreachable!("percent is not a mode"),
+    }
+}
+
+/// The percent path: the legacy chain with a single layer in the outcome.
+fn set_percent(
+    name: &str,
+    level: u32,
+    via: Option<BrightnessBackend>,
+    display: &str,
+) -> Result<BrightnessOutcome, String> {
+    let outcome = |backend: BrightnessBackend, unchanged: bool| BrightnessOutcome {
+        display: display.to_string(),
+        kind: BrightnessValue::Percent(level),
+        unchanged,
+        layers: vec![layer_for(backend, level)],
+        clipped: false,
+    };
     match via {
-        Some(backend) => match set_via(backend, name, index, value, &display) {
-            Ok(Some(unchanged)) => Ok(BrightnessOutcome {
-                display,
-                value,
-                backend,
-                unchanged,
-            }),
+        Some(backend) => match set_via(backend, name, level, display) {
+            Ok(Some(unchanged)) => Ok(outcome(backend, unchanged)),
             Ok(None) => Err(format!(
                 "{display} does not support {} brightness control",
                 backend.name()
@@ -112,15 +196,8 @@ pub fn set_brightness(
                 BrightnessBackend::Slider,
                 BrightnessBackend::Gamma,
             ] {
-                match set_via(backend, name, index, value, &display) {
-                    Ok(Some(unchanged)) => {
-                        return Ok(BrightnessOutcome {
-                            display,
-                            value,
-                            backend,
-                            unchanged,
-                        });
-                    }
+                match set_via(backend, name, level, display) {
+                    Ok(Some(unchanged)) => return Ok(outcome(backend, unchanged)),
                     Ok(None) => continue,
                     Err(e) => return Err(e),
                 }
@@ -130,19 +207,181 @@ pub fn set_brightness(
     }
 }
 
+/// The single layer of a percent change carried by `backend`.
+fn layer_for(backend: BrightnessBackend, level: u32) -> BrightnessLayer {
+    match backend {
+        BrightnessBackend::Gamma => BrightnessLayer::Gamma { level },
+        backend => BrightnessLayer::Hardware { backend, level },
+    }
+}
+
+/// A hardware backlight write: the backend, the level written, and whether
+/// the display was already at that level.
+struct HardwareChange {
+    backend: BrightnessBackend,
+    level: u32,
+    unchanged: bool,
+}
+
+impl HardwareChange {
+    fn layer(&self) -> BrightnessLayer {
+        BrightnessLayer::Hardware {
+            backend: self.backend,
+            level: self.level,
+        }
+    }
+}
+
+/// The mode path: the best available hardware write (when any applies) plus
+/// the mode's gamma write.
+fn set_mode(
+    name: &str,
+    mode: BrightnessValue,
+    display: &str,
+) -> Result<BrightnessOutcome, String> {
+    let mut layers = Vec::new();
+    let mut hardware_unchanged = true;
+    match mode {
+        BrightnessValue::Min => {
+            if let Some(change) = set_via_ddc_floor(name)? {
+                layers.push(change.layer());
+                hardware_unchanged = change.unchanged;
+            } else if let Some(change) = set_via_slider_floor(name)? {
+                layers.push(change.layer());
+                hardware_unchanged = change.unchanged;
+            } else if let Some(change) = set_via_wmi_floor(name)? {
+                layers.push(change.layer());
+                hardware_unchanged = change.unchanged;
+            }
+        }
+        BrightnessValue::Max | BrightnessValue::Boost => {
+            if let Some(unchanged) = set_via_ddc(name, 100)? {
+                layers.push(BrightnessLayer::Hardware {
+                    backend: BrightnessBackend::Ddc,
+                    level: 100,
+                });
+                hardware_unchanged = unchanged;
+            } else if let Some(unchanged) = set_via_slider(name, 100)? {
+                layers.push(BrightnessLayer::Hardware {
+                    backend: BrightnessBackend::Slider,
+                    level: 100,
+                });
+                hardware_unchanged = unchanged;
+            }
+        }
+        BrightnessValue::Percent(_) => unreachable!("set_mode only runs for modes"),
+    }
+    let level = gamma_level_for(mode);
+    let gamma_unchanged = match set_via_gamma(name, level, display)? {
+        Some(unchanged) => unchanged,
+        None => unreachable!("gamma control always reports Some; set_via_gamma only returns None for unsupported backends"),
+    };
+    layers.push(BrightnessLayer::Gamma { level });
+    Ok(BrightnessOutcome {
+        display: display.to_string(),
+        kind: mode,
+        unchanged: hardware_unchanged && gamma_unchanged,
+        layers,
+        clipped: matches!(mode, BrightnessValue::Boost),
+    })
+}
+
+/// The DDC floor leg for [`BrightnessValue::Min`]: the VCP register at 1.
+/// `Ok(None)` when the display exposes no DDC/CI control.
+fn set_via_ddc_floor(name: &str) -> Result<Option<HardwareChange>, String> {
+    let name = name.to_string();
+    timed(DDC_BUDGET, move || {
+        let Some(monitors) = physical_monitors(&name)? else {
+            return Ok(None);
+        };
+        let monitor = monitors.handles[0].handle;
+        match current_vcp(monitor) {
+            None => Ok(None),
+            Some(1) => Ok(Some(HardwareChange {
+                backend: BrightnessBackend::Ddc,
+                level: 1,
+                unchanged: true,
+            })),
+            Some(_) => {
+                let ok = unsafe { SetVCPFeature(monitor, MCCS_BRIGHTNESS, 1) };
+                if ok == 0 {
+                    return Err("the DDC/CI brightness change failed".to_string());
+                }
+                Ok(Some(HardwareChange {
+                    backend: BrightnessBackend::Ddc,
+                    level: 1,
+                    unchanged: false,
+                }))
+            }
+        }
+    })
+}
+
+/// The dxva2 floor leg for [`BrightnessValue::Min`]: the reported minimum.
+/// Skipped when the minimum is 0 (off) or unreadable; `Ok(None)` when the
+/// display exposes no dxva2 brightness control.
+fn set_via_slider_floor(name: &str) -> Result<Option<HardwareChange>, String> {
+    let name = name.to_string();
+    timed(DDC_BUDGET, move || {
+        let Some(monitors) = physical_monitors(&name)? else {
+            return Ok(None);
+        };
+        let monitor = monitors.handles[0].handle;
+        let mut minimum = 0u32;
+        let mut current = 0u32;
+        let mut maximum = 0u32;
+        let ok = unsafe { GetMonitorBrightness(monitor, &mut minimum, &mut current, &mut maximum) };
+        if ok == 0 || minimum == 0 {
+            return Ok(None);
+        }
+        if current == minimum {
+            return Ok(Some(HardwareChange {
+                backend: BrightnessBackend::Slider,
+                level: minimum,
+                unchanged: true,
+            }));
+        }
+        let set = unsafe { SetMonitorBrightness(monitor, minimum) };
+        if set == 0 {
+            return Err("the brightness slider change failed".to_string());
+        }
+        Ok(Some(HardwareChange {
+            backend: BrightnessBackend::Slider,
+            level: minimum,
+            unchanged: false,
+        }))
+    })
+}
+
+/// The WMI floor leg for [`BrightnessValue::Min`]: the smallest positive
+/// `Level` entry. Skipped when the value is unreadable; `Ok(None)` when
+/// the display has no WMI brightness instance.
+fn set_via_wmi_floor(name: &str) -> Result<Option<HardwareChange>, String> {
+    let Some(floor) = wmi::min_level(name) else {
+        return Ok(None);
+    };
+    match wmi::set(name, floor)? {
+        Some(unchanged) => Ok(Some(HardwareChange {
+            backend: BrightnessBackend::Slider,
+            level: floor,
+            unchanged,
+        })),
+        None => Ok(None),
+    }
+}
+
 /// Applies the change through one backend. `Ok(None)` means the backend is
 /// unsupported on this display; `Ok(Some(unchanged))` means it applied (or
 /// was already at `value`).
 fn set_via(
     backend: BrightnessBackend,
     name: &str,
-    index: usize,
     value: u32,
     display: &str,
 ) -> Result<Option<bool>, String> {
     match backend {
         BrightnessBackend::Ddc => set_via_ddc(name, value),
-        BrightnessBackend::Slider => set_via_slider(name, index, value),
+        BrightnessBackend::Slider => set_via_slider(name, value),
         BrightnessBackend::Gamma => set_via_gamma(name, value, display),
     }
 }
@@ -266,11 +505,11 @@ fn set_via_ddc(name: &str, value: u32) -> Result<Option<bool>, String> {
 /// (hybrid-GPU systems), so it falls back to the WMI
 /// `WmiMonitorBrightnessMethods` provider — the same one the action-center
 /// brightness slider drives, keeping the system UI in sync.
-fn set_via_slider(name: &str, index: usize, value: u32) -> Result<Option<bool>, String> {
+fn set_via_slider(name: &str, value: u32) -> Result<Option<bool>, String> {
     if let Some(unchanged) = set_via_slider_dxva2(name, value)? {
         return Ok(Some(unchanged));
     }
-    wmi::set(index, value)
+    wmi::set(name, value)
 }
 
 /// The dxva2 physical-monitor path; `Ok(None)` when the display exposes no
@@ -344,11 +583,12 @@ fn gamma_error(value: u32, display: &str) -> String {
 }
 
 /// The gamma ramp for a 0-100 brightness: a linear scale of the identity
-/// ramp applied to every channel. `100` yields the full range 0-65535.
+/// ramp applied to every channel. `100` yields the full range 0-65535;
+/// values above 100 clamp at 65535 instead of wrapping.
 pub(crate) fn gamma_ramp(value: u32) -> [u16; 768] {
     let mut ramp = [0u16; 768];
     for i in 0..256u32 {
-        let v = (i * 257 * value / 100) as u16;
+        let v = (i * 257 * value / 100).min(65535) as u16;
         ramp[i as usize] = v;
         ramp[256 + i as usize] = v;
         ramp[512 + i as usize] = v;
@@ -392,6 +632,52 @@ mod tests {
     fn gamma_matches_roundtrips_constructed_ramp() {
         assert!(gamma_matches(&gamma_ramp(40), 40));
         assert!(!gamma_matches(&gamma_ramp(40), 41));
+    }
+
+    #[test]
+    fn gamma_ramp_saturates_above_full_scale() {
+        for channel in [0, 256, 512] {
+            assert_eq!(
+                gamma_ramp(130)[255 + channel],
+                65535,
+                "channel offset {channel}"
+            );
+        }
+        assert_eq!(gamma_ramp(130)[100], (100u32 * 257 * 130 / 100) as u16);
+    }
+
+    #[test]
+    fn gamma_ramp_up_to_full_scale_matches_the_legacy_formula() {
+        for value in [0, 1, 40, 50, 99, 100] {
+            let ramp = gamma_ramp(value);
+            for (i, entry) in ramp.iter().enumerate() {
+                let channel = i % 256;
+                let expected = (channel as u32 * 257 * value / 100) as u16;
+                assert_eq!(*entry, expected, "value {value}, entry {i}");
+            }
+        }
+    }
+
+    #[test]
+    fn gamma_matches_the_boost_ramp() {
+        assert!(gamma_matches(&gamma_ramp(130), 130));
+        assert!(!gamma_matches(&gamma_ramp(130), 100));
+        assert!(!gamma_matches(&gamma_ramp(100), 130));
+    }
+
+    #[test]
+    fn mode_backend_error_names_the_mode() {
+        for (mode, word) in [
+            (BrightnessValue::Min, "min"),
+            (BrightnessValue::Max, "max"),
+            (BrightnessValue::Boost, "boost"),
+        ] {
+            assert_eq!(
+                mode_backend_error(mode),
+                format!("{word} does not take a backend. use a number to choose a backend"),
+                "mode {word}"
+            );
+        }
     }
 
     #[test]
@@ -445,7 +731,7 @@ mod tests {
     #[test]
     fn timed_panicking_closure_returns_none() {
         use std::time::Duration;
-        let result = timed(Duration::from_millis(50), || {
+        let result: Result<Option<bool>, String> = timed(Duration::from_millis(50), || {
             panic!("intentional panic");
         });
         assert_eq!(result, Ok(None));

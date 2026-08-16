@@ -23,7 +23,7 @@
 use std::ffi::c_void;
 use std::ptr;
 
-use super::bindings::encode_wide;
+use super::bindings::{DISPLAY_DEVICEW, EnumDisplayDevicesW, encode_wide, wide_to_string};
 
 /// A Windows GUID (16 bytes, packed).
 #[repr(C)]
@@ -88,6 +88,10 @@ const VT_UNKNOWN: u16 = 0x0D;
 const VT_UI1: u16 = 0x11;
 /// `VT_UI4`.
 const VT_UI4: u16 = 0x13;
+/// `VT_VARIANT`: a `VARIANT` value (used for arrays of variants).
+const VT_VARIANT: u16 = 0x0C;
+/// `VT_ARRAY`; combined with an element type (e.g. `VT_UI1 | VT_ARRAY`).
+const VT_ARRAY: u16 = 0x2000;
 
 /// The WMI class exposing `WmiSetBrightness`.
 const CLASS_METHODS: &str = "WmiMonitorBrightnessMethods";
@@ -97,11 +101,15 @@ const CLASS_STATE: &str = "WmiMonitorBrightness";
 const METHOD_SET: &str = "WmiSetBrightness";
 /// The key property common to every `root\wmi` monitor instance.
 const KEY_INSTANCE_NAME: &str = "InstanceName";
+/// The property listing every brightness level the panel accepts.
+const PROP_LEVEL: &str = "Level";
 
 /// `HKEY_LOCAL_MACHINE`.
 const HKEY_LOCAL_MACHINE: *mut c_void = 0x8000_0002usize as *mut c_void;
 /// `KEY_READ` access rights for registry keys.
 const KEY_READ: u32 = 0x20019;
+/// `REG_SZ` registry value type.
+const REG_SZ: u32 = 1;
 /// The registry key holding every display device instance.
 const KEY_DISPLAY: &str = "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY";
 
@@ -212,6 +220,26 @@ impl Variant {
     }
 }
 
+/// A bound of a `SAFEARRAY`: the element count and inclusive lower bound.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct SafeArrayBound {
+    c_elements: u32,
+    l_bound: i32,
+}
+
+/// The `SAFEARRAY` header; only the fields needed to read a 1-D byte array
+/// are used, and the trailing bound array is fixed at one entry.
+#[repr(C)]
+struct SafeArray {
+    c_dims: u16,
+    f_features: u16,
+    cb_elements: u32,
+    c_locks: u32,
+    pv_data: *mut c_void,
+    rgsa_bounds: [SafeArrayBound; 1],
+}
+
 /// `DISPPARAMS` for `IDispatch::Invoke`.
 #[repr(C)]
 struct DispParams {
@@ -278,6 +306,10 @@ unsafe extern "system" {
 unsafe extern "system" {
     fn SysAllocString(psz: *const u16) -> *mut u16;
     fn VariantClear(pvar: *mut Variant) -> i32;
+    fn SafeArrayGetLBound(psa: *mut SafeArray, n_dim: u32, pl_lbound: *mut i32) -> i32;
+    fn SafeArrayGetUBound(psa: *mut SafeArray, n_dim: u32, pl_ubound: *mut i32) -> i32;
+    fn SafeArrayAccessData(psa: *mut SafeArray, ppv_data: *mut *mut c_void) -> i32;
+    fn SafeArrayUnaccessData(psa: *mut SafeArray) -> i32;
 }
 #[link(name = "advapi32")]
 unsafe extern "system" {
@@ -297,6 +329,14 @@ unsafe extern "system" {
         lp_class: *mut u16,
         lpcch_class: *mut u32,
         lpft_last_write_time: *mut c_void,
+    ) -> i32;
+    fn RegQueryValueExW(
+        h_key: *mut c_void,
+        lp_value_name: *const u16,
+        lp_reserved: *mut u32,
+        lp_type: *mut u32,
+        lp_data: *mut u8,
+        lpcb_data: *mut u32,
     ) -> i32;
     fn RegCloseKey(h_key: *mut c_void) -> i32;
 }
@@ -511,17 +551,105 @@ fn registry_keys(root: *mut c_void, subpath: &str) -> Vec<String> {
     keys
 }
 
-/// Every display PnP device instance as `DISPLAY\<model>\<instance>`, from
-/// the `Enum\DISPLAY` registry key.
-fn device_instances() -> Vec<String> {
-    let mut instances = Vec::new();
-    for model in registry_keys(HKEY_LOCAL_MACHINE, KEY_DISPLAY) {
-        let subpath = format!("{KEY_DISPLAY}\\{model}");
-        for instance in registry_keys(HKEY_LOCAL_MACHINE, &subpath) {
-            instances.push(format!("DISPLAY\\{model}\\{instance}"));
+/// The monitor-level device ID of the display addressed by `name` (e.g.
+/// `MONITOR\LEN9059\{4d36e96e-...}\0002`), or `None`.
+fn monitor_device_id(name: &str) -> Option<String> {
+    let mut monitor: DISPLAY_DEVICEW = unsafe { std::mem::zeroed() };
+    monitor.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
+    let name_wide = encode_wide(name);
+    let ok = unsafe { EnumDisplayDevicesW(name_wide.as_ptr(), 0, &mut monitor, 0) };
+    if ok == 0 {
+        return None;
+    }
+    let id = wide_to_string(&monitor.device_id);
+    if id.is_empty() {
+        None
+    } else {
+        Some(id)
+    }
+}
+
+/// Splits a monitor device ID into its model and driver instance tail,
+/// e.g. `MONITOR\LEN9059\{4d36e96e-...}\0002` -> `("LEN9059",
+/// "{4d36e96e-...}\\0002")`.
+fn monitor_parts(device_id: &str) -> Option<(String, String)> {
+    let mut parts = device_id.split('\\');
+    if parts.next()? != "MONITOR" {
+        return None;
+    }
+    let model = parts.next()?;
+    let driver = parts.collect::<Vec<_>>().join("\\");
+    if driver.is_empty() {
+        return None;
+    }
+    Some((model.to_string(), driver))
+}
+
+/// Reads a REG_SZ value as a string, or `None` when the value is missing
+/// or not a string.
+fn read_reg_string(root: *mut c_void, subpath: &str, value: &str) -> Option<String> {
+    let mut key: *mut c_void = ptr::null_mut();
+    let hr = unsafe { RegOpenKeyExW(root, encode_wide(subpath).as_ptr(), 0, KEY_READ, &mut key) };
+    if hr != 0 || key.is_null() {
+        return None;
+    }
+    let mut ty: u32 = 0;
+    let mut size: u32 = 0;
+    let hr = unsafe {
+        RegQueryValueExW(
+            key,
+            encode_wide(value).as_ptr(),
+            ptr::null_mut(),
+            &mut ty,
+            ptr::null_mut(),
+            &mut size,
+        )
+    };
+    let mut out = None;
+    if hr == 0 && ty == REG_SZ && size > 0 {
+        let mut buf = vec![0u16; (size / 2) as usize];
+        let mut ty2: u32 = 0;
+        let mut size2 = size;
+        let hr = unsafe {
+            RegQueryValueExW(
+                key,
+                encode_wide(value).as_ptr(),
+                ptr::null_mut(),
+                &mut ty2,
+                buf.as_mut_ptr() as *mut u8,
+                &mut size2,
+            )
+        };
+        if hr == 0 && ty2 == REG_SZ {
+            out = Some(String::from_utf16_lossy(&buf).trim_end_matches('\0').to_string());
         }
     }
-    instances
+    unsafe { RegCloseKey(key) };
+    out
+}
+
+/// The `DISPLAY\<model>\<instance>` device instances that belong to the
+/// display addressed by `name`, ordered with the instance whose `Driver`
+/// value matches the monitor device ID tail first (that is the monitor
+/// attached to this display), then any remaining instance of the same
+/// model. `None` when the display has no monitor device ID to match on.
+fn display_device_instances(name: &str) -> Option<Vec<String>> {
+    let monitor_id = monitor_device_id(name)?;
+    let (model, driver) = monitor_parts(&monitor_id)?;
+    let subpath = format!("{KEY_DISPLAY}\\{model}");
+    let mut matched = Vec::new();
+    let mut rest = Vec::new();
+    for instance in registry_keys(HKEY_LOCAL_MACHINE, &subpath) {
+        let instance_name = format!("DISPLAY\\{model}\\{instance}");
+        let instance_key = format!("{subpath}\\{instance}");
+        if read_reg_string(HKEY_LOCAL_MACHINE, &instance_key, "Driver").as_deref() == Some(driver.as_str()) {
+            matched.push(instance_name);
+        } else {
+            rest.push(instance_name);
+        }
+    }
+    matched.extend(rest);
+    Some(matched)
 }
 
 /// The `Get` object path for a `root\wmi` monitor instance: the class name
@@ -603,30 +731,33 @@ impl Connection {
         result.object().ok_or_else(|| format!("Get({path}) returned no object"))
     }
 
-    /// The instance of `class` for the `index`-th (0-based) display, or
-    /// `Ok(None)` when the display has no such WMI instance.
+    /// The instance of `class` for the display addressed by `name` (e.g.
+    /// `\\.\DISPLAY1`), or `Ok(None)` when the display has no such WMI
+    /// instance.
     ///
     /// The `InstanceName` is the PnP device instance from the registry plus
     /// the monitor ordinal; the correct ordinal is not known up front, so
     /// each candidate path is tried until one resolves.
-    fn resolve_instance(&self, class: &str, index: usize) -> Result<Option<*mut c_void>, String> {
-        let devices = device_instances();
-        let Some(device) = devices.get(index) else {
+    fn resolve_instance(&self, class: &str, name: &str) -> Result<Option<*mut c_void>, String> {
+        let Some(devices) = display_device_instances(name) else {
             return Ok(None);
         };
-        for ordinal in 0..4 {
-            let instance_name = format!("{device}_{ordinal}");
-            let path = instance_path(class, &instance_name);
-            if let Ok(object) = self.get_object(&path) {
-                return Ok(Some(object));
+        for device in devices {
+            for ordinal in 0..4 {
+                let instance_name = format!("{device}_{ordinal}");
+                let path = instance_path(class, &instance_name);
+                if let Ok(object) = self.get_object(&path) {
+                    return Ok(Some(object));
+                }
             }
         }
         Ok(None)
     }
 
-    /// The current brightness of the `index`-th (0-based) display, or `None`.
-    fn current(&self, index: usize) -> Option<u32> {
-        let instance = self.resolve_instance(CLASS_STATE, index).ok()??;
+    /// The current brightness of the display addressed by `name`, or
+    /// `None`.
+    fn current(&self, name: &str) -> Option<u32> {
+        let instance = self.resolve_instance(CLASS_STATE, name).ok()??;
         let set = get_prop(instance, "Properties_").ok()?;
         let set = set.object()?;
         let props = call(set, "Item", &mut [Variant::bstr("CurrentBrightness")]).ok()?;
@@ -644,14 +775,40 @@ impl Connection {
         result
     }
 
-    /// Sets the brightness of the `index`-th (0-based) display.
+    /// The smallest positive `Level` entry of the display addressed by
+    /// `name`, or `None` when the value is unreadable.
+    fn min_level(&self, name: &str) -> Option<u32> {
+        let instance = match self.resolve_instance(CLASS_STATE, name) {
+            Ok(Some(instance)) => instance,
+            _ => return None,
+        };
+        let set = get_prop(instance, "Properties_").ok()?;
+        let set = set.object()?;
+        let levels = call(set, "Item", &mut [Variant::bstr(PROP_LEVEL)]).ok()?;
+        let levels = levels.object()?;
+        let mut value = get_prop(levels, "Value").ok()?;
+        let result = if value.vt == VT_UI1 | VT_ARRAY {
+            unsafe { min_positive_ui1(value.data[0] as *mut SafeArray) }
+        } else if value.vt == VT_VARIANT | VT_ARRAY {
+            unsafe { min_positive_variant(value.data[0] as *mut SafeArray) }
+        } else {
+            None
+        };
+        unsafe { VariantClear(&mut value) };
+        unsafe { release(levels) };
+        unsafe { release(set) };
+        unsafe { release(instance) };
+        result
+    }
+
+    /// Sets the brightness of the display addressed by `name`.
     ///
     /// `Ok(None)` means the display has no WMI brightness instance.
-    fn set_brightness(&self, index: usize, value: u32) -> Result<Option<bool>, String> {
-        let Some(instance) = self.resolve_instance(CLASS_METHODS, index)? else {
+    fn set_brightness(&self, name: &str, value: u32) -> Result<Option<bool>, String> {
+        let Some(instance) = self.resolve_instance(CLASS_METHODS, name)? else {
             return Ok(None);
         };
-        let current = self.current(index);
+        let current = self.current(name);
         if current.is_some_and(|current| current == value) {
             unsafe { release(instance) };
             return Ok(Some(true));
@@ -737,17 +894,199 @@ impl Drop for Connection {
     }
 }
 
-/// Sets the brightness of the `index`-th (0-based) display through WMI.
+/// Sets the brightness of the display addressed by `name` through WMI.
 ///
 /// `Ok(None)` means the display has no WMI brightness instance.
-pub(crate) fn set(index: usize, value: u32) -> Result<Option<bool>, String> {
+pub(crate) fn set(name: &str, value: u32) -> Result<Option<bool>, String> {
     let connection = Connection::new()?;
-    connection.set_brightness(index, value)
+    connection.set_brightness(name, value)
+}
+
+/// The smallest positive `Level` entry of the display addressed by `name`,
+/// or `None` when the value is unreadable.
+///
+/// The `Level` array lists every brightness level the panel accepts; the
+/// smallest positive entry is the hardware floor `min` writes directly. A
+/// zero-only array means the panel can go dark, so there is no floor.
+pub(crate) fn min_level(name: &str) -> Option<u32> {
+    Connection::new().ok()?.min_level(name)
+}
+
+/// The smallest positive entry of a `Levels` array, or `None` when every
+/// entry is zero (the panel can go dark, so there is no hardware floor).
+fn smallest_positive(levels: &[u8]) -> Option<u32> {
+    levels.iter().filter(|&&v| v > 0).min().map(|&v| v as u32)
+}
+
+/// Copies the payload of a 1-D `VT_UI1` SAFEARRAY, or `None` when the
+/// array is not a readable one-dimensional byte array.
+unsafe fn safe_array_ui1(psa: *mut SafeArray) -> Option<Vec<u8>> {
+    unsafe {
+        if psa.is_null() {
+            return None;
+        }
+        let array = &*psa;
+        if array.c_dims != 1 || array.cb_elements != 1 {
+            return None;
+        }
+        let mut lower = 0i32;
+        let mut upper = 0i32;
+        let hr = SafeArrayGetLBound(psa, 1, &mut lower);
+        if hr != S_OK {
+            return None;
+        }
+        let hr = SafeArrayGetUBound(psa, 1, &mut upper);
+        if hr != S_OK || upper < lower {
+            return None;
+        }
+        let mut data: *mut c_void = ptr::null_mut();
+        let hr = SafeArrayAccessData(psa, &mut data);
+        if hr != S_OK || data.is_null() {
+            return None;
+        }
+        let count = (upper - lower + 1) as usize;
+        let mut levels = Vec::with_capacity(count);
+        ptr::copy_nonoverlapping(data as *const u8, levels.as_mut_ptr(), count);
+        levels.set_len(count);
+        SafeArrayUnaccessData(psa);
+        Some(levels)
+    }
+}
+
+/// The smallest positive element of a 1-D `VT_UI1` SAFEARRAY, or `None`
+/// when the array is unreadable or holds no positive element.
+unsafe fn min_positive_ui1(psa: *mut SafeArray) -> Option<u32> {
+    unsafe { safe_array_ui1(psa) }.and_then(|levels| smallest_positive(&levels))
+}
+
+/// The smallest positive element of a 1-D `VT_VARIANT|VT_ARRAY` SAFEARRAY
+/// of `VT_UI1` variants (how `WmiMonitorBrightness.Level` arrives through
+/// the scripting provider on some panels), or `None` when the array is
+/// unreadable or holds no positive element.
+unsafe fn min_positive_variant(psa: *mut SafeArray) -> Option<u32> {
+    unsafe {
+        if psa.is_null() {
+            return None;
+        }
+        let array = &*psa;
+        if array.c_dims != 1 || array.cb_elements != std::mem::size_of::<Variant>() as u32 {
+            return None;
+        }
+        let mut lower = 0i32;
+        let mut upper = 0i32;
+        let hr = SafeArrayGetLBound(psa, 1, &mut lower);
+        if hr != S_OK {
+            return None;
+        }
+        let hr = SafeArrayGetUBound(psa, 1, &mut upper);
+        if hr != S_OK || upper < lower {
+            return None;
+        }
+        let mut data: *mut c_void = ptr::null_mut();
+        let hr = SafeArrayAccessData(psa, &mut data);
+        if hr != S_OK || data.is_null() {
+            return None;
+        }
+        let count = (upper - lower + 1) as usize;
+        let variants = std::slice::from_raw_parts(data as *const Variant, count);
+        let mut levels = Vec::with_capacity(count);
+        for variant in variants {
+            if variant.vt == VT_UI1 {
+                levels.push(variant.data[0] as u8);
+            }
+        }
+        SafeArrayUnaccessData(psa);
+        smallest_positive(&levels)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A hand-built 1-D `VT_UI1` SAFEARRAY over `bytes`, allocated without
+    /// oleaut32 so the extraction plumbing is testable in-process. Free with
+    /// [`free_synthetic_array`].
+    fn synthetic_array(bytes: &[u8]) -> *mut SafeArray {
+        let data: Box<[u8]> = bytes.to_vec().into_boxed_slice();
+        let array = Box::new(SafeArray {
+            c_dims: 1,
+            f_features: 0,
+            cb_elements: 1,
+            c_locks: 0,
+            pv_data: Box::into_raw(data).cast(),
+            rgsa_bounds: [SafeArrayBound {
+                c_elements: bytes.len() as u32,
+                l_bound: 0,
+            }],
+        });
+        Box::into_raw(array)
+    }
+
+    /// Like [`synthetic_array`] but claiming two dimensions, for the
+    /// wrong-dimension rejection test.
+    fn synthetic_array_multi_dim(bytes: &[u8]) -> *mut SafeArray {
+        let array = synthetic_array(bytes);
+        unsafe { (*array).c_dims = 2 };
+        array
+    }
+
+    /// A hand-built 1-D `VT_VARIANT|VT_ARRAY` SAFEARRAY of `VT_UI1`
+    /// variants, mirroring how `WmiMonitorBrightness.Level` arrives
+    /// through the scripting provider. Free with
+    /// [`free_synthetic_variant_array`].
+    fn synthetic_variant_array(values: &[u8]) -> *mut SafeArray {
+        let data: Box<[Variant]> = values
+            .iter()
+            .map(|&v| Variant {
+                vt: VT_UI1,
+                w_reserved1: 0,
+                w_reserved2: 0,
+                w_reserved3: 0,
+                data: [v as u64, 0],
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        let array = Box::new(SafeArray {
+            c_dims: 1,
+            f_features: 0,
+            cb_elements: std::mem::size_of::<Variant>() as u32,
+            c_locks: 0,
+            pv_data: Box::into_raw(data).cast(),
+            rgsa_bounds: [SafeArrayBound {
+                c_elements: values.len() as u32,
+                l_bound: 0,
+            }],
+        });
+        Box::into_raw(array)
+    }
+
+    /// Frees an array from [`synthetic_variant_array`].
+    fn free_synthetic_variant_array(array: *mut SafeArray) {
+        unsafe {
+            let len = (*array).rgsa_bounds[0].c_elements as usize;
+            let data = Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                (*array).pv_data as *mut Variant,
+                len,
+            ));
+            drop(data);
+            drop(Box::from_raw(array));
+        }
+    }
+
+    /// Frees an array from [`synthetic_array`] or
+    /// [`synthetic_array_multi_dim`].
+    fn free_synthetic_array(array: *mut SafeArray) {
+        unsafe {
+            let len = (*array).rgsa_bounds[0].c_elements as usize;
+            let data = Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                (*array).pv_data as *mut u8,
+                len,
+            ));
+            drop(data);
+            drop(Box::from_raw(array));
+        }
+    }
 
     #[test]
     fn variant_ui1_encodes_vt_and_value() {
@@ -776,30 +1115,131 @@ mod tests {
     }
 
     #[test]
+    fn smallest_positive_picks_the_smallest_nonzero_entry() {
+        assert_eq!(smallest_positive(&[3, 0, 7, 1]), Some(1));
+        assert_eq!(smallest_positive(&[100, 255]), Some(100));
+        assert_eq!(smallest_positive(&[1]), Some(1));
+    }
+
+    #[test]
+    fn smallest_positive_empty_is_none() {
+        assert_eq!(smallest_positive(&[]), None);
+    }
+
+    #[test]
+    fn smallest_positive_all_zero_is_none() {
+        assert_eq!(smallest_positive(&[0, 0, 0]), None);
+    }
+
+    #[test]
+    fn safe_array_layout_is_32_bytes_on_x64() {
+        assert_eq!(std::mem::size_of::<SafeArray>(), 32);
+        assert_eq!(std::mem::size_of::<SafeArrayBound>(), 8);
+    }
+
+    #[test]
+    fn safe_array_ui1_reads_the_payload() {
+        let array = synthetic_array(&[3, 0, 7, 1]);
+        let levels = unsafe { safe_array_ui1(array) };
+        free_synthetic_array(array);
+        assert_eq!(levels, Some(vec![3, 0, 7, 1]));
+    }
+
+    #[test]
+    fn safe_array_ui1_null_is_none() {
+        assert_eq!(unsafe { safe_array_ui1(ptr::null_mut()) }, None);
+    }
+
+    #[test]
+    fn safe_array_ui1_wrong_dimension_is_none() {
+        let array = synthetic_array_multi_dim(&[3, 0, 7]);
+        let levels = unsafe { safe_array_ui1(array) };
+        free_synthetic_array(array);
+        assert_eq!(levels, None);
+    }
+
+    #[test]
+    fn min_positive_ui1_returns_the_smallest_positive_element() {
+        let array = synthetic_array(&[10, 0, 3, 8]);
+        let floor = unsafe { min_positive_ui1(array) };
+        free_synthetic_array(array);
+        assert_eq!(floor, Some(3));
+    }
+
+    #[test]
+    fn min_positive_ui1_zero_only_array_is_none() {
+        let array = synthetic_array(&[0, 0]);
+        let floor = unsafe { min_positive_ui1(array) };
+        free_synthetic_array(array);
+        assert_eq!(floor, None);
+    }
+
+    #[test]
+    fn min_positive_ui1_empty_array_is_none() {
+        let array = synthetic_array(&[]);
+        let floor = unsafe { min_positive_ui1(array) };
+        free_synthetic_array(array);
+        assert_eq!(floor, None);
+    }
+
+    #[test]
+    fn min_positive_variant_returns_the_smallest_positive_element() {
+        let array = synthetic_variant_array(&[10, 0, 3, 8]);
+        let floor = unsafe { min_positive_variant(array) };
+        free_synthetic_variant_array(array);
+        assert_eq!(floor, Some(3));
+    }
+
+    #[test]
+    fn min_positive_variant_zero_only_array_is_none() {
+        let array = synthetic_variant_array(&[0, 0]);
+        let floor = unsafe { min_positive_variant(array) };
+        free_synthetic_variant_array(array);
+        assert_eq!(floor, None);
+    }
+
+    #[test]
+    fn min_positive_variant_empty_array_is_none() {
+        let array = synthetic_variant_array(&[]);
+        let floor = unsafe { min_positive_variant(array) };
+        free_synthetic_variant_array(array);
+        assert_eq!(floor, None);
+    }
+
+    #[test]
+    fn min_positive_variant_wrong_element_size_is_none() {
+        let array = synthetic_variant_array(&[3, 7]);
+        unsafe { (*array).cb_elements = 8 };
+        let floor = unsafe { min_positive_variant(array) };
+        free_synthetic_variant_array(array);
+        assert_eq!(floor, None);
+    }
+
+    #[test]
+    fn monitor_parts_splits_model_and_driver_tail() {
+        let (model, driver) =
+            monitor_parts("MONITOR\\LEN9059\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0002")
+                .unwrap();
+        assert_eq!(model, "LEN9059");
+        assert_eq!(driver, "{4d36e96e-e325-11ce-bfc1-08002be10318}\\0002");
+    }
+
+    #[test]
+    fn monitor_parts_rejects_non_monitor_ids() {
+        assert_eq!(monitor_parts("PCI\\VEN_8086&DEV_9A60&SUBSYS_3E8C17AA&REV_01"), None);
+    }
+
+    #[test]
+    fn monitor_parts_rejects_short_ids() {
+        assert_eq!(monitor_parts("MONITOR\\LEN9059"), None);
+    }
+
+    #[test]
     fn instance_path_escapes_backslashes() {
         let path = instance_path(CLASS_METHODS, "DISPLAY\\LEN9059\\4&201f0991&1&UID8388688_0");
         assert_eq!(
             path,
             "WmiMonitorBrightnessMethods.InstanceName=\"DISPLAY\\\\LEN9059\\\\4&201f0991&1&UID8388688_0\""
         );
-    }
-
-    #[test]
-    #[ignore]
-    fn diagnose_connect_only() {
-        eprintln!("[diag] attempting Connection::new...");
-        match Connection::new() {
-            Ok(_) => eprintln!("[diag] Connection::new OK"),
-            Err(e) => eprintln!("[diag] Connection::new FAILED: {e}"),
-        }
-        eprintln!("[diag] attempting full pipeline (no-op slider @100)...");
-        match super::super::brightness::set_brightness(
-            None,
-            100,
-            Some(super::super::brightness::BrightnessBackend::Slider),
-        ) {
-            Ok(o) => eprintln!("[diag] pipeline OK: unchanged={}", o.unchanged),
-            Err(e) => eprintln!("[diag] pipeline FAILED: {e}"),
-        }
     }
 }

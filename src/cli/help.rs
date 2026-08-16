@@ -140,7 +140,7 @@ Attach, detach, sleep, or wake monitors
 {actions}
   detach     Detach a monitor from the desktop
   attach     Re-attach a monitor to the desktop
-  brightness Set the display backlight level (0-100)
+  brightness Set the display backlight level (0-100, or min, max, boost)
   sleep      Put every monitor to sleep
   wake       Wake every monitor
 
@@ -218,7 +218,7 @@ Re-attach a monitor to the desktop
 pub fn monitor_brightness() -> String {
     format!(
         "rmod monitor brightness
-Set the display backlight level (0-100)
+Set the display backlight level (0-100, or min, max, boost)
 
 {usage}
   rmod monitor brightness <VALUE> [OPTIONS]
@@ -229,7 +229,9 @@ Set the display backlight level (0-100)
 {examples}
   rmod monitor brightness 60
   rmod monitor brightness 40 -m 2 -v gamma
-  rmod monitor brightness 75 -m all",
+  rmod monitor brightness 75 -m all
+  rmod monitor brightness min -m 2
+  rmod monitor brightness boost",
         usage = section("Usage:"),
         options = section("Options:"),
         option_rows = options(BRIGHTNESS_FLAGS),
@@ -481,7 +483,7 @@ Usage:
 Actions:
   detach     Detach a monitor from the desktop
   attach     Re-attach a monitor to the desktop
-  brightness Set the display backlight level (0-100)
+  brightness Set the display backlight level (0-100, or min, max, boost)
   sleep      Put every monitor to sleep
   wake       Wake every monitor
 
@@ -558,20 +560,23 @@ Examples:
     #[test]
     fn monitor_brightness_help_matches_spec_mockup() {
         let expected = "rmod monitor brightness
-Set the display backlight level (0-100)
+Set the display backlight level (0-100, or min, max, boost)
 
 Usage:
   rmod monitor brightness <VALUE> [OPTIONS]
 
 Options:
-  -m, --monitor  Monitor number or all (default: primary)
-  -v, --via      Backend: ddc, slider, or gamma (default: auto)
-  --help         Print help
+  -m, --monitor    Monitor number or all (default: primary)
+  -v, --via        Backend: ddc, slider, or gamma (default: auto; not valid with min, max, boost)
+  min, max, boost  Composite modes: min (barely lit), max (hardware 100 + gamma 100), boost (hardware 100 + overdriven gamma)
+  --help           Print help
 
 Examples:
   rmod monitor brightness 60
   rmod monitor brightness 40 -m 2 -v gamma
-  rmod monitor brightness 75 -m all";
+  rmod monitor brightness 75 -m all
+  rmod monitor brightness min -m 2
+  rmod monitor brightness boost";
         assert_eq!(strip_ansi(&monitor_brightness()), expected);
     }
 

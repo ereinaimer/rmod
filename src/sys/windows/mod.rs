@@ -11,7 +11,7 @@
 pub(crate) mod apply;
 pub(crate) mod attach;
 pub(crate) mod bindings;
-mod brightness;
+pub(crate) mod brightness;
 mod capabilities;
 pub(crate) mod edid;
 mod fade;
@@ -25,7 +25,7 @@ pub(crate) mod temp;
 
 pub use apply::{ApplyOutcome, Change, MainChange, MainOutcome, Refresh};
 pub use attach::{AttachAction, AttachChange, AttachOutcome};
-pub use brightness::{BrightnessBackend, BrightnessOutcome};
+pub use brightness::{BrightnessBackend, BrightnessLayer, BrightnessOutcome, BrightnessValue};
 pub use capabilities::Mode;
 pub use layout::{Direction, PlacementChange, PlacementOutcome};
 pub use query::Monitor;
@@ -353,18 +353,23 @@ pub fn get_primary_mode() -> Result<Monitor, String> {
     }
 }
 
-/// Sets a display's brightness to `value` (0-100), auto-detecting the
-/// backend chain `ddc -> slider -> gamma`, or forcing the backend in `via`.
+/// Sets a display's brightness, auto-detecting the backend chain
+/// `ddc -> slider -> gamma`, or forcing the backend in `via`.
+///
+/// `value` is a 0-100 [`BrightnessValue::Percent`] or one of the composite
+/// modes [`BrightnessValue::Min`], [`BrightnessValue::Max`], and
+/// [`BrightnessValue::Boost`], which compose a hardware write with a gamma
+/// ramp. Modes reject a forced backend.
 ///
 /// `monitor` is the 1-based number from `rmod list`; `None` selects the
 /// primary display.
 ///
 /// # Errors
-/// Unknown monitor, a forced backend the display does not support, or no
-/// brightness-control path at all.
+/// Unknown monitor, a forced backend the display does not support, a mode
+/// with a forced backend, or no brightness-control path at all.
 pub fn set_brightness(
     monitor: Option<u32>,
-    value: u32,
+    value: BrightnessValue,
     via: Option<BrightnessBackend>,
 ) -> Result<BrightnessOutcome, String> {
     if fake::enabled() {
