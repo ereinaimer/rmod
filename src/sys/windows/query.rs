@@ -12,7 +12,7 @@ use super::bindings::{
 };
 use super::capabilities::{enumerate_modes, normalize_modes};
 use super::edid::{self, GamutCoverage};
-use super::hdr::{query_hdr, HdrInfo};
+use super::hdr::{connector_for_path, hdr_from_path, match_path, query_connector, HdrInfo};
 use std::ffi::{OsStr, c_void};
 use std::os::windows::ffi::OsStrExt;
 use std::ptr;
@@ -83,6 +83,10 @@ pub struct Monitor {
     /// Orientation from the current mode (`dm_display_orientation`).
     #[allow(dead_code)]
     pub orientation: u32,
+    /// Connector type from the display-config path (`output_technology`),
+    /// e.g. `"Internal"`, `"HDMI"`, `"DisplayPort"`; `None` = unknown.
+    #[allow(dead_code)]
+    pub connector: Option<&'static str>,
 }
 
 /// Enumerates the device names of every display attached to the desktop.
@@ -212,6 +216,7 @@ pub(crate) fn describe(index: usize, name: &str) -> Monitor {
         bits_per_pel: mode.as_ref().map_or(0, |m| m.dm_bits_per_pel),
         log_pixels: mode.as_ref().map_or(0, |m| m.dm_log_pixels as u32),
         orientation: mode.as_ref().map_or(0, |m| m.dm_display_orientation),
+        connector: query_connector(name),
     }
 }
 
@@ -229,6 +234,7 @@ fn describe_with_edid(
     native_refresh: u32,
 ) -> Monitor {
     let mode = current_mode(name);
+    let path = match_path(name);
     Monitor {
         number: index as u32 + 1,
         name: display_name,
@@ -257,7 +263,8 @@ fn describe_with_edid(
             .physical_size_cm
             .and_then(|size| physical_dpi(native_width, native_height, size)),
         gamut: edid.chromaticity.map(|c| edid::gamut_coverage(&c)),
-        hdr: query_hdr(name, edid.hdr.as_ref()),
+        hdr: hdr_from_path(path.as_ref(), edid.hdr.as_ref()),
+        connector: path.as_ref().map(connector_for_path),
         bits_per_pel: mode.as_ref().map_or(0, |m| m.dm_bits_per_pel),
         log_pixels: mode.as_ref().map_or(0, |m| m.dm_log_pixels as u32),
         orientation: mode.as_ref().map_or(0, |m| m.dm_display_orientation),

@@ -68,6 +68,7 @@ fn monitor(number: u32) -> Option<Monitor> {
             bits_per_pel: 32,
             log_pixels: 96,
             orientation: 0,
+            connector: Some("Internal"),
         }),
         2 => Some(Monitor {
             number: 2,
@@ -99,6 +100,7 @@ fn monitor(number: u32) -> Option<Monitor> {
             bits_per_pel: 30,
             log_pixels: 144,
             orientation: 0,
+            connector: Some("DisplayPort"),
         }),
         _ => None,
     }

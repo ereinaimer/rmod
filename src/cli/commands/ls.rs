@@ -108,6 +108,7 @@ fn print_monitor(m: &crate::sys::windows::Monitor) {
     println!("  DPI:             {}", dpi_line(m.dpi_physical, m.log_pixels));
     println!("  Color Depth:     {}", color_depth(m.bits_per_pel));
     println!("  Orientation:     {}", orientation(m.orientation));
+    println!("  Connector:       {}", m.connector.unwrap_or("Unknown"));
     println!("  Manufactured:    Week {}, {}", m.manufactured_week, m.manufactured_year);
     println!("  Gamma:           {}", gamma_line(m.gamma));
     println!("  HDR:             {}", hdr_label(m.hdr.as_ref()));

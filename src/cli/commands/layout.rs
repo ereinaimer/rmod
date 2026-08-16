@@ -498,6 +498,7 @@ mod tests {
             bits_per_pel: 0,
             log_pixels: 0,
             orientation: 0,
+            connector: None,
         }
     }
 
