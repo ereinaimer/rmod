@@ -1,6 +1,6 @@
 //! Windows backend: query and apply display settings via Win32 functions.
 //!
-//! [`list`] reports every attached display, [`caps`] returns the modes a
+//! [`list`] reports every attached display, [`list_detailed`] returns the modes a
 //! display supports, [`max`] applies the best supported mode. Raw FFI lives
 //! in [`bindings`]; device querying in [`query`]; mode enumeration in
 //! [`capabilities`]; mode application in [`apply`]. When the `RMOD_SYS_FAKE`

@@ -1,7 +1,7 @@
 //! Supported-mode enumeration and normalization.
 //!
 //! Walks the mode list Windows exposes for a device and produces the
-//! deduplicated, ascending-ordered list shown by the caps command.
+//! deduplicated, ascending-ordered list shown by the list command.
 
 use super::bindings::{DevmodeW, EnumDisplaySettingsW, encode_wide};
 

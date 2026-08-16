@@ -285,6 +285,15 @@ fn set_max_with_all() {
 }
 
 #[test]
+fn set_single_monitor_output_includes_display_name() {
+    let out = rmod(&["set", "--max", "-m", SERIAL_B, "-y"]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("RMOD Fake Monitor 2 [:2]"), "stdout: {text}");
+    assert!(text.contains("applied"), "stdout: {text}");
+}
+
+#[test]
 fn set_max_unknown_serial_is_error() {
     let out = rmod(&["set", "--max", "-m", "NOPE"]);
     assert_eq!(out.status.code(), Some(2));
@@ -821,6 +830,31 @@ fn set_with_orientation() {
         assert!(!err.contains("unknown command"));
         assert!(!err.contains("unexpected argument"));
     }
+}
+
+#[test]
+fn set_orientation_zero_is_accepted() {
+    let out = rmod(&["set", "-p", "1080", "-o", "0", "-y"]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+}
+
+#[test]
+fn monitor_keywords_are_case_insensitive() {
+    let out = rmod(&["set", "-m", "PRIMARY", "--max", "-y"]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("RMOD Fake Monitor 1 [:1]"));
+
+    let out = rmod(&["set", "-m", "ALL", "-p", "1080", "-y"]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("RMOD Fake Monitor 1"), "stdout: {text}");
+    assert!(text.contains("RMOD Fake Monitor 2"), "stdout: {text}");
+
+    let out = rmod(&["temp", "-m", "ALL", "3400"]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("set RMOD Fake Monitor 1 [:1]"), "stdout: {text}");
+    assert!(text.contains("set RMOD Fake Monitor 2 [:2]"), "stdout: {text}");
 }
 
 #[test]
