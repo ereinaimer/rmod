@@ -1,5 +1,8 @@
 use std::process::Command;
 
+const SERIAL_A: &str = "ABC12345678"; // RMOD Fake Monitor 1 (primary)
+const SERIAL_B: &str = "DEF45678901"; // RMOD Fake Monitor 2
+
 fn rmod(args: &[&str]) -> std::process::Output {
     rmod_env(args, &[])
 }
@@ -72,7 +75,6 @@ fn version_flags_exit_zero() {
 fn subcommand_help_flags_exit_zero() {
     assert_eq!(rmod(&["ls", "-h"]).status.code(), Some(2));
     assert!(rmod(&["ls", "--help"]).status.success());
-    assert!(rmod(&["ls", "--caps", "--help"]).status.success());
     assert_eq!(rmod(&["set", "-p", "1080", "-h"]).status.code(), Some(2));
     assert!(rmod(&["set", "-p", "4k", "--help"]).status.success());
     assert_eq!(rmod(&["layout", "-h"]).status.code(), Some(2));
@@ -107,17 +109,78 @@ fn list_is_alias_for_ls() {
 }
 
 #[test]
-fn list_caps_works() {
-    let out = rmod(&["list", "--caps", "-m", "2"]);
+fn list_lists_displays() {
+    let out = rmod(&["list"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert!(stdout(&out).contains("RMOD Fake Monitor 2"));
+    let stdout = stdout(&out);
+    assert!(stdout.contains("RMOD Fake Monitor 1"));
+    assert!(stdout.contains("RMOD Fake Monitor 2"));
 }
 
 #[test]
-fn list_monitor_without_caps_is_error() {
-    let out = rmod(&["list", "-m", "2"]);
+fn list_shows_full_edid_block() {
+    let out = rmod(&["list"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    for line in [
+        "Primary:         true",
+        "Manufacturer:    RM1",
+        "Current:         1920x1080 @ 60Hz",
+        "Native:          1920x1080 @ 60Hz",
+        "Manufactured:    Week 12, 2023",
+        "Supported:",
+    ] {
+        assert!(text.contains(line), "missing line '{line}' in:\n{text}");
+    }
+}
+
+#[test]
+fn list_marks_primary_display() {
+    let out = rmod(&["list"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert_eq!(text.matches("Primary:         true").count(), 1);
+    assert_eq!(text.matches("Primary:         false").count(), 1);
+}
+
+#[test]
+fn list_shows_supported_modes_grouped_by_resolution() {
+    let out = rmod(&["list"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    for line in [
+        "1280x720  @ 60Hz",
+        "1920x1080  @ 60Hz, 144Hz",
+        "2560x1440  @ 60Hz, 144Hz",
+        "3840x2160  @ 60Hz, 144Hz",
+    ] {
+        assert!(text.contains(line), "missing mode line '{line}' in:\n{text}");
+    }
+}
+
+#[test]
+fn list_lists_monitors_in_stable_order() {
+    let out = rmod(&["list"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    // Sort key is the EDID fingerprint (a1b2c3d4 < b2c3d4e5 in the fake world).
+    let pos_a = text.find("RMOD Fake Monitor 1").expect("monitor 1 present");
+    let pos_b = text.find("RMOD Fake Monitor 2").expect("monitor 2 present");
+    assert!(pos_a < pos_b, "monitors must sort by fingerprint");
+}
+
+#[test]
+fn list_rejects_old_caps_flag() {
+    let out = rmod(&["list", "--caps"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("-m, --monitor only works with --caps"));
+    assert!(stderr(&out).contains("unexpected argument --caps for list"));
+}
+
+#[test]
+fn list_rejects_old_monitor_flag() {
+    let out = rmod(&["list", "-m", SERIAL_A]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("unexpected argument -m for list"));
 }
 
 #[test]
@@ -132,41 +195,6 @@ fn invalid_resolution_exits_2() {
     let out = rmod(&["set", "480"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("error:"));
-}
-
-#[test]
-fn ls_lists_displays() {
-    let out = rmod(&["ls"]);
-    assert!(out.status.success(), "stderr: {}", stderr(&out));
-    let stdout = stdout(&out);
-    let mut lines = stdout.lines();
-    let header = lines.next().expect("missing header line");
-    assert!(header.starts_with("#  PRIMARY"));
-    assert!(header.contains("REFRESH"));
-    let sep = lines.next().expect("missing separator line");
-    assert_eq!(sep.chars().count(), header.chars().count());
-    assert!(sep.chars().all(|c| c == '─'));
-    let data: Vec<&str> = lines.collect();
-    assert!(!data.is_empty(), "no monitor rows");
-    for line in &data {
-        assert_eq!(line.len(), header.len(), "misaligned row: '{line}'");
-        assert!(line.chars().next().is_some_and(|c| c.is_ascii_digit()));
-        assert!(line.contains('x'));
-        assert!(line.trim_end().ends_with("Hz"));
-    }
-}
-
-#[test]
-fn ls_marks_primary_display() {
-    let out = rmod(&["ls"]);
-    assert!(out.status.success());
-    let stdout = stdout(&out);
-    let data: Vec<&str> = stdout.lines().skip(2).collect();
-    let starred = data
-        .iter()
-        .filter(|l| l.split_whitespace().any(|t| t == "*"))
-        .count();
-    assert_eq!(starred, 1, "expected exactly one primary marker");
 }
 
 #[test]
@@ -205,40 +233,6 @@ fn flag_with_trailing_argument_exits_2() {
 }
 
 #[test]
-fn caps_lists_supported_modes() {
-    let out = rmod(&["ls", "--caps"]);
-    assert!(out.status.success(), "stderr: {}", stderr(&out));
-    let stdout = stdout(&out);
-    let mut lines = stdout.lines();
-    let header = lines.next().expect("missing monitor line");
-    assert!(!header.trim().is_empty());
-    let modes: Vec<&str> = lines.collect();
-    assert!(!modes.is_empty(), "no supported modes listed");
-    let at_pos = strip_ansi(modes[0])
-        .find('@')
-        .expect("missing '@' in mode line");
-    for line in &modes {
-        let clean = strip_ansi(line);
-        assert!(line.starts_with("  "), "expected indented mode: '{line}'");
-        assert!(line.contains('x'));
-        assert!(line.contains('@'));
-        assert!(line.ends_with("Hz"));
-        assert_eq!(
-            clean.find('@'),
-            Some(at_pos),
-            "misaligned mode line: '{line}'"
-        );
-    }
-    let starred = modes.iter().filter(|l| l.contains('*')).count();
-    assert_eq!(starred, 1, "expected exactly one active mode marker");
-}
-
-#[test]
-fn caps_with_monitor() {
-    assert!(rmod(&["ls", "--caps", "-m", "1"]).status.success());
-}
-
-#[test]
 fn ls_shows_fake_environment() {
     let out = rmod(&["ls"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
@@ -251,42 +245,6 @@ fn ls_shows_fake_environment() {
         stdout.contains("1920x1080"),
         "expected fake resolution: {stdout}"
     );
-}
-
-#[test]
-fn caps_all_lists_every_monitor() {
-    let out = rmod(&["ls", "--caps", "-m", "all"]);
-    assert!(out.status.success(), "stderr: {}", stderr(&out));
-    let stdout = stdout(&out);
-    assert!(stdout.contains("RMOD Fake Monitor"));
-    let modes: Vec<&str> = stdout.lines().filter(|l| l.starts_with("  ")).collect();
-    assert!(!modes.is_empty(), "no mode rows listed");
-    for line in &modes {
-        assert!(line.contains('x'));
-        assert!(line.contains('@'));
-        assert!(line.ends_with("Hz"));
-    }
-}
-
-#[test]
-fn caps_unknown_monitor_exits_2() {
-    let out = rmod(&["ls", "--caps", "-m", "999"]);
-    assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("monitor 999 not found"));
-}
-
-#[test]
-fn caps_zero_monitor_exits_2() {
-    let out = rmod(&["ls", "--caps", "-m", "0"]);
-    assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("monitor numbers start at 1"));
-}
-
-#[test]
-fn ls_m_without_caps_is_error() {
-    let out = rmod(&["ls", "-m", "2"]);
-    assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("-m, --monitor only works with --caps"));
 }
 
 #[test]
@@ -308,7 +266,7 @@ fn set_max_primary() {
 
 #[test]
 fn set_max_with_monitor() {
-    let out = rmod(&["set", "--max", "-m", "1"]);
+    let out = rmod(&["set", "--max", "-m", SERIAL_A]);
     if !out.status.success() {
         let err = stderr(&out);
         assert!(!err.contains("unknown command"));
@@ -327,17 +285,35 @@ fn set_max_with_all() {
 }
 
 #[test]
-fn set_max_nonexistent_monitor_is_error() {
-    let out = rmod(&["set", "--max", "-m", "99"]);
+fn set_max_unknown_serial_is_error() {
+    let out = rmod(&["set", "--max", "-m", "NOPE"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("monitor 99 not found"));
+    assert!(stderr(&out).contains("monitor with id 'NOPE' not found"));
 }
 
 #[test]
-fn set_max_nonexistent_monitor_yes_flag() {
-    let out = rmod(&["set", "--max", "-m", "99", "-y"]);
+fn set_targets_monitor_by_fingerprint() {
+    let out = rmod(&["set", "-r", "144", "-m", "b2c3d4e5", "-y"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("RMOD Fake Monitor 2 [:2]"),
+        "fingerprint must resolve to monitor 2: {}",
+        stdout(&out)
+    );
+    let out = rmod(&["set", "-r", "144", "-m", "a1b2c3d4", "-y"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("RMOD Fake Monitor 1 [:1]"),
+        "fingerprint must resolve to monitor 1: {}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn set_max_unknown_serial_yes_flag() {
+    let out = rmod(&["set", "--max", "-m", "NOPE", "-y"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("monitor 99 not found"));
+    assert!(stderr(&out).contains("monitor with id 'NOPE' not found"));
 }
 
 #[test]
@@ -349,9 +325,9 @@ fn set_max_zero_monitor_is_error() {
 
 #[test]
 fn set_nonexistent_monitor_is_error() {
-    let out = rmod(&["set", "-w", "1920", "-h", "1080", "-r", "60", "-m", "99"]);
+    let out = rmod(&["set", "-w", "1920", "-h", "1080", "-r", "60", "-m", "NOPE"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("monitor 99 not found"));
+    assert!(stderr(&out).contains("monitor with id 'NOPE' not found"));
 }
 
 #[test]
@@ -389,21 +365,19 @@ fn set_all_unsupported_mode_is_error() {
 fn current_mode() -> (String, String, String) {
     let out = rmod(&["ls"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
-    let stdout = stdout(&out);
-    let row = stdout
+    let text = stdout(&out);
+    let line = text
         .lines()
-        .find(|l| l.contains('*') && l.chars().next().is_some_and(|c| c.is_ascii_digit()))
-        .expect("no primary monitor row");
-    let tokens: Vec<&str> = row.split_whitespace().collect();
-    let (width, height) = tokens[tokens.len() - 2]
-        .split_once('x')
-        .map(|(w, h)| (w.to_string(), h.to_string()))
-        .expect("resolution column");
-    let refresh = tokens
-        .last()
-        .and_then(|t| t.strip_suffix("Hz"))
-        .expect("refresh column");
-    (width, height, refresh.to_string())
+        .find(|l| l.trim_start().starts_with("Current:"))
+        .expect("no Current: line");
+    let value = line
+        .split_once(':')
+        .map(|(_, v)| v.trim())
+        .expect("Current: value");
+    let (res, refresh) = value.split_once('@').expect("resolution @ refresh");
+    let (width, height) = res.trim().split_once('x').expect("WxH");
+    let refresh = refresh.trim().trim_end_matches("Hz");
+    (width.trim().into(), height.trim().into(), refresh.into())
 }
 
 #[test]
@@ -498,7 +472,7 @@ fn layout_show_lists_positions() {
 
 #[test]
 fn layout_places_monitor_left_of_primary() {
-    let out = rmod(&["layout", "-m", "2", "--left-of", "1", "-y"]);
+    let out = rmod(&["layout", "-m", SERIAL_B, "--left-of", SERIAL_A, "-y"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let stdout = stdout(&out);
     assert!(
@@ -513,7 +487,7 @@ fn layout_places_monitor_left_of_primary() {
 
 #[test]
 fn layout_places_monitor_below_explicit_reference() {
-    let out = rmod(&["layout", "-m", "2", "--below", "1", "-y"]);
+    let out = rmod(&["layout", "-m", SERIAL_B, "--below", SERIAL_A, "-y"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert!(
         stdout(&out).contains("below"),
@@ -524,7 +498,7 @@ fn layout_places_monitor_below_explicit_reference() {
 
 #[test]
 fn layout_noop_placement_reports_already() {
-    let out = rmod(&["layout", "-m", "2", "--right-of", "1", "-y"]);
+    let out = rmod(&["layout", "-m", SERIAL_B, "--right-of", SERIAL_A, "-y"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let stdout = stdout(&out);
     assert!(
@@ -545,7 +519,7 @@ fn layout_noop_placement_reports_already() {
 
 #[test]
 fn layout_places_monitor_right_of_explicit_reference() {
-    let out = rmod(&["layout", "-m", "1", "--right-of", "2", "-y"]);
+    let out = rmod(&["layout", "-m", SERIAL_A, "--right-of", SERIAL_B, "-y"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let stdout = stdout(&out);
     assert!(
@@ -556,7 +530,7 @@ fn layout_places_monitor_right_of_explicit_reference() {
 
 #[test]
 fn layout_places_monitor_above_explicit_reference() {
-    let out = rmod(&["layout", "-m", "2", "--above", "1", "-y"]);
+    let out = rmod(&["layout", "-m", SERIAL_B, "--above", SERIAL_A, "-y"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let stdout = stdout(&out);
     assert!(
@@ -567,56 +541,92 @@ fn layout_places_monitor_above_explicit_reference() {
 
 #[test]
 fn layout_primary_promotes() {
-    let out = rmod(&["layout", "-m", "2", "--primary", "-y"]);
+    let out = rmod(&["layout", "-m", SERIAL_B, "--primary", "-y"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert!(stdout(&out).contains("is now the main display"));
     assert!(!stdout(&out).contains("keep changes"));
     assert!(!stdout(&out).contains("applied"));
-    let noop = rmod(&["layout", "-m", "1", "--primary", "-y"]);
+    let noop = rmod(&["layout", "-m", SERIAL_A, "--primary", "-y"]);
     assert!(noop.status.success(), "stderr: {}", stderr(&noop));
     assert!(stdout(&noop).contains("already the main display"));
 }
 
 #[test]
+fn layout_primary_keyword_promotes_primary_is_noop() {
+    let out = rmod(&["layout", "-m", "primary", "--primary", "-y"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("already the main display"));
+}
+
+#[test]
+fn layout_primary_keyword_as_reference() {
+    let out = rmod(&["layout", "-m", SERIAL_B, "--left-of", "primary", "-y"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let stdout = stdout(&out);
+    assert!(stdout.contains("placed"), "missing placement line: {stdout}");
+    assert!(
+        stdout.contains("to the left of"),
+        "missing direction wording: {stdout}"
+    );
+}
+
+#[test]
+fn layout_all_is_rejected() {
+    for args in [
+        &["layout", "-m", "all", "--primary"][..],
+        &["layout", "-m", SERIAL_B, "--left-of", "all", "-y"][..],
+    ] {
+        let out = rmod(args);
+        assert_eq!(out.status.code(), Some(2), "args: {args:?}");
+        assert!(
+            stderr(&out).contains("not 'all'"),
+            "args: {args:?}: {}",
+            stderr(&out)
+        );
+    }
+}
+
+#[test]
 fn layout_self_reference_is_error() {
-    let out = rmod(&["layout", "-m", "1", "--left-of", "1", "-y"]);
+    let out = rmod(&["layout", "-m", SERIAL_A, "--left-of", SERIAL_A, "-y"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("error: cannot place monitor 1 relative to itself"));
 }
 
 #[test]
 fn layout_missing_monitor_is_error() {
-    let out = rmod(&["layout", "--left-of", "1"]);
+    let out = rmod(&["layout", "--left-of", SERIAL_A]);
     assert_eq!(out.status.code(), Some(2));
     assert!(
-        stderr(&out).contains("missing monitor for layout\ne.g. rmod layout -m 2 --left-of 1")
+        stderr(&out)
+            .contains("missing monitor for layout\ne.g. rmod layout -m a1b2c3d4 --left-of b2c3d4e5")
     );
 }
 
 #[test]
 fn layout_monitor_without_action_is_error() {
-    let out = rmod(&["layout", "-m", "2"]);
+    let out = rmod(&["layout", "-m", SERIAL_B]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("error: -m, --monitor needs a direction flag or --primary"));
 }
 
 #[test]
 fn layout_missing_value_for_direction_is_error() {
-    let out = rmod(&["layout", "-m", "2", "--left-of"]);
+    let out = rmod(&["layout", "-m", SERIAL_B, "--left-of"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("error: --left-of needs a value"));
 }
 
 #[test]
 fn layout_primary_with_direction_is_error() {
-    let out = rmod(&["layout", "-m", "2", "--primary", "--left-of", "1"]);
+    let out = rmod(&["layout", "-m", SERIAL_B, "--primary", "--left-of", SERIAL_A]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("error: use --primary or a direction flag, not both"));
 }
 
 #[test]
 fn layout_unknown_argument_is_error() {
-    let out = rmod(&["layout", "-m", "2", "foo"]);
+    let out = rmod(&["layout", "-m", SERIAL_B, "foo"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("error: unexpected argument foo for layout"));
 }
@@ -633,8 +643,8 @@ fn layout_help_flag() {
         text.contains("--primary"),
         "layout page must advertise --primary"
     );
-    assert_eq!(rmod(&["layout", "-m", "2", "-h"]).status.code(), Some(2));
-    assert!(rmod(&["layout", "-m", "2", "--help"]).status.success());
+    assert_eq!(rmod(&["layout", "-m", SERIAL_B, "-h"]).status.code(), Some(2));
+    assert!(rmod(&["layout", "-m", SERIAL_B, "--help"]).status.success());
 }
 
 #[test]
@@ -785,7 +795,7 @@ fn set_with_max_refresh() {
 
 #[test]
 fn set_with_monitor() {
-    let out = rmod(&["set", "-p", "1080", "-m", "2"]);
+    let out = rmod(&["set", "-p", "1080", "-m", SERIAL_B]);
     if !out.status.success() {
         let err = stderr(&out);
         assert!(!err.contains("unknown command"));
@@ -805,7 +815,7 @@ fn set_with_all() {
 
 #[test]
 fn set_with_orientation() {
-    let out = rmod(&["set", "-w", "1920", "-h", "1080", "-m", "2", "-o", "90"]);
+    let out = rmod(&["set", "-w", "1920", "-h", "1080", "-m", SERIAL_B, "-o", "90"]);
     if !out.status.success() {
         let err = stderr(&out);
         assert!(!err.contains("unknown command"));
@@ -863,28 +873,28 @@ fn monitor_help_exits_zero() {
 
 #[test]
 fn monitor_detach_second_monitor() {
-    let out = rmod(&["monitor", "detach", "-m", "2", "-y"]);
+    let out = rmod(&["monitor", "detach", "-m", SERIAL_B, "-y"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert!(stdout(&out).contains("detached RMOD Fake Monitor 2 [:2]"));
 }
 
 #[test]
 fn monitor_disable_is_alias_for_detach() {
-    let out = rmod(&["monitor", "disable", "-m", "2", "-y"]);
+    let out = rmod(&["monitor", "disable", "-m", SERIAL_B, "-y"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert!(stdout(&out).contains("detached RMOD Fake Monitor 2 [:2]"));
 }
 
 #[test]
 fn monitor_off_is_alias_for_detach() {
-    let out = rmod(&["monitor", "off", "-m", "2", "-y"]);
+    let out = rmod(&["monitor", "off", "-m", SERIAL_B, "-y"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert!(stdout(&out).contains("detached RMOD Fake Monitor 2 [:2]"));
 }
 
 #[test]
 fn monitor_detach_primary_is_error() {
-    let out = rmod(&["monitor", "detach", "-m", "1", "-y"]);
+    let out = rmod(&["monitor", "detach", "-m", SERIAL_A, "-y"]);
     assert_eq!(out.status.code(), Some(2), "stderr: {}", stderr(&out));
     assert!(stderr(&out).contains("cannot detach the primary display"));
 }
@@ -904,21 +914,21 @@ fn monitor_detach_without_monitor_is_error() {
 
 #[test]
 fn monitor_attach_attached_is_unchanged() {
-    let out = rmod(&["monitor", "attach", "-m", "2", "-y"]);
+    let out = rmod(&["monitor", "attach", "-m", SERIAL_B, "-y"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert!(stdout(&out).contains("RMOD Fake Monitor 2 [:2] is already attached"));
 }
 
 #[test]
 fn monitor_enable_is_alias_for_attach() {
-    let out = rmod(&["monitor", "enable", "-m", "2", "-y"]);
+    let out = rmod(&["monitor", "enable", "-m", SERIAL_B, "-y"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert!(stdout(&out).contains("RMOD Fake Monitor 2 [:2] is already attached"));
 }
 
 #[test]
 fn monitor_on_is_alias_for_attach() {
-    let out = rmod(&["monitor", "on", "-m", "2", "-y"]);
+    let out = rmod(&["monitor", "on", "-m", SERIAL_B, "-y"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert!(stdout(&out).contains("RMOD Fake Monitor 2 [:2] is already attached"));
 }
@@ -973,7 +983,7 @@ fn monitor_help_hides_aliases() {
 
 #[test]
 fn monitor_sleep_rejects_monitor_flag() {
-    let out = rmod(&["monitor", "sleep", "-m", "2"]);
+    let out = rmod(&["monitor", "sleep", "-m", SERIAL_B]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("not valid for monitor sleep"));
 }
@@ -1196,7 +1206,7 @@ fn temp_reset_restores_daylight() {
 
 #[test]
 fn temp_with_monitor_targets_second_display() {
-    let out = rmod(&["temp", "-m", "2", "4000"]);
+    let out = rmod(&["temp", "-m", SERIAL_B, "4000"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert!(stdout(&out).contains("set RMOD Fake Monitor 2 [:2] to 4000K"));
 }
@@ -1264,3 +1274,55 @@ fn temp_help_flag() {
     assert!(!text.contains("-y, --yes"), "temp page must not advertise -y");
 }
 
+#[test]
+fn serial_targeting_is_case_insensitive() {
+    let out = rmod(&["set", "--max", "-m", "abc12345678", "-y"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("3840x2160"),
+        "got: {}",
+        stdout(&out)
+    );
+    let out = rmod(&["temp", "-m", "def45678901", "3400"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("set RMOD Fake Monitor 2 [:2] to 3400K"));
+}
+
+#[test]
+fn serial_targeting_works_across_all_commands() {
+    let set = rmod(&["set", "-p", "1440", "-m", SERIAL_B, "-y"]);
+    assert!(set.status.success(), "set: {}", stderr(&set));
+    let layout = rmod(&["layout", "-m", SERIAL_B, "--left-of", SERIAL_A, "-y"]);
+    assert!(layout.status.success(), "layout: {}", stderr(&layout));
+    let detach = rmod(&["monitor", "detach", "-m", SERIAL_B, "-y"]);
+    assert!(detach.status.success(), "detach: {}", stderr(&detach));
+    let temp = rmod(&["temp", "-m", SERIAL_B, "3400"]);
+    assert!(temp.status.success(), "temp: {}", stderr(&temp));
+}
+
+#[test]
+fn unknown_serial_errors_for_every_command() {
+    for args in [
+        &["set", "--max", "-m", "NOPE"][..],
+        &["set", "-w", "1920", "-h", "1080", "-m", "NOPE"][..],
+        &["layout", "-m", "NOPE", "--primary"][..],
+        &["layout", "-m", SERIAL_A, "--left-of", "NOPE"][..],
+        &["monitor", "detach", "-m", "NOPE"][..],
+        &["temp", "-m", "NOPE", "3400"][..],
+    ] {
+        let out = rmod(args);
+        assert_eq!(out.status.code(), Some(2), "args: {args:?}");
+        assert!(
+            stderr(&out).contains("not found. run rmod list to see connected displays"),
+            "args: {args:?}: {}",
+            stderr(&out)
+        );
+    }
+}
+
+#[test]
+fn primary_keyword_targets_primary() {
+    let out = rmod(&["temp", "-m", "primary", "3000"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("set RMOD Fake Monitor 1 [:1] to 3000K"));
+}

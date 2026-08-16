@@ -416,7 +416,7 @@ fn validate_mode(name: &str, display: &str, devmode: &DevmodeW) -> Result<(), St
 fn describe_change_failure(code: i32, display: &str, devmode: &DevmodeW) -> String {
     if code == DISP_CHANGE_BADMODE {
         return format!(
-            "{display} does not support {}x{}@{}Hz. run rmod list --caps to see supported modes",
+            "{display} does not support {}x{}@{}Hz. run rmod list to see supported modes",
             devmode.dm_pels_width, devmode.dm_pels_height, devmode.dm_display_frequency
         );
     }
@@ -488,7 +488,7 @@ fn resolve_refresh(
         Refresh::Keep => Ok(current_refresh),
         Refresh::Fixed(r) => Ok(r),
         Refresh::Max => best_refresh(modes, width, height)
-            .ok_or_else(|| format!("{display} does not support {width}x{height}. run rmod list --caps to see supported modes")),
+            .ok_or_else(|| format!("{display} does not support {width}x{height}. run rmod list to see supported modes")),
     }
 }
 
@@ -706,7 +706,7 @@ mod tests {
         );
         assert_eq!(
             describe_change_failure(DISP_CHANGE_BADMODE, "Generic PnP Monitor [:1]", &devmode),
-            "Generic PnP Monitor [:1] does not support 9999x9999@1Hz. run rmod list --caps to see supported modes"
+            "Generic PnP Monitor [:1] does not support 9999x9999@1Hz. run rmod list to see supported modes"
         );
     }
 
@@ -1046,7 +1046,7 @@ mod tests {
                 60,
                 "Generic PnP Monitor [:1]"
             ),
-            Err("Generic PnP Monitor [:1] does not support 320x200. run rmod list --caps to see supported modes".to_string())
+            Err("Generic PnP Monitor [:1] does not support 320x200. run rmod list to see supported modes".to_string())
         );
     }
 

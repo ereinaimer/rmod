@@ -74,7 +74,7 @@ pub fn run(command: Command) -> i32 {
             println!("{}", version());
             0
         }
-        Command::List { caps, monitor } => run_list(caps, monitor),
+        Command::List => run_list(),
         Command::Layout { action, yes } => run_layout(action, yes),
         Command::Set {
             spec,
@@ -91,13 +91,24 @@ pub fn run(command: Command) -> i32 {
     }
 }
 
-/// Maps a command target to the monitor number [`crate::sys::windows`]
-/// expects; the primary display is `None`.
-fn monitor_of(target: MonitorTarget) -> Option<u32> {
+/// Resolves a MonitorTarget to a monitor index (1-based) for backend calls;
+/// the primary display is `None`. An unknown monitor id is a hard error.
+///
+/// # Errors
+/// Returns `Err` when an id matches no attached display.
+fn resolve_target(target: &MonitorTarget) -> Result<Option<u32>, String> {
     match target {
-        MonitorTarget::Primary => None,
-        MonitorTarget::Index(n) => Some(n),
+        MonitorTarget::Primary => Ok(None),
         MonitorTarget::All => unreachable!(),
+        MonitorTarget::Index(n) => {
+            crate::sys::windows::resolve_device(Some(*n), &crate::sys::windows::enumerate_devices())
+                .map(|(index, _)| Some(index as u32 + 1))
+        }
+        MonitorTarget::Id(id) => {
+            crate::sys::windows::resolve_by_id(id).map(Some).ok_or_else(|| {
+                format!("monitor with id '{id}' not found. run rmod list to see connected displays")
+            })
+        }
     }
 }
 
@@ -210,7 +221,7 @@ where
             Ok(mode) => {
                 println!(
                     "{}",
-                    describe_revert(&mode, change.previous_orientation, None)
+                    describe_revert(&mode, change.previous_orientation, Some(&change.display))
                 );
                 0
             }

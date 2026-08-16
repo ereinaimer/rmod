@@ -7,13 +7,19 @@
 use crate::cli::{MonitorTarget, TempAction};
 use crate::sys::windows::{self, TempChange};
 
-use super::monitor_of;
+use super::resolve_target;
 
 /// Runs the `temp` command with the parsed action and target.
 pub(super) fn run_temp(action: TempAction, monitor: MonitorTarget) -> i32 {
     match monitor {
-        MonitorTarget::Primary | MonitorTarget::Index(_) => {
-            let monitor_idx = monitor_of(monitor);
+        MonitorTarget::Primary | MonitorTarget::Id(_) | MonitorTarget::Index(_) => {
+            let monitor_idx = match resolve_target(&monitor) {
+                Ok(idx) => idx,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 2;
+                }
+            };
             let result = match action {
                 TempAction::Set(kelvin) => windows::set_temp(monitor_idx, kelvin),
                 TempAction::Reset => windows::reset_temp(monitor_idx),

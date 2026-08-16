@@ -159,7 +159,7 @@ fn apply_ramp(name: &str, ramp: &Ramp) -> Result<(), String> {
     if dc == 0 {
         return Err(format!("{name} does not support gamma ramp adjustment"));
     }
-    let ok = unsafe { SetDeviceGammaRamp(dc, ramp.red.as_ptr() as *mut u16) };
+let ok = unsafe { SetDeviceGammaRamp(dc, ramp.red.as_ptr() as *mut u16) };
     unsafe { DeleteDC(dc) };
     if ok == 0 {
         return Err(format!("{name} does not support gamma ramp adjustment"));
@@ -181,7 +181,7 @@ fn read_ramp(name: &str) -> Result<Ramp, String> {
         return Err(format!("{name} does not support gamma ramp adjustment"));
     }
     let mut ramp: Ramp = unsafe { std::mem::zeroed() };
-    let ok = unsafe { GetDeviceGammaRamp(dc, ramp.red.as_mut_ptr()) };
+let ok = unsafe { GetDeviceGammaRamp(dc, ramp.red.as_mut_ptr()) };
     unsafe { DeleteDC(dc) };
     if ok == 0 {
         return Err(format!("{name} does not support gamma ramp adjustment"));
@@ -261,10 +261,9 @@ mod tests {
     }
 
     #[test]
-    fn build_ramp_entries_are_bounded() {
+    fn build_ramp_entries_are_monotonic() {
         let ramp = build_ramp(1.0, 0.5, 0.25);
         for channel in [&ramp.red, &ramp.green, &ramp.blue] {
-            assert!(channel.iter().all(|v| *v <= 65535));
             assert!(channel.windows(2).all(|w| w[0] <= w[1]));
         }
     }

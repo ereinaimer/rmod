@@ -50,61 +50,25 @@ pub fn list() -> Result<Vec<Monitor>, String> {
     Ok(monitors)
 }
 
-/// Returns the supported modes for a monitor, sorted ascending by
-/// resolution then refresh rate.
-///
-/// `monitor` is the 1-based number from [`list`]; `None` selects the
-/// primary display.
+/// Lists every display with full EDID information and supported modes.
 ///
 /// # Errors
-/// Returns `Err` for an unknown monitor number or when the display reports
-/// no supported modes.
-pub fn caps(monitor: Option<u32>) -> Result<(Monitor, Vec<Mode>), String> {
+/// Returns `Err` when no displays are attached or EDID reading fails.
+pub fn list_detailed() -> Result<Vec<Monitor>, String> {
     if fake::enabled() {
-        return fake::caps(monitor);
+        return fake::list_detailed();
     }
-    let names = query::enumerate_devices();
-    let (index, name) = query::resolve_device(monitor, &names)?;
-    let modes = capabilities::enumerate_modes(name);
-    if modes.is_empty() {
-        return Err(format!(
-            "{} has no supported modes, the display may be disabled or not connected",
-            query::display_label(name, index as u32 + 1)
-        ));
-    }
-    Ok((
-        query::describe(index, name),
-        capabilities::normalize_modes(modes),
-    ))
+    query::list_detailed()
 }
 
-/// Returns the supported modes for every attached monitor, sorted
-/// ascending by resolution then refresh rate.
-///
-/// # Errors
-/// Returns `Err` when no displays are attached or any display reports
-/// no supported modes.
-pub fn caps_all() -> Result<Vec<(Monitor, Vec<Mode>)>, String> {
+/// Returns every supported mode for a device by name, sorted ascending by
+/// resolution then refresh rate.
+pub fn caps_all_modes_for_device(name: &str) -> Vec<Mode> {
     if fake::enabled() {
-        return fake::caps_all();
+        fake::caps_all_modes_for_device(name)
+    } else {
+        capabilities::caps_all_modes_for_device(name)
     }
-    let names = query::enumerate_devices();
-    let targets = query::resolve_all(&names)?;
-    let mut monitors = Vec::with_capacity(targets.len());
-    for (index, name) in targets {
-        let modes = capabilities::enumerate_modes(name);
-        if modes.is_empty() {
-            return Err(format!(
-                "{} has no supported modes, the display may be disabled or not connected",
-                query::display_label(name, index as u32 + 1)
-            ));
-        }
-        monitors.push((
-            query::describe(index, name),
-            capabilities::normalize_modes(modes),
-        ));
-    }
-    Ok(monitors)
 }
 
 /// Applies a resolution, refresh and rotation policy to a display.
@@ -443,3 +407,19 @@ pub fn get_temp(monitor: Option<u32>) -> Result<TempChange, String> {
         temp::get_temp(monitor)
     }
 }
+
+/// Finds a monitor by its EDID identifier (case-insensitive): the serial
+/// when present, otherwise the EDID fingerprint. Returns the 1-based monitor
+/// number, or None if not found.
+pub fn resolve_by_id(id: &str) -> Option<u32> {
+    if fake::enabled() {
+        fake::resolve_by_id(id)
+    } else {
+        query::resolve_by_id(id)
+    }
+}
+
+/// Resolves a 1-based monitor number to its device pair, validating that the
+/// monitor is attached. `None` selects the primary display; `0` or an
+/// out-of-range number is an error.
+pub use query::resolve_device;

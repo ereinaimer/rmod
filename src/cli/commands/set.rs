@@ -7,7 +7,7 @@
 use crate::cli::{MonitorTarget, SetSpec};
 use crate::sys::windows::{self, ApplyOutcome, Refresh};
 
-use super::{confirm_or_revert, confirm_or_revert_all, describe_outcome, monitor_of};
+use super::{confirm_or_revert, confirm_or_revert_all, describe_outcome, resolve_target};
 
 /// Resolves a SetSpec to width, height, and refresh using current display state.
 fn resolve_spec(
@@ -46,15 +46,21 @@ pub(super) fn run_set(
 ) -> i32 {
     if spec == SetSpec::Max {
         match monitor {
-            MonitorTarget::Primary | MonitorTarget::Index(_) => {
-                let monitor_idx = monitor_of(monitor);
+            MonitorTarget::Primary | MonitorTarget::Id(_) | MonitorTarget::Index(_) => {
+                let monitor_idx = match resolve_target(&monitor) {
+                    Ok(idx) => idx,
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        return 2;
+                    }
+                };
                 match windows::max(monitor_idx, orientation) {
                     Ok(ApplyOutcome::Unchanged(change)) => {
-                        println!("{}", describe_outcome(&change, None, true));
+                        println!("{}", describe_outcome(&change, Some(&change.display), true));
                         0
                     }
                     Ok(ApplyOutcome::Applied(change)) => {
-                        println!("{}", describe_outcome(&change, None, true));
+                        println!("{}", describe_outcome(&change, Some(&change.display), true));
                         confirm_or_revert(monitor_idx, change, yes)
                     }
                     Err(e) => {
@@ -93,8 +99,14 @@ pub(super) fn run_set(
         }
     } else {
         match monitor {
-            MonitorTarget::Primary | MonitorTarget::Index(_) => {
-                let monitor_idx = monitor_of(monitor);
+            MonitorTarget::Primary | MonitorTarget::Id(_) | MonitorTarget::Index(_) => {
+                let monitor_idx = match resolve_target(&monitor) {
+                    Ok(idx) => idx,
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        return 2;
+                    }
+                };
                 // Get current display state for resolving spec
                 let (width, height, refresh) = if let Some(idx) = monitor_idx {
                     match windows::get_current_mode(idx) {
@@ -117,11 +129,17 @@ pub(super) fn run_set(
                     width.is_some() || height.is_some() || refresh != Refresh::Keep;
                 match windows::set(monitor_idx, width, height, refresh, orientation) {
                     Ok(ApplyOutcome::Unchanged(change)) => {
-                        println!("{}", describe_outcome(&change, None, mode_requested));
+                        println!(
+                            "{}",
+                            describe_outcome(&change, Some(&change.display), mode_requested)
+                        );
                         0
                     }
                     Ok(ApplyOutcome::Applied(change)) => {
-                        println!("{}", describe_outcome(&change, None, mode_requested));
+                        println!(
+                            "{}",
+                            describe_outcome(&change, Some(&change.display), mode_requested)
+                        );
                         confirm_or_revert(monitor_idx, change, yes)
                     }
                     Err(e) => {

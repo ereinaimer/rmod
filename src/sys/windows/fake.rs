@@ -39,22 +39,40 @@ fn monitor(number: u32) -> Option<Monitor> {
         1 => Some(Monitor {
             number: 1,
             name: MONITOR_1_NAME.to_string(),
+            device_name: MONITOR_1_NAME.to_string(),
             is_primary: true,
             width: 1920,
             height: 1080,
             refresh: 60,
             x: 0,
             y: 0,
+            manufacturer: "RM1".to_string(),
+            serial: "ABC12345678".to_string(),
+            fingerprint: "a1b2c3d4".to_string(),
+            manufactured_week: 12,
+            manufactured_year: 2023,
+            native_width: 1920,
+            native_height: 1080,
+            native_refresh: 60,
         }),
         2 => Some(Monitor {
             number: 2,
             name: MONITOR_2_NAME.to_string(),
+            device_name: MONITOR_2_NAME.to_string(),
             is_primary: false,
             width: 1920,
             height: 1080,
             refresh: 60,
             x: 1920,
             y: 0,
+            manufacturer: "RM2".to_string(),
+            serial: "DEF45678901".to_string(),
+            fingerprint: "b2c3d4e5".to_string(),
+            manufactured_week: 5,
+            manufactured_year: 2024,
+            native_width: 1920,
+            native_height: 1080,
+            native_refresh: 60,
         }),
         _ => None,
     }
@@ -163,18 +181,22 @@ pub(crate) fn list() -> Result<Vec<Monitor>, String> {
     ])
 }
 
-/// Returns the supported modes for a fake monitor.
-pub(crate) fn caps(monitor: Option<u32>) -> Result<(Monitor, Vec<Mode>), String> {
-    let monitor = resolve(monitor)?;
-    Ok((monitor, modes()))
+/// Lists every fake monitor with full EDID information.
+pub(crate) fn list_detailed() -> Result<Vec<Monitor>, String> {
+    Ok(vec![
+        monitor(1).expect("fake monitor 1 exists"),
+        monitor(2).expect("fake monitor 2 exists"),
+    ])
 }
 
-/// Returns the supported modes for every fake monitor.
-pub(crate) fn caps_all() -> Result<Vec<(Monitor, Vec<Mode>)>, String> {
-    Ok(vec![
-        (monitor(1).expect("fake monitor 1 exists"), modes()),
-        (monitor(2).expect("fake monitor 2 exists"), modes()),
-    ])
+/// Returns every supported mode for a fake device by name; unknown names
+/// report no modes, mirroring the real backend.
+pub(crate) fn caps_all_modes_for_device(name: &str) -> Vec<Mode> {
+    if name == MONITOR_1_NAME || name == MONITOR_2_NAME {
+        modes()
+    } else {
+        Vec::new()
+    }
 }
 
 /// Applies a resolution, refresh and orientation policy to a fake monitor.
@@ -205,7 +227,7 @@ pub(crate) fn set(
         .any(|m| m.width == w && m.height == h && m.refresh == r)
     {
         return Err(format!(
-            "{} does not support {w}x{h} @ {r}Hz. run rmod list --caps to see supported modes",
+            "{} does not support {w}x{h} @ {r}Hz. run rmod list to see supported modes",
             display_label(&monitor)
         ));
     }
@@ -473,6 +495,17 @@ pub(crate) fn get_temp(monitor: Option<u32>) -> Result<TempChange, String> {
     })
 }
 
+/// Finds a fake monitor by its EDID identifier (case-insensitive): the
+/// serial or the fingerprint.
+pub(crate) fn resolve_by_id(id: &str) -> Option<u32> {
+    for mon in [monitor(1), monitor(2)].into_iter().flatten() {
+        if mon.serial.eq_ignore_ascii_case(id) || mon.fingerprint.eq_ignore_ascii_case(id) {
+            return Some(mon.number);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,26 +516,6 @@ mod tests {
         assert_eq!(monitors.len(), 2);
         assert!(monitors[0].is_primary);
         assert!(!monitors[1].is_primary);
-    }
-
-    #[test]
-    fn caps_returns_supported_modes() {
-        let (monitor, modes) = caps(None).unwrap();
-        assert_eq!(monitor.number, 1);
-        assert_eq!(modes.len(), 7);
-        assert!(modes.contains(&Mode {
-            width: 1920,
-            height: 1080,
-            refresh: 60
-        }));
-    }
-
-    #[test]
-    fn caps_unknown_monitor_is_error() {
-        assert_eq!(
-            caps(Some(99)).err(),
-            Some("monitor 99 not found. run rmod list to see connected displays".to_string())
-        );
     }
 
     #[test]
@@ -555,7 +568,7 @@ mod tests {
     fn set_unsupported_mode_is_error() {
         assert_eq!(
             set(None, Some(9999), Some(9999), Refresh::Fixed(1), None),
-            Err("RMOD Fake Monitor 1 [:1] does not support 9999x9999 @ 1Hz. run rmod list --caps to see supported modes".to_string())
+            Err("RMOD Fake Monitor 1 [:1] does not support 9999x9999 @ 1Hz. run rmod list to see supported modes".to_string())
         );
     }
 
@@ -881,6 +894,16 @@ mod tests {
             set_brightness(Some(99), 30, None).err(),
             Some("monitor 99 not found. run rmod list to see connected displays".to_string())
         );
+    }
+
+    #[test]
+    fn resolve_by_id_matches_serial_and_fingerprint() {
+        assert_eq!(resolve_by_id("ABC12345678"), Some(1));
+        assert_eq!(resolve_by_id("abc12345678"), Some(1));
+        assert_eq!(resolve_by_id("a1b2c3d4"), Some(1));
+        assert_eq!(resolve_by_id("DEF45678901"), Some(2));
+        assert_eq!(resolve_by_id("b2c3d4e5"), Some(2));
+        assert_eq!(resolve_by_id("nope"), None);
     }
 
     #[test]

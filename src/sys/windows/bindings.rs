@@ -4,6 +4,44 @@
 //! do not reorder fields. Used by [`super::query`], [`super::capabilities`],
 //! and [`super::apply`].
 
+use std::ffi::c_void;
+
+// Registry access for reading the monitor's cached EDID blob (no COM/DCOM).
+pub(crate) const HKEY_LOCAL_MACHINE: isize = -0x7FFF_FFFE;
+pub(crate) const KEY_READ: u32 = 0x0002_0019;
+pub(crate) const REG_BINARY: u32 = 3;
+pub(crate) const ERROR_SUCCESS: i32 = 0;
+
+#[link(name = "advapi32")]
+unsafe extern "system" {
+    pub(crate) fn RegOpenKeyExW(
+        h_key: *mut c_void,
+        lp_sub_key: *const u16,
+        ul_options: u32,
+        sam_desired: u32,
+        phk_result: *mut *mut c_void,
+    ) -> i32;
+    pub(crate) fn RegEnumKeyExW(
+        h_key: *mut c_void,
+        dw_index: u32,
+        lp_name: *mut u16,
+        lpc_name: *mut u32,
+        lp_reserved: *mut u32,
+        lp_class: *mut u16,
+        lpc_class: *mut u32,
+        lpft_last_write_time: *mut c_void,
+    ) -> i32;
+    pub(crate) fn RegQueryValueExW(
+        h_key: *mut c_void,
+        lp_value_name: *const u16,
+        lp_reserved: *mut u32,
+        lp_type: *mut u32,
+        lp_data: *mut u8,
+        lpcb_data: *mut u32,
+    ) -> i32;
+    pub(crate) fn RegCloseKey(h_key: *mut c_void) -> i32;
+}
+
 pub(crate) const ENUM_CURRENT_SETTINGS: u32 = 0xFFFF_FFFF;
 pub(crate) const ENUM_REGISTRY_SETTINGS: u32 = 0xFFFF_FFFE;
 pub(crate) const DISPLAY_DEVICE_ATTACHED_TO_DESKTOP: u32 = 0x1;
@@ -329,6 +367,15 @@ mod tests {
         assert_eq!(DISP_CHANGE_BADFLAGS, -4);
         assert_eq!(DISP_CHANGE_BADPARAM, -5);
         assert_eq!(DISP_CHANGE_BADDUALVIEW, -6);
+    }
+
+    #[test]
+    fn registry_constants() {
+        // HKEY handles carry the pseudo-handle in the low 32 bits; on 64-bit
+        // the SDK constant is sign-extended (0xFFFFFFFF80000002).
+        assert_eq!(HKEY_LOCAL_MACHINE as u32, 0x8000_0002);
+        assert_eq!(REG_BINARY, 3);
+        assert_eq!(ERROR_SUCCESS, 0);
     }
 
     #[test]

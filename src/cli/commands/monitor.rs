@@ -8,7 +8,7 @@
 use crate::cli::{BrightnessBackend, MonitorAction, MonitorTarget};
 use crate::sys::windows::{self, AttachOutcome, BrightnessOutcome};
 
-use super::{confirm_or_revert_attach, confirm_or_revert_attach_all, describe_attach};
+use super::{confirm_or_revert_attach, confirm_or_revert_attach_all, describe_attach, resolve_target};
 
 /// Runs the `monitor` command with the parsed action and target.
 pub(super) fn run_monitor(action: MonitorAction, monitor: MonitorTarget, yes: bool) -> i32 {
@@ -45,18 +45,22 @@ pub(super) fn run_monitor(action: MonitorAction, monitor: MonitorTarget, yes: bo
 /// Runs a disable/enable action against the targeted display(s).
 fn run_attach(action: MonitorAction, monitor: MonitorTarget, yes: bool) -> i32 {
     match monitor {
-        MonitorTarget::Index(n) => {
+        MonitorTarget::Id(_) | MonitorTarget::Primary | MonitorTarget::Index(_) => {
+            let monitor_idx = match resolve_target(&monitor) {
+                Ok(idx) => idx,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 2;
+                }
+            };
             let outcome = if action == MonitorAction::Disable {
-                windows::disable(Some(n))
+                windows::disable(monitor_idx)
             } else {
-                windows::enable(Some(n))
+                windows::enable(monitor_idx)
             };
             report_single(outcome, yes)
         }
         MonitorTarget::All => report_all(action, yes),
-        // The parser requires `-m` for attach/detach, so the primary
-        // default is unreachable here.
-        MonitorTarget::Primary => unreachable!(),
     }
 }
 
@@ -102,6 +106,13 @@ fn run_brightness(value: u32, via: Option<BrightnessBackend>, monitor: MonitorTa
     match monitor {
         MonitorTarget::Primary => report_brightness(windows::set_brightness(None, value, via)),
         MonitorTarget::Index(n) => report_brightness(windows::set_brightness(Some(n), value, via)),
+        MonitorTarget::Id(_) => match resolve_target(&monitor) {
+            Ok(idx) => report_brightness(windows::set_brightness(idx, value, via)),
+            Err(e) => {
+                eprintln!("error: {e}");
+                2
+            }
+        },
         MonitorTarget::All => {
             let count = windows::enumerate_devices().len();
             let mut any_error = false;

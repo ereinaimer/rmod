@@ -7,17 +7,42 @@
 //! keep-or-revert confirmation flow, and [`run_primary`] promotes a display
 //! via [`crate::sys::windows::make_main`].
 
-use crate::cli::{Confirm, Direction, LayoutAction, confirm_keep};
+use crate::cli::{Confirm, Direction, LayoutAction, MonitorTarget, confirm_keep};
 use crate::sys::windows::{
-    MainChange, MainOutcome, Monitor, PlacementChange, PlacementOutcome, make_main, revert_main,
+    MainChange, MainOutcome, Monitor, PlacementChange, PlacementOutcome, apply_placement,
+    make_main, revert_main, revert_placement,
 };
 
 use super::CONFIRM_TIMEOUT_SECS;
 
+/// Resolves a layout target to a 1-based monitor number. `Primary` resolves
+/// through the primary display's monitor number; an unknown id or a
+/// primary lookup failure is a hard error. `All` is rejected by the parser.
+///
+/// # Errors
+/// Returns the message to print when the target matches no display.
+fn resolve_layout_target(target: &MonitorTarget, not_found: &str) -> Result<u32, String> {
+    match target {
+        MonitorTarget::Primary => crate::sys::windows::get_primary_mode().map(|m| m.number),
+        MonitorTarget::Index(n) => Ok(*n),
+        MonitorTarget::Id(id) => crate::sys::windows::resolve_by_id(id).ok_or_else(|| {
+            format!("{not_found} '{id}' not found. run rmod list to see connected displays")
+        }),
+        MonitorTarget::All => unreachable!(),
+    }
+}
+
 /// Promotes the targeted monitor to the main display.
-pub(super) fn run_primary(monitor: u32, yes: bool) -> i32 {
+pub(super) fn run_primary(monitor: &MonitorTarget, yes: bool) -> i32 {
     let names = crate::sys::windows::enumerate_devices();
-    match make_main(monitor, &names) {
+    let monitor_num = match resolve_layout_target(monitor, "monitor with id") {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    match make_main(monitor_num, &names) {
         Ok(MainOutcome::Unchanged(display)) => {
             println!("{display} is already the main display");
             0
@@ -149,8 +174,28 @@ fn relative_to(monitors: &[Monitor], monitor: &Monitor) -> String {
 /// Places a monitor on a side of another monitor and runs the keep-or-revert
 /// confirmation flow; `yes` skips the prompt. Reverts the placement and
 /// prints the revert line on Revert.
-pub(super) fn run_place(monitor: u32, direction: Direction, reference: u32, yes: bool) -> i32 {
-    match crate::sys::windows::apply_placement(monitor, direction, reference) {
+pub(super) fn run_place(
+    monitor: &MonitorTarget,
+    direction: Direction,
+    reference: &MonitorTarget,
+    yes: bool,
+) -> i32 {
+    let m = match resolve_layout_target(monitor, "monitor with id") {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    let r = match resolve_layout_target(reference, "reference monitor with id") {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+
+    match apply_placement(m, direction, r) {
         Ok(PlacementOutcome::Unchanged {
             display,
             reference_display,
@@ -167,7 +212,7 @@ pub(super) fn run_place(monitor: u32, direction: Direction, reference: u32, yes:
                 &change,
                 yes,
                 || confirm_keep(std::time::Duration::from_secs(CONFIRM_TIMEOUT_SECS)),
-                crate::sys::windows::revert_placement,
+                revert_placement,
             )
         }
         Err(e) => {
@@ -239,8 +284,8 @@ pub(super) fn run_layout(action: LayoutAction, yes: bool) -> i32 {
             monitor,
             direction,
             reference,
-        } => run_place(monitor, direction, reference, yes),
-        LayoutAction::Primary { monitor } => run_primary(monitor, yes),
+        } => run_place(&monitor, direction, &reference, yes),
+        LayoutAction::Primary { monitor } => run_primary(&monitor, yes),
     }
 }
 
@@ -430,12 +475,21 @@ mod tests {
         Monitor {
             number,
             name: format!("M{number}"),
+            device_name: format!(r"\\.\DISPLAY{number}"),
             x,
             y,
             width: 1920,
             height: 1080,
             refresh: 60,
             is_primary,
+            manufacturer: "TEST".to_string(),
+            serial: format!("SERIAL{number}"),
+            fingerprint: format!("finger{number}"),
+            manufactured_week: 1,
+            manufactured_year: 2024,
+            native_width: 1920,
+            native_height: 1080,
+            native_refresh: 60,
         }
     }
 

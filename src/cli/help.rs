@@ -25,9 +25,9 @@ Resolution modifier
 {option_rows}
 
 {examples}
-  rmod list --caps
+  rmod list
   rmod set -p 1080
-  rmod layout -m 2 --primary
+  rmod layout -m a1b2c3d4 --primary
   rmod temp 3400",
         env!("CARGO_PKG_VERSION"),
         usage = section("Usage:"),
@@ -54,9 +54,7 @@ List displays and their current settings
 {option_rows}
 
 {examples}
-  rmod list
-  rmod list --caps
-  rmod list --caps -m 2",
+  rmod list",
         usage = section("Usage:"),
         alias = section("Alias:"),
         options = section("Options:"),
@@ -92,7 +90,7 @@ Apply resolution, refresh rate, and orientation to a display
 {examples}
   rmod set --max
   rmod set -p 1080
-  rmod set -w 1920 -h 1080 -m 2 -o 90
+  rmod set -w 1920 -h 1080 -m a1b2c3d4 -o 90
   rmod set -r 60 -m all
   rmod set -p 1440 -y",
         usage = section("Usage:"),
@@ -120,9 +118,9 @@ Show the monitor arrangement, place monitors, or set the primary display
 
 {examples}
   rmod layout
-  rmod layout -m 2 --left-of 1
-  rmod layout -m 2 --below 1
-  rmod layout -m 2 --primary",
+  rmod layout -m a1b2c3d4 --left-of b2c3d4e5
+  rmod layout -m a1b2c3d4 --below b2c3d4e5
+  rmod layout -m a1b2c3d4 --primary",
         usage = section("Usage:"),
         options = section("Options:"),
         option_rows = options(LAYOUT_FLAGS),
@@ -151,7 +149,7 @@ Attach, detach, sleep, or wake monitors
 
 {examples}
   rmod monitor detach -m 2
-  rmod monitor disable -m 2 -y
+  rmod monitor disable -m a1b2c3d4 -y
   rmod monitor attach -m 2
   rmod monitor brightness 60
   rmod monitor sleep
@@ -180,8 +178,8 @@ Detach a monitor from the desktop
 {option_rows}
 
 {examples}
-  rmod monitor detach -m 2
-  rmod monitor detach -m 2 -y",
+  rmod monitor detach -m a1b2c3d4
+  rmod monitor detach -m a1b2c3d4 -y",
         usage = section("Usage:"),
         aliases = section("Aliases:"),
         options = section("Options:"),
@@ -206,8 +204,8 @@ Re-attach a monitor to the desktop
 {option_rows}
 
 {examples}
-  rmod monitor attach -m 2
-  rmod monitor attach -m 2 -y",
+  rmod monitor attach -m a1b2c3d4
+  rmod monitor attach -m a1b2c3d4 -y",
         usage = section("Usage:"),
         aliases = section("Aliases:"),
         options = section("Options:"),
@@ -259,7 +257,7 @@ Set or show the display color temperature
   rmod temp 3400
   rmod temp warm
   rmod temp reset
-  rmod temp -m 2 4000",
+  rmod temp -m a1b2c3d4 4000",
         usage = section("Usage:"),
         options = section("Options:"),
         option_rows = options(TEMP_FLAGS),
@@ -351,9 +349,9 @@ Options:
   --version  Print version
 
 Examples:
-  rmod list --caps
+  rmod list
   rmod set -p 1080
-  rmod layout -m 2 --primary
+  rmod layout -m a1b2c3d4 --primary
   rmod temp 3400",
             env!("CARGO_PKG_VERSION")
         );
@@ -389,14 +387,10 @@ Usage:
 Alias: ls
 
 Options:
-  --caps         List supported modes instead of current settings
-  -m, --monitor  Monitor number or all (requires --caps)
-  --help         Print help
+  --help  Print help
 
 Examples:
-  rmod list
-  rmod list --caps
-  rmod list --caps -m 2";
+  rmod list";
         assert_eq!(strip_ansi(&ls()), expected);
     }
 
@@ -413,7 +407,7 @@ Options:
   -h, --height       Resolution height (requires --width)
   -r, --refresh      Refresh rate in Hz, or max
   -p, --profile      Resolution preset (see Profiles below)
-  -m, --monitor      Monitor number or all (default: primary)
+  -m, --monitor      Monitor ID, 'primary', or 'all' (default: primary)
   -o, --orientation  Rotation angle (see Orientations below)
   -y, --yes          Skip the confirmation prompt
   --max              Use the display's highest supported mode
@@ -435,7 +429,7 @@ Orientations:
 Examples:
   rmod set --max
   rmod set -p 1080
-  rmod set -w 1920 -h 1080 -m 2 -o 90
+  rmod set -w 1920 -h 1080 -m a1b2c3d4 -o 90
   rmod set -r 60 -m all
   rmod set -p 1440 -y";
         assert_eq!(strip_ansi(&set()), expected);
@@ -459,7 +453,7 @@ Usage:
   rmod layout [OPTIONS]
 
 Options:
-  -m, --monitor  Monitor to move or promote
+  -m, --monitor  Monitor ID or 'primary' to move or promote
   --left-of      Place the monitor left of the reference
   --right-of     Place the monitor right of the reference
   --above        Place the monitor above the reference
@@ -470,9 +464,9 @@ Options:
 
 Examples:
   rmod layout
-  rmod layout -m 2 --left-of 1
-  rmod layout -m 2 --below 1
-  rmod layout -m 2 --primary";
+  rmod layout -m a1b2c3d4 --left-of b2c3d4e5
+  rmod layout -m a1b2c3d4 --below b2c3d4e5
+  rmod layout -m a1b2c3d4 --primary";
         assert_eq!(strip_ansi(&layout()), expected);
     }
 
@@ -492,13 +486,13 @@ Actions:
   wake       Wake every monitor
 
 Options:
-  -m, --monitor  Monitor number or all (required)
+  -m, --monitor  Monitor ID, 'primary', or 'all' (required)
   -y, --yes      Skip the confirmation prompt
   --help         Print help
 
 Examples:
   rmod monitor detach -m 2
-  rmod monitor disable -m 2 -y
+  rmod monitor disable -m a1b2c3d4 -y
   rmod monitor attach -m 2
   rmod monitor brightness 60
   rmod monitor sleep
@@ -529,13 +523,13 @@ Aliases:
   disable, off
 
 Options:
-  -m, --monitor  Monitor number or all (required)
+  -m, --monitor  Monitor ID, 'primary', or 'all' (required)
   -y, --yes      Skip the confirmation prompt
   --help         Print help
 
 Examples:
-  rmod monitor detach -m 2
-  rmod monitor detach -m 2 -y";
+  rmod monitor detach -m a1b2c3d4
+  rmod monitor detach -m a1b2c3d4 -y";
         assert_eq!(strip_ansi(&monitor_detach()), expected);
     }
 
@@ -551,13 +545,13 @@ Aliases:
   enable, on
 
 Options:
-  -m, --monitor  Monitor number or all (required)
+  -m, --monitor  Monitor ID, 'primary', or 'all' (required)
   -y, --yes      Skip the confirmation prompt
   --help         Print help
 
 Examples:
-  rmod monitor attach -m 2
-  rmod monitor attach -m 2 -y";
+  rmod monitor attach -m a1b2c3d4
+  rmod monitor attach -m a1b2c3d4 -y";
         assert_eq!(strip_ansi(&monitor_attach()), expected);
     }
 
@@ -590,7 +584,7 @@ Usage:
   rmod temp [TEMPERATURE] [OPTIONS]
 
 Options:
-  -m, --monitor  Monitor number or all (default: primary)
+  -m, --monitor  Monitor ID, 'primary', or 'all' (default: primary)
   --help         Print help
 
 Presets:
@@ -605,7 +599,7 @@ Examples:
   rmod temp 3400
   rmod temp warm
   rmod temp reset
-  rmod temp -m 2 4000";
+  rmod temp -m a1b2c3d4 4000";
         assert_eq!(strip_ansi(&temp()), expected);
     }
 

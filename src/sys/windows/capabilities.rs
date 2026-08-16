@@ -44,6 +44,11 @@ pub(crate) fn normalize_modes(mut modes: Vec<Mode>) -> Vec<Mode> {
     modes
 }
 
+/// Gets all supported modes for a device (public for ls command).
+pub fn caps_all_modes_for_device(name: &str) -> Vec<Mode> {
+    normalize_modes(enumerate_modes(name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
