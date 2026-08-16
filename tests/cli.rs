@@ -127,10 +127,61 @@ fn list_shows_full_edid_block() {
         "Manufacturer:    RM1",
         "Current:         1920x1080 @ 60Hz",
         "Native:          1920x1080 @ 60Hz",
+        "Physical:        27.0\" (59.8 cm × 33.6 cm)",
+        "DPI:             82×82 physical / 96 logical",
+        "Color Depth:     32-bit (RGB 8:8:8)",
+        "Orientation:     Landscape",
         "Manufactured:    Week 12, 2023",
+        "Gamma:           2.2",
+        "HDR:             HDR10 (not active)",
+        "Color Gamut:     sRGB 100% / DCI-P3 74%",
         "Supported:",
     ] {
         assert!(text.contains(line), "missing line '{line}' in:\n{text}");
+    }
+}
+
+#[test]
+fn list_shows_second_monitor_color_and_gamut() {
+    let out = rmod(&["list"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    for line in [
+        "Physical:        24.0\" (53.1 cm × 29.9 cm)",
+        "DPI:             92×92 physical / 144 logical",
+        "Color Depth:     30-bit (RGB 10:10:10)",
+        "Gamma:           2.4",
+        "HDR:             Not supported",
+        "Color Gamut:     sRGB 100% / DCI-P3 100%",
+    ] {
+        assert!(text.contains(line), "missing line '{line}' in:\n{text}");
+    }
+}
+
+#[test]
+fn list_values_align_at_column_19() {
+    let out = rmod(&["list"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    for value in [
+        "true",
+        "27.0\" (59.8 cm × 33.6 cm)",
+        "82×82 physical / 96 logical",
+        "32-bit (RGB 8:8:8)",
+        "Landscape",
+        "2.2",
+        "HDR10 (not active)",
+        "sRGB 100% / DCI-P3 74%",
+    ] {
+        let line = text
+            .lines()
+            .find(|l| l.contains(value))
+            .unwrap_or_else(|| panic!("no line with '{value}' in:\n{text}"));
+        assert_eq!(
+            line.find(value),
+            Some(19),
+            "value '{value}' must start at column 19, line: '{line}'"
+        );
     }
 }
 
@@ -150,9 +201,9 @@ fn list_shows_supported_modes_grouped_by_resolution() {
     let text = stdout(&out);
     for line in [
         "1280x720  @ 60Hz",
-        "1920x1080  @ 60Hz, 144Hz",
-        "2560x1440  @ 60Hz, 144Hz",
-        "3840x2160  @ 60Hz, 144Hz",
+        "1920x1080 @ 60Hz, 144Hz",
+        "2560x1440 @ 60Hz, 144Hz",
+        "3840x2160 @ 60Hz, 144Hz",
     ] {
         assert!(text.contains(line), "missing mode line '{line}' in:\n{text}");
     }

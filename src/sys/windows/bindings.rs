@@ -81,6 +81,9 @@ pub(crate) const SWP_SHOWWINDOW: u32 = 0x0040;
 pub(crate) const HWND_TOPMOST: isize = -1;
 pub(crate) const PM_REMOVE: u32 = 0x1;
 pub(crate) const MCCS_BRIGHTNESS: u8 = 0x10;
+pub(crate) const QDC_ONLY_ACTIVE_PATHS: u32 = 2;
+pub(crate) const DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME: i32 = 1;
+pub(crate) const DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO: i32 = 9;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -195,6 +198,88 @@ pub(crate) struct PhysicalMonitor {
     pub description: [u16; 128],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Luid {
+    pub low_part: u32,
+    pub high_part: i32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DisplayConfigPathSourceInfo {
+    pub adapter_id: Luid,
+    pub id: u32,
+    pub mode_info_idx: u32,
+    pub status_flags: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DisplayConfigRational {
+    pub numerator: u32,
+    pub denominator: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DisplayConfigPathTargetInfo {
+    pub adapter_id: Luid,
+    pub id: u32,
+    pub mode_info_idx: u32,
+    pub output_technology: u32,
+    pub rotation: u32,
+    pub scaling: u32,
+    pub refresh_rate: DisplayConfigRational,
+    pub scan_line_ordering: u32,
+    pub target_available: i32,
+    pub status_flags: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DisplayConfigPathInfo {
+    pub source_info: DisplayConfigPathSourceInfo,
+    pub target_info: DisplayConfigPathTargetInfo,
+    pub flags: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DisplayConfigDeviceInfoHeader {
+    pub device_info_type: i32,
+    pub size: u32,
+    pub adapter_id: Luid,
+    pub id: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DisplayConfigGetAdvancedColorInfo {
+    pub header: DisplayConfigDeviceInfoHeader,
+    /// Bitfield: bit 0 `advancedColorSupported`, bit 1 `advancedColorEnabled`,
+    /// bit 2 `wideColorEnforced`, bit 3 `advancedColorForceDisabled`.
+    pub value: u32,
+    pub color_encoding: u32,
+    pub bits_per_color_channel: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DisplayConfigSourceDeviceName {
+    pub header: DisplayConfigDeviceInfoHeader,
+    pub view_gdi_device_name: [u16; 32],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DisplayConfigModeInfo {
+    pub info_type: i32,
+    pub id: u32,
+    pub adapter_id: Luid,
+    pub mode: [u8; 48],
+}
+
 #[link(name = "user32")]
 unsafe extern "system" {
     pub(crate) fn EnumDisplayDevicesW(
@@ -277,6 +362,22 @@ unsafe extern "system" {
         dw_data: isize,
     ) -> i32;
     pub(crate) fn GetMonitorInfoW(h_monitor: usize, lpmi: *mut MonitorInfoExW) -> i32;
+    pub(crate) fn GetDisplayConfigBufferSizes(
+        flags: u32,
+        num_path_array_elements: *mut u32,
+        num_mode_info_array_elements: *mut u32,
+    ) -> i32;
+    pub(crate) fn QueryDisplayConfig(
+        flags: u32,
+        num_path_array_elements: *mut u32,
+        path_array: *mut DisplayConfigPathInfo,
+        num_mode_info_array_elements: *mut u32,
+        mode_info_array: *mut DisplayConfigModeInfo,
+        current_topology_id: *mut u32,
+    ) -> i32;
+    pub(crate) fn DisplayConfigGetDeviceInfo(
+        device_info: *mut DisplayConfigDeviceInfoHeader,
+    ) -> i32;
 }
 
 #[link(name = "kernel32")]
@@ -508,6 +609,64 @@ mod tests {
     fn physical_monitor_field_offsets() {
         assert_eq!(offset_of!(PhysicalMonitor, handle), 0);
         assert_eq!(offset_of!(PhysicalMonitor, description), 8);
+    }
+
+    #[test]
+    fn display_config_constants() {
+        assert_eq!(QDC_ONLY_ACTIVE_PATHS, 2);
+        assert_eq!(DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME, 1);
+        assert_eq!(DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO, 9);
+    }
+
+    #[test]
+    fn display_config_layouts_match_win32_sdk() {
+        assert_eq!(std::mem::size_of::<Luid>(), 8);
+        assert_eq!(std::mem::size_of::<DisplayConfigPathSourceInfo>(), 20);
+        assert_eq!(std::mem::size_of::<DisplayConfigPathTargetInfo>(), 48);
+        assert_eq!(std::mem::size_of::<DisplayConfigPathInfo>(), 72);
+        assert_eq!(std::mem::size_of::<DisplayConfigDeviceInfoHeader>(), 20);
+        assert_eq!(std::mem::size_of::<DisplayConfigGetAdvancedColorInfo>(), 32);
+        assert_eq!(std::mem::size_of::<DisplayConfigModeInfo>(), 64);
+    }
+
+    #[test]
+    fn source_device_name_layout_matches_win32_sdk() {
+        // DISPLAYCONFIG_SOURCE_DEVICE_NAME: header (20) + viewGdiDeviceName[32]
+        // WCHARs (64), CCHDEVICENAME = 32.
+        assert_eq!(std::mem::size_of::<DisplayConfigSourceDeviceName>(), 84);
+        assert_eq!(offset_of!(DisplayConfigSourceDeviceName, view_gdi_device_name), 20);
+    }
+
+    #[test]
+    fn display_config_field_offsets() {
+        assert_eq!(offset_of!(DisplayConfigPathSourceInfo, id), 8);
+        assert_eq!(offset_of!(DisplayConfigPathTargetInfo, id), 8);
+        assert_eq!(offset_of!(DisplayConfigPathTargetInfo, output_technology), 16);
+        assert_eq!(offset_of!(DisplayConfigPathTargetInfo, refresh_rate), 28);
+        assert_eq!(offset_of!(DisplayConfigPathTargetInfo, target_available), 40);
+        assert_eq!(offset_of!(DisplayConfigPathInfo, target_info), 20);
+        assert_eq!(offset_of!(DisplayConfigPathInfo, flags), 68);
+        assert_eq!(offset_of!(DisplayConfigDeviceInfoHeader, adapter_id), 8);
+        assert_eq!(offset_of!(DisplayConfigDeviceInfoHeader, id), 16);
+        assert_eq!(offset_of!(DisplayConfigGetAdvancedColorInfo, value), 20);
+        assert_eq!(offset_of!(DisplayConfigGetAdvancedColorInfo, color_encoding), 24);
+        assert_eq!(offset_of!(DisplayConfigGetAdvancedColorInfo, bits_per_color_channel), 28);
+    }
+
+    #[test]
+    fn display_config_externs_are_resolvable() {
+        let _: unsafe extern "system" fn(u32, *mut u32, *mut u32) -> i32 =
+            GetDisplayConfigBufferSizes;
+        let _: unsafe extern "system" fn(
+            u32,
+            *mut u32,
+            *mut DisplayConfigPathInfo,
+            *mut u32,
+            *mut DisplayConfigModeInfo,
+            *mut u32,
+        ) -> i32 = QueryDisplayConfig;
+        let _: unsafe extern "system" fn(*mut DisplayConfigDeviceInfoHeader) -> i32 =
+            DisplayConfigGetDeviceInfo;
     }
 
     #[test]

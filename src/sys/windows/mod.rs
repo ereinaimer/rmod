@@ -2,7 +2,8 @@
 //!
 //! [`list`] reports every attached display, [`list_detailed`] returns the modes a
 //! display supports, [`max`] applies the best supported mode. Raw FFI lives
-//! in [`bindings`]; device querying in [`query`]; mode enumeration in
+//! in [`bindings`]; device querying in [`query`]; pure EDID decoding in
+//! [`edid`]; HDR capability queries in [`hdr`]; mode enumeration in
 //! [`capabilities`]; mode application in [`apply`]. When the `RMOD_SYS_FAKE`
 //! environment variable is `1`, every entry point delegates to [`fake`]
 //! instead, so the integration tests never touch the real display.
@@ -12,8 +13,10 @@ pub(crate) mod attach;
 pub(crate) mod bindings;
 mod brightness;
 mod capabilities;
+pub(crate) mod edid;
 mod fade;
 mod fake;
+pub(crate) mod hdr;
 mod layout;
 pub(crate) mod power;
 pub(crate) mod query;

@@ -11,6 +11,8 @@ use super::bindings::{
     RegQueryValueExW, encode_wide, wide_to_string,
 };
 use super::capabilities::{enumerate_modes, normalize_modes};
+use super::edid::{self, GamutCoverage};
+use super::hdr::{query_hdr, HdrInfo};
 use std::ffi::{OsStr, c_void};
 use std::os::windows::ffi::OsStrExt;
 use std::ptr;
@@ -56,6 +58,31 @@ pub struct Monitor {
     pub native_height: u32,
     /// Native refresh rate from EDID.
     pub native_refresh: u32,
+    /// Physical panel size in cm from EDID bytes 21-22; `None` when unknown.
+    #[allow(dead_code)]
+    pub physical_size_cm: Option<(f32, f32)>,
+    /// Display gamma from EDID byte 23; `None` when unknown.
+    #[allow(dead_code)]
+    pub gamma: Option<f32>,
+    /// Physical DPI (horizontal, vertical) computed from native resolution and
+    /// EDID size; `None` when the EDID size is unknown.
+    #[allow(dead_code)]
+    pub dpi_physical: Option<(u32, u32)>,
+    /// sRGB / DCI-P3 gamut coverage percentages from EDID chromaticity.
+    #[allow(dead_code)]
+    pub gamut: Option<GamutCoverage>,
+    /// HDR capability from the Windows API with EDID fallback; `None` = unknown.
+    #[allow(dead_code)]
+    pub hdr: Option<HdrInfo>,
+    /// Color depth from the current mode (`dm_bits_per_pel`).
+    #[allow(dead_code)]
+    pub bits_per_pel: u32,
+    /// Logical DPI from the current mode (`dm_log_pixels`); 0 = unknown.
+    #[allow(dead_code)]
+    pub log_pixels: u32,
+    /// Orientation from the current mode (`dm_display_orientation`).
+    #[allow(dead_code)]
+    pub orientation: u32,
 }
 
 /// Enumerates the device names of every display attached to the desktop.
@@ -138,6 +165,20 @@ pub(crate) fn display_label(name: &str, number: u32) -> String {
     format!("{friendly} [:{number}]")
 }
 
+/// Physical DPI from native pixel dimensions and the EDID panel size in
+/// centimeters, rounded to the nearest integer per axis. `None` when either
+/// native dimension is zero or either size is not positive.
+fn physical_dpi(native_width: u32, native_height: u32, size_cm: (f32, f32)) -> Option<(u32, u32)> {
+    let (w_cm, h_cm) = size_cm;
+    if native_width == 0 || native_height == 0 || w_cm <= 0.0 || h_cm <= 0.0 {
+        return None;
+    }
+    Some((
+        (native_width as f32 * 2.54 / w_cm).round() as u32,
+        (native_height as f32 * 2.54 / h_cm).round() as u32,
+    ))
+}
+
 /// Builds a [`Monitor`] for a device: friendly name (falling back to the
 /// raw device name) and current mode; primary is determined by origin 0,0.
 /// EDID fields are set to defaults; use `describe_with_edid` for full data.
@@ -163,6 +204,14 @@ pub(crate) fn describe(index: usize, name: &str) -> Monitor {
         native_width: 0,
         native_height: 0,
         native_refresh: 0,
+        physical_size_cm: None,
+        gamma: None,
+        dpi_physical: None,
+        gamut: None,
+        hdr: None,
+        bits_per_pel: mode.as_ref().map_or(0, |m| m.dm_bits_per_pel),
+        log_pixels: mode.as_ref().map_or(0, |m| m.dm_log_pixels as u32),
+        orientation: mode.as_ref().map_or(0, |m| m.dm_display_orientation),
     }
 }
 
@@ -202,6 +251,16 @@ fn describe_with_edid(
         native_width,
         native_height,
         native_refresh,
+        physical_size_cm: edid.physical_size_cm,
+        gamma: edid.gamma,
+        dpi_physical: edid
+            .physical_size_cm
+            .and_then(|size| physical_dpi(native_width, native_height, size)),
+        gamut: edid.chromaticity.map(|c| edid::gamut_coverage(&c)),
+        hdr: query_hdr(name, edid.hdr.as_ref()),
+        bits_per_pel: mode.as_ref().map_or(0, |m| m.dm_bits_per_pel),
+        log_pixels: mode.as_ref().map_or(0, |m| m.dm_log_pixels as u32),
+        orientation: mode.as_ref().map_or(0, |m| m.dm_display_orientation),
     }
 }
 
@@ -303,6 +362,18 @@ struct EdidData {
     native_width: u32,
     native_height: u32,
     native_refresh: u32,
+    /// Physical panel size in centimeters, when the EDID reports it.
+    #[allow(dead_code)]
+    physical_size_cm: Option<(f32, f32)>,
+    /// Gamma curve, when the EDID reports it.
+    #[allow(dead_code)]
+    gamma: Option<f32>,
+    /// Display primaries and white point, when the EDID reports them.
+    #[allow(dead_code)]
+    chromaticity: Option<edid::Chromaticity>,
+    /// HDR static metadata (HDR10/HLG) from the CTA-861 extension.
+    #[allow(dead_code)]
+    hdr: Option<edid::HdrEdid>,
 }
 
 /// Reads EDID data for a display device from the raw EDID blob the display
@@ -510,6 +581,10 @@ fn parse_edid(bytes: &[u8]) -> Result<EdidData, String> {
         native_width,
         native_height,
         native_refresh,
+        physical_size_cm: edid::physical_size_cm(bytes),
+        gamma: edid::gamma(bytes),
+        chromaticity: edid::chromaticity(bytes),
+        hdr: edid::hdr_metadata(bytes),
     })
 }
 
@@ -756,6 +831,10 @@ pub fn list_detailed() -> Result<Vec<Monitor>, String> {
             native_width: 0,
             native_height: 0,
             native_refresh: 0,
+            physical_size_cm: None,
+            gamma: None,
+            chromaticity: None,
+            hdr: None,
         });
 
         let display_name = append_fingerprint(
@@ -1040,6 +1119,10 @@ fn put_descriptor(b: &mut [u8], offset: usize, tag: u8, text: &str) {
             native_width: 0,
             native_height: 0,
             native_refresh: 0,
+            physical_size_cm: None,
+            gamma: None,
+            chromaticity: None,
+            hdr: None,
         };
         let monitor =
             describe_with_edid(0, "\\\\.\\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0);
@@ -1093,5 +1176,151 @@ fn put_descriptor(b: &mut [u8], offset: usize, tag: u8, text: &str) {
         assert_eq!(edid.manufactured_week, 34);
         assert_eq!(edid.manufactured_year, 2019);
         assert_eq!((edid.native_width, edid.native_height), (0, 0)); // DTD1 implausible
+    }
+
+    #[test]
+    fn parse_edid_reads_size_gamma_chromaticity_and_hdr() {
+        let mut b = base_edid();
+        b[21] = 48;
+        b[22] = 27;
+        b[23] = 120;
+        // sRGB primaries, D65 white, 10-bit encoded
+        b[25] = 0x96;
+        b[26] = 0x05;
+        b[27..35].copy_from_slice(&[0x8F, 0x52, 0x33, 0x66, 0x9A, 0x3D, 0x40, 0x51]);
+        // CTA-861 extension with HDR10 static metadata (extended data block)
+        b[126] = 1;
+        b.extend_from_slice(&[0u8; 128]);
+        b[128] = 0x02;
+        b[131] = (0x07 << 5) | 4;
+        b[132] = 0x06;
+        b[133] = 0x02;
+        let edid = parse_edid(&b).unwrap();
+        assert_eq!(edid.physical_size_cm, Some((48.0, 27.0)));
+        assert_eq!(edid.gamma, Some(2.2));
+        let c = edid.chromaticity.unwrap();
+        assert!((c.red.0 - 0.64).abs() < 0.001);
+        let hdr = edid.hdr.unwrap();
+        assert!(hdr.hdr10);
+        assert!(!hdr.hlg);
+    }
+
+    #[test]
+    fn parse_edid_defaults_absent_edid_fields_to_none() {
+        let mut b = base_edid();
+        b[23] = 0xFF; // gamma "undefined" per spec
+        let edid = parse_edid(&b).unwrap();
+        assert_eq!(edid.physical_size_cm, None);
+        assert_eq!(edid.gamma, None);
+        assert_eq!(edid.chromaticity, None);
+        assert_eq!(edid.hdr, None);
+    }
+
+    #[test]
+    fn physical_dpi_computes_horizontal_and_vertical() {
+        assert_eq!(physical_dpi(1920, 1080, (59.8, 33.6)), Some((82, 82)));
+        assert_eq!(physical_dpi(1920, 1080, (53.1, 29.9)), Some((92, 92)));
+    }
+
+    #[test]
+    fn physical_dpi_returns_none_for_zero_dims_or_size() {
+        assert_eq!(physical_dpi(0, 1080, (59.8, 33.6)), None);
+        assert_eq!(physical_dpi(1920, 0, (59.8, 33.6)), None);
+        assert_eq!(physical_dpi(1920, 1080, (0.0, 33.6)), None);
+        assert_eq!(physical_dpi(1920, 1080, (59.8, 0.0)), None);
+    }
+
+    /// A 1920x1080 preferred timing DTD (148.5 MHz clock, 280/45 blanking).
+    fn put_1920x1080_dtd(b: &mut [u8], offset: usize) {
+        b[offset..offset + 18].copy_from_slice(&[
+            0x02, 0x3A, 0x80, 0x18, 0x17, 0x38, 0x2D, 0x04, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ]);
+    }
+
+    #[test]
+    fn describe_with_edid_computes_dpi_from_edid_size() {
+        let mut b = base_edid();
+        b[21] = 60;
+        b[22] = 34;
+        b[23] = 120; // gamma 2.2
+        put_1920x1080_dtd(&mut b, 54);
+        let edid = parse_edid(&b).unwrap();
+        assert_eq!((edid.native_width, edid.native_height), (1920, 1080));
+        let monitor = describe_with_edid(
+            0,
+            r"\\.\DISPLAY_UNUSED",
+            String::new(),
+            &edid,
+            edid.native_width,
+            edid.native_height,
+            edid.native_refresh,
+        );
+        assert_eq!(monitor.physical_size_cm, Some((60.0, 34.0)));
+        // 1920*2.54/60 = 81.28 -> 81; 1080*2.54/34 = 80.72 -> 81
+        assert_eq!(monitor.dpi_physical, Some((81, 81)));
+        assert_eq!(monitor.gamma, Some(2.2));
+        assert_eq!(monitor.bits_per_pel, 0);
+        assert_eq!(monitor.log_pixels, 0);
+        assert_eq!(monitor.orientation, 0);
+    }
+
+    #[test]
+    fn describe_with_edid_no_dpi_without_edid_size() {
+        let mut b = base_edid();
+        b[23] = 0xFF; // gamma undefined
+        let edid = parse_edid(&b).unwrap();
+        let monitor =
+            describe_with_edid(0, r"\\.\DISPLAY_UNUSED", String::new(), &edid, 1920, 1080, 60);
+        assert_eq!(monitor.physical_size_cm, None);
+        assert_eq!(monitor.dpi_physical, None);
+        assert_eq!(monitor.gamma, None);
+        assert_eq!(monitor.gamut, None);
+        assert_eq!(monitor.hdr, None);
+    }
+
+    #[test]
+    fn describe_with_edid_gamut_from_chromaticity() {
+        let mut b = base_edid();
+        // sRGB primaries, D65 white
+        b[25] = 0x96;
+        b[26] = 0x05;
+        b[27..35].copy_from_slice(&[0x8F, 0x52, 0x33, 0x66, 0x9A, 0x3D, 0x40, 0x51]);
+        let edid = parse_edid(&b).unwrap();
+        let monitor =
+            describe_with_edid(0, r"\\.\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0);
+        let gamut = monitor.gamut.expect("gamut from EDID chromaticity");
+        assert_eq!(gamut.srgb, 100);
+        assert!((gamut.p3 as i32 - 74).abs() <= 1, "p3 = {}", gamut.p3);
+    }
+
+    #[test]
+    fn describe_with_edid_hdr_falls_back_to_edid_metadata() {
+        let mut b = base_edid();
+        b[126] = 1;
+        b.extend_from_slice(&[0u8; 128]);
+        b[128] = 0x02; // CTA-861 extension
+        b[131] = (0x07 << 5) | 4;
+        b[132] = 0x06;
+        b[133] = 0x02; // HDR10 static metadata
+        let edid = parse_edid(&b).unwrap();
+        let monitor =
+            describe_with_edid(0, r"\\.\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0);
+        let hdr = monitor.hdr.expect("hdr from EDID fallback");
+        assert!(hdr.supported);
+        assert!(!hdr.active);
+        assert_eq!(hdr.formats, vec!["HDR10"]);
+    }
+
+    #[test]
+    fn describe_sets_new_fields_to_defaults() {
+        let monitor = describe(0, r"\\.\DISPLAY_UNUSED");
+        assert_eq!(monitor.physical_size_cm, None);
+        assert_eq!(monitor.gamma, None);
+        assert_eq!(monitor.dpi_physical, None);
+        assert_eq!(monitor.gamut, None);
+        assert_eq!(monitor.hdr, None);
+        assert_eq!(monitor.bits_per_pel, 0);
+        assert_eq!(monitor.log_pixels, 0);
+        assert_eq!(monitor.orientation, 0);
     }
 }

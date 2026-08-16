@@ -490,6 +490,14 @@ mod tests {
             native_width: 1920,
             native_height: 1080,
             native_refresh: 60,
+            physical_size_cm: None,
+            gamma: None,
+            dpi_physical: None,
+            gamut: None,
+            hdr: None,
+            bits_per_pel: 0,
+            log_pixels: 0,
+            orientation: 0,
         }
     }
 

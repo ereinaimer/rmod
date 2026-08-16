@@ -13,6 +13,8 @@ use super::attach::{AttachAction, AttachChange, AttachOutcome};
 use super::bindings::{DM_POSITION, DevmodeW, Pointl};
 use super::brightness::{BrightnessBackend, BrightnessOutcome};
 use super::capabilities::Mode;
+use super::edid::GamutCoverage;
+use super::hdr::HdrInfo;
 use super::layout::{self, Direction, PlacementChange, PlacementOutcome};
 use super::query::Monitor;
 use super::temp::TempChange;
@@ -54,6 +56,18 @@ fn monitor(number: u32) -> Option<Monitor> {
             native_width: 1920,
             native_height: 1080,
             native_refresh: 60,
+            physical_size_cm: Some((59.8, 33.6)),
+            gamma: Some(2.2),
+            dpi_physical: Some((82, 82)),
+            gamut: Some(GamutCoverage { srgb: 100, p3: 74 }),
+            hdr: Some(HdrInfo {
+                supported: true,
+                active: false,
+                formats: vec!["HDR10"],
+            }),
+            bits_per_pel: 32,
+            log_pixels: 96,
+            orientation: 0,
         }),
         2 => Some(Monitor {
             number: 2,
@@ -73,6 +87,18 @@ fn monitor(number: u32) -> Option<Monitor> {
             native_width: 1920,
             native_height: 1080,
             native_refresh: 60,
+            physical_size_cm: Some((53.1, 29.9)),
+            gamma: Some(2.4),
+            dpi_physical: Some((92, 92)),
+            gamut: Some(GamutCoverage { srgb: 100, p3: 100 }),
+            hdr: Some(HdrInfo {
+                supported: false,
+                active: false,
+                formats: vec![],
+            }),
+            bits_per_pel: 30,
+            log_pixels: 144,
+            orientation: 0,
         }),
         _ => None,
     }
@@ -516,6 +542,46 @@ mod tests {
         assert_eq!(monitors.len(), 2);
         assert!(monitors[0].is_primary);
         assert!(!monitors[1].is_primary);
+    }
+
+    #[test]
+    fn monitor_1_carries_task3_fake_values() {
+        let m = monitor(1).unwrap();
+        assert_eq!(m.physical_size_cm, Some((59.8, 33.6)));
+        assert_eq!(m.gamma, Some(2.2));
+        assert_eq!(m.dpi_physical, Some((82, 82)));
+        assert_eq!(m.gamut, Some(GamutCoverage { srgb: 100, p3: 74 }));
+        assert_eq!(
+            m.hdr,
+            Some(HdrInfo {
+                supported: true,
+                active: false,
+                formats: vec!["HDR10"],
+            })
+        );
+        assert_eq!(m.bits_per_pel, 32);
+        assert_eq!(m.log_pixels, 96);
+        assert_eq!(m.orientation, 0);
+    }
+
+    #[test]
+    fn monitor_2_carries_task3_fake_values() {
+        let m = monitor(2).unwrap();
+        assert_eq!(m.physical_size_cm, Some((53.1, 29.9)));
+        assert_eq!(m.gamma, Some(2.4));
+        assert_eq!(m.dpi_physical, Some((92, 92)));
+        assert_eq!(m.gamut, Some(GamutCoverage { srgb: 100, p3: 100 }));
+        assert_eq!(
+            m.hdr,
+            Some(HdrInfo {
+                supported: false,
+                active: false,
+                formats: vec![],
+            })
+        );
+        assert_eq!(m.bits_per_pel, 30);
+        assert_eq!(m.log_pixels, 144);
+        assert_eq!(m.orientation, 0);
     }
 
     #[test]
