@@ -12,7 +12,7 @@ use super::bindings::{
     GetDeviceGammaRamp, GetMonitorBrightness, GetMonitorInfoW,
     GetPhysicalMonitorsFromHMONITOR, GetVCPFeatureAndVCPFeatureReply,
     MCCS_BRIGHTNESS, MonitorInfoExW, PhysicalMonitor, Rect, SetDeviceGammaRamp,
-    SetMonitorBrightness, SetVCPFeature, encode_wide, wide_to_string,
+    SetMonitorBrightness, SetVCPFeature, encode_wide,
 };
 use super::{query, wmi};
 use std::any::Any;
@@ -479,11 +479,21 @@ impl Drop for PhysicalMonitors {
     }
 }
 
+/// True when the NUL-terminated wide strings are equal (each read up to
+/// its first NUL).
+fn wide_eq(a: &[u16; 32], b: &[u16; 32]) -> bool {
+    let a_end = a.iter().position(|&c| c == 0).unwrap_or(32);
+    let b_end = b.iter().position(|&c| c == 0).unwrap_or(32);
+    a_end == b_end && a[..a_end] == b[..b_end]
+}
+
 /// The physical monitors attached to the display whose device name matches
 /// `name`, or `None` when the display exposes no physical monitor API.
 fn physical_monitors(name: &str) -> Result<Option<PhysicalMonitors>, String> {
     struct Ctx {
-        target: String,
+        /// The NUL-padded target device name; a name longer than 31 chars
+        /// would be truncated, which cannot happen for real device names.
+        target: [u16; 32],
         found: bool,
         handle: usize,
     }
@@ -502,15 +512,19 @@ fn physical_monitors(name: &str) -> Result<Option<PhysicalMonitors>, String> {
         if unsafe { GetMonitorInfoW(h_monitor, &mut info) } == 0 {
             return 1;
         }
-        if wide_to_string(&info.sz_device) == ctx.target {
+        if wide_eq(&info.sz_device, &ctx.target) {
             ctx.found = true;
             ctx.handle = h_monitor;
             return 0;
         }
         1
     }
+    let encoded = encode_wide(name);
+    let mut target = [0u16; 32];
+    let copy_len = encoded.len().min(target.len());
+    target[..copy_len].copy_from_slice(&encoded[..copy_len]);
     let mut ctx = Ctx {
-        target: name.to_string(),
+        target,
         found: false,
         handle: 0,
     };
@@ -947,6 +961,44 @@ mod tests {
             panic!("intentional panic");
         });
         assert_eq!(result, Ok(None));
+    }
+
+    fn wide(s: &str) -> [u16; 32] {
+        let mut out = [0u16; 32];
+        for (i, unit) in s.encode_utf16().take(32).enumerate() {
+            out[i] = unit;
+        }
+        out
+    }
+
+    #[test]
+    fn wide_eq_matches_equal_names() {
+        let name = wide("\\\\.\\DISPLAY1");
+        assert!(wide_eq(&name, &name));
+    }
+
+    #[test]
+    fn wide_eq_rejects_differing_names() {
+        assert!(!wide_eq(&wide("\\\\.\\DISPLAY1"), &wide("\\\\.\\DISPLAY2")));
+    }
+
+    #[test]
+    fn wide_eq_trims_both_at_the_first_nul() {
+        let mut with_junk = wide("AB");
+        with_junk[3] = 1;
+        assert!(wide_eq(&with_junk, &wide("AB")));
+        assert!(wide_eq(&wide("AB"), &with_junk));
+    }
+
+    #[test]
+    fn wide_eq_empty_matches_only_empty() {
+        assert!(wide_eq(&[0u16; 32], &[0u16; 32]));
+        assert!(!wide_eq(&[0u16; 32], &wide("\\\\.\\DISPLAY1")));
+    }
+
+    #[test]
+    fn wide_eq_rejects_a_prefix_match() {
+        assert!(!wide_eq(&wide("\\\\.\\DISPLAY1"), &wide("\\\\.\\DISPLAY10")));
     }
 
     #[test]
