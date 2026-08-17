@@ -5,6 +5,7 @@
 //! modes grouped by resolution. Each block's heading is the display name
 //! with the EDID fingerprint suffix (e.g. `Lenovo 9059 [a1b2c3d4]`).
 
+use crate::cli::parser::{Command, HelpTopic};
 use crate::sys::windows;
 use crate::sys::windows::edid::GamutCoverage;
 use crate::sys::windows::hdr::hdr_label;
@@ -149,6 +150,24 @@ fn print_monitor(m: &crate::sys::windows::Monitor) {
     }
 }
 
+pub(crate) fn parse_ls(_cmd: &str, args: &[impl AsRef<str>]) -> Result<Command, String> {
+    let i = 1;
+
+    if let Some(arg) = args.get(i) {
+        return match arg.as_ref() {
+            "--help" => Ok(Command::Help {
+                topic: Some(HelpTopic::List),
+            }),
+            other => Err(format!(
+                "unexpected argument {} for list. use --help",
+                other
+            )),
+        };
+    }
+
+    Ok(Command::List)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,5 +242,79 @@ mod tests {
         assert_eq!(mode_line(1920, 1080, "60Hz, 144Hz", 9), "1920x1080 @ 60Hz, 144Hz");
         assert_eq!(mode_line(1280, 720, "60Hz", 9), "1280x720  @ 60Hz");
         assert_eq!(mode_line(640, 480, "120Hz", 9), "640x480   @ 120Hz");
+    }
+
+    const SERIAL_A: &str = "ABC12345678";
+
+    fn parse(args: &[&str]) -> Result<Command, String> {
+        let mut full_args = vec!["rmod"];
+        full_args.extend_from_slice(args);
+        crate::cli::parser::parse_from(&full_args)
+    }
+
+    #[test]
+    fn ls_help_flags() {
+        assert!(parse(&["ls", "-h"]).is_err());
+        assert_eq!(
+            parse(&["ls", "--help"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::List)
+            })
+        );
+    }
+
+    #[test]
+    fn ls_unknown_argument_is_error() {
+        assert_eq!(
+            parse(&["ls", "foo"]),
+            Err("unexpected argument foo for list. use --help".to_string())
+        );
+    }
+
+    #[test]
+    fn list_unknown_argument_is_error() {
+        assert_eq!(
+            parse(&["list", "foo"]),
+            Err("unexpected argument foo for list. use --help".to_string())
+        );
+    }
+
+    #[test]
+    fn list_help_flag() {
+        assert_eq!(
+            parse(&["list", "--help"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::List)
+            })
+        );
+    }
+
+    #[test]
+    fn ls_rejects_caps_flag() {
+        assert_eq!(
+            parse(&["ls", "--caps"]),
+            Err("unexpected argument --caps for list. use --help".to_string())
+        );
+    }
+
+    #[test]
+    fn ls_rejects_monitor_flag() {
+        assert_eq!(
+            parse(&["ls", "-m", SERIAL_A]),
+            Err("unexpected argument -m for list. use --help".to_string())
+        );
+    }
+
+    #[test]
+    fn ls_rejects_all_old_flags() {
+        for args in [
+            &["ls", "--caps", "-m", SERIAL_A][..],
+            &["ls", "-m", SERIAL_A, "--caps"][..],
+            &["ls", "--caps", "-m", "all"][..],
+            &["ls", "--caps", "--help"][..],
+            &["ls", "-m", "2", "--caps"][..],
+        ] {
+            assert!(parse(args).is_err(), "args: {:?}", args);
+        }
     }
 }

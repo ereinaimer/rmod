@@ -10,6 +10,7 @@ use std::ffi::c_void;
 pub(crate) const HKEY_LOCAL_MACHINE: isize = -0x7FFF_FFFE;
 pub(crate) const KEY_READ: u32 = 0x0002_0019;
 pub(crate) const REG_BINARY: u32 = 3;
+pub(crate) const REG_SZ: u32 = 1;
 pub(crate) const ERROR_SUCCESS: i32 = 0;
 
 #[link(name = "advapi32")]

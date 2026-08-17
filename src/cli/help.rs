@@ -2,9 +2,9 @@
 //!
 //! Each function returns the complete text for one page; the dispatcher in
 //! `main` prints it and exits. All content rows come from the registries in
-//! `parser`; this module only renders them.
+//! `flags`; this module only renders them.
 
-use crate::cli::parser::{
+use crate::cli::flags::{
     BRIGHTNESS_FLAGS, Flag, LAYOUT_FLAGS, LS_FLAGS, MONITOR_FLAGS, ORIENTATIONS, SET_FLAGS,
     TEMP_FLAGS, TEMP_PRESETS, TOP_COMMANDS, TOP_FLAGS,
 };
@@ -301,16 +301,16 @@ pub(crate) fn commands(rows: &[(&'static str, &'static str)]) -> String {
     options(&flags)
 }
 
-/// Render the profiles table from `parser::PROFILES`, joined by `\n`.
+/// Render the profiles table from `flags::PROFILES`, joined by `\n`.
 pub(crate) fn profiles_table() -> String {
-    crate::cli::parser::PROFILES
+    crate::cli::flags::PROFILES
         .iter()
         .map(|(name, width, height)| format!("  {name:<4}  {width}x{height}"))
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-/// Render the temperature presets table from `parser::TEMP_PRESETS`, joined
+/// Render the temperature presets table from `flags::TEMP_PRESETS`, joined
 /// by `\n`.
 pub(crate) fn temp_presets_table() -> String {
     TEMP_PRESETS

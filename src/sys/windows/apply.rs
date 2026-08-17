@@ -6,6 +6,7 @@
 //! active is reported as unchanged and never re-applied. `make_main`
 //! swaps desktop positions so a display becomes the primary (origin 0,0).
 
+use super::apply_plan::{Planned, has_applied, plan_max, plan_set};
 use super::bindings::{
     CDS_TEST, CDS_UPDATEREGISTRY, ChangeDisplaySettingsExW, DISP_CHANGE_BADDUALVIEW,
     DISP_CHANGE_BADFLAGS, DISP_CHANGE_BADMODE, DISP_CHANGE_BADPARAM, DISP_CHANGE_FAILED,
@@ -85,7 +86,7 @@ pub enum MainOutcome<'a> {
 
 /// Builds the outcome for an attempted change; identical modes and a
 /// matching orientation produce [`ApplyOutcome::Unchanged`].
-fn outcome_of(
+pub(crate) fn outcome_of(
     monitor: u32,
     display: String,
     mode: Mode,
@@ -124,7 +125,7 @@ fn dmdo(angle: u32) -> u32 {
 }
 
 /// Maps a display orientation value back to its angle in degrees.
-fn angle_of(orientation: u32) -> u32 {
+pub(crate) fn angle_of(orientation: u32) -> u32 {
     match orientation {
         0 => 0,
         1 => 90,
@@ -134,7 +135,7 @@ fn angle_of(orientation: u32) -> u32 {
 }
 
 /// The display orientation value in effect for a device mode.
-fn orientation_of(devmode: &DevmodeW) -> u32 {
+pub(crate) fn orientation_of(devmode: &DevmodeW) -> u32 {
     devmode.dm_display_orientation
 }
 
@@ -459,7 +460,7 @@ pub(crate) fn describe_change_result(code: i32) -> String {
     }
 }
 
-fn mode_of(devmode: &DevmodeW) -> Mode {
+pub(crate) fn mode_of(devmode: &DevmodeW) -> Mode {
     Mode {
         width: devmode.dm_pels_width,
         height: devmode.dm_pels_height,
@@ -482,7 +483,7 @@ pub(crate) fn build_devmode(mode: &Mode, current: &DevmodeW, orientation: Option
     devmode
 }
 
-fn best_mode(modes: Vec<Mode>) -> Option<Mode> {
+pub(crate) fn best_mode(modes: Vec<Mode>) -> Option<Mode> {
     capabilities::normalize_modes(modes).pop()
 }
 
@@ -494,7 +495,7 @@ fn best_refresh(modes: &[Mode], width: u32, height: u32) -> Option<u32> {
         .max()
 }
 
-fn resolve_refresh(
+pub(crate) fn resolve_refresh(
     policy: Refresh,
     modes: &[Mode],
     width: u32,
@@ -508,14 +509,6 @@ fn resolve_refresh(
         Refresh::Max => best_refresh(modes, width, height)
             .ok_or_else(|| format!("{display} does not support {width}x{height}. run rmod list to see supported modes")),
     }
-}
-
-/// A planned change for one monitor: everything needed to validate and
-/// apply a mode and report the resulting outcome.
-struct Planned<'a> {
-    name: &'a str,
-    devmode: DevmodeW,
-    outcome: ApplyOutcome,
 }
 
 /// Resolves optional dimensions against a display's current mode.
@@ -550,100 +543,6 @@ pub(crate) fn effective_dims(
         Some(90 | 270) => (h, w),
         _ => (w, h),
     }
-}
-
-#[allow(dead_code)]
-fn plan_set<'a>(
-    targets: &'a [(usize, &'a str)],
-    width: Option<u32>,
-    height: Option<u32>,
-    policy: Refresh,
-    orientation: Option<u32>,
-) -> Result<Vec<Planned<'a>>, String> {
-    let mut planned = Vec::new();
-    for (index, name) in targets {
-        let display = query::display_label(name, *index as u32 + 1);
-        let base = query::current_mode(name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
-        let (width, height) = effective_dims(width, height, orientation, &base);
-        let modes = capabilities::enumerate_modes(name);
-        let refresh = resolve_refresh(
-            policy,
-            &modes,
-            width,
-            height,
-            base.dm_display_frequency,
-            &display,
-        )?;
-        let mode = Mode {
-            width,
-            height,
-            refresh,
-        };
-        let previous = mode_of(&base);
-        let previous_orientation = orientation.map(|_| angle_of(orientation_of(&base)));
-        let devmode = build_devmode(&mode, &base, orientation);
-        let outcome = outcome_of(
-            *index as u32 + 1,
-            display,
-            mode,
-            previous,
-            orientation,
-            previous_orientation,
-        );
-        planned.push(Planned {
-            name,
-            devmode,
-            outcome,
-        });
-    }
-    Ok(planned)
-}
-
-fn plan_max<'a>(
-    targets: &'a [(usize, &'a str)],
-    orientation: Option<u32>,
-) -> Result<Vec<Planned<'a>>, String> {
-    let mut planned = Vec::new();
-    let mut failures = Vec::new();
-    for (index, name) in targets {
-        let display = query::display_label(name, *index as u32 + 1);
-        let Some(mode) = best_mode(capabilities::enumerate_modes(name)) else {
-            failures.push(format!(
-                "{display} has no supported modes, the display may be disabled or not connected"
-            ));
-            continue;
-        };
-        let base = query::current_mode(name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
-        let previous = mode_of(&base);
-        let previous_orientation = orientation_of(&base);
-        let devmode = build_devmode(&mode, &base, orientation);
-        let outcome = outcome_of(
-            *index as u32 + 1,
-            display,
-            mode,
-            previous,
-            orientation,
-            Some(previous_orientation),
-        );
-        planned.push(Planned {
-            name,
-            devmode,
-            outcome,
-        });
-    }
-    if failures.is_empty() {
-        Ok(planned)
-    } else {
-        Err(failures.join("\n"))
-    }
-}
-
-/// True when a plan contains at least one mode to apply; a batch with no
-/// changes must not fade.
-fn has_applied(planned: &[Planned<'_>]) -> bool {
-    planned
-        .iter()
-        .any(|p| matches!(p.outcome, ApplyOutcome::Applied(_)))
 }
 
 fn apply_planned(planned: Vec<Planned<'_>>) -> Result<Vec<ApplyOutcome>, String> {
@@ -1358,48 +1257,6 @@ mod tests {
         let devmode = build_devmode(&previous, &base, None);
         assert_eq!(devmode.dm_display_orientation, 2);
         assert_eq!(devmode.dm_fields & DM_DISPLAYORIENTATION, 0);
-    }
-
-    #[test]
-    fn has_applied_false_for_empty_plan() {
-        assert!(!has_applied(&[]));
-    }
-
-    #[test]
-    fn has_applied_false_when_all_unchanged() {
-        let planned = vec![planned_unchanged(), planned_unchanged()];
-        assert!(!has_applied(&planned));
-    }
-
-    #[test]
-    fn has_applied_true_when_any_applied() {
-        let planned = vec![planned_unchanged(), planned_applied()];
-        assert!(has_applied(&planned));
-    }
-
-    fn planned_unchanged() -> Planned<'static> {
-        let base = query::current_mode("").unwrap_or_else(|| unsafe { std::mem::zeroed() });
-        let mode = mode_of(&base);
-        Planned {
-            name: "",
-            devmode: base,
-            outcome: outcome_of(1, String::new(), mode, mode_of(&base), None, None),
-        }
-    }
-
-    fn planned_applied() -> Planned<'static> {
-        let base = query::current_mode("").unwrap_or_else(|| unsafe { std::mem::zeroed() });
-        let previous = mode_of(&base);
-        let mode = Mode {
-            width: previous.width + 1,
-            height: previous.height + 1,
-            refresh: previous.refresh,
-        };
-        Planned {
-            name: "",
-            devmode: base,
-            outcome: outcome_of(1, String::new(), mode, previous, None, None),
-        }
     }
 }
 
