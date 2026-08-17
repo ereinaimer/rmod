@@ -15,7 +15,7 @@ fn resolve_spec(
     _current_width: u32,
     _current_height: u32,
 ) -> (Option<u32>, Option<u32>, Refresh) {
-    use crate::cli::parser::PROFILES;
+    use crate::cli::flags::PROFILES;
     match spec {
         SetSpec::Profile(name) => {
             let (_, w, h) = PROFILES

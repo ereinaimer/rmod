@@ -6,6 +6,7 @@
 
 mod commands;
 mod confirm;
+pub(crate) mod flags;
 mod help;
 mod parser;
 
