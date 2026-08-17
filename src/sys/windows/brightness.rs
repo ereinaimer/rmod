@@ -715,7 +715,11 @@ pub(crate) fn gamma_ramp(value: u32) -> [u16; 768] {
 
 /// True when the ramp already represents `value`.
 fn gamma_matches(ramp: &[u16; 768], value: u32) -> bool {
-    gamma_ramp(value) == *ramp
+    ramp.iter().enumerate().all(|(i, &entry)| {
+        let channel = i % 256;
+        let expected = (channel as u32 * 257 * value / 100).min(65535) as u16;
+        entry == expected
+    })
 }
 
 /// The brightness percent recovered from a gamma ramp: the red channel's
@@ -792,6 +796,13 @@ mod tests {
     fn gamma_matches_roundtrips_constructed_ramp() {
         assert!(gamma_matches(&gamma_ramp(40), 40));
         assert!(!gamma_matches(&gamma_ramp(40), 41));
+    }
+
+    #[test]
+    fn gamma_matches_early_exits_on_first_mismatch() {
+        let mut ramp = gamma_ramp(50);
+        ramp[0] = 1;
+        assert!(!gamma_matches(&ramp, 50));
     }
 
     #[test]
