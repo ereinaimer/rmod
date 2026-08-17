@@ -77,6 +77,24 @@ fn report_all(action: MonitorAction, yes: bool) -> i32 {
     let mut applied = Vec::new();
     let mut any_error = false;
     for monitor in 1..=count as u32 {
+        if action == MonitorAction::Disable {
+            match windows::get_current_mode(monitor) {
+                Ok(mode) if mode.is_primary => {
+                    println!(
+                        "skipped {} [:{number}], the primary display cannot be detached",
+                        mode.name,
+                        number = mode.number
+                    );
+                    continue;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    any_error = true;
+                    continue;
+                }
+            }
+        }
         let outcome = if action == MonitorAction::Disable {
             windows::disable(Some(monitor))
         } else {
