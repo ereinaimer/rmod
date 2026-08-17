@@ -92,54 +92,87 @@ where
     }
 }
 
-/// Shows the arrangement grid: every display with its position relative to
-/// the primary display (the main display marked `(primary)`), resolution
-/// and refresh, aligned to the widest entries.
+/// Shows the arrangement grid: every display with its fingerprint ID, its
+/// position relative to the primary display (the main display marked
+/// `(primary)`), resolution, refresh and rotation, aligned to the widest
+/// entries.
 pub(super) fn run_show() -> i32 {
     match crate::sys::windows::list() {
         Ok(monitors) => {
-            let rels: Vec<String> = monitors.iter().map(|m| relative_to(&monitors, m)).collect();
-            let number_width = monitors
-                .iter()
-                .map(|m| m.number.to_string().len())
-                .max()
-                .unwrap_or(1)
-                .max(1);
-            let name_width = monitors
-                .iter()
-                .map(|m| m.name.len())
-                .max()
-                .unwrap_or(4)
-                .max(4);
-            let rel_width = rels.iter().map(|r| r.len()).max().unwrap_or(11).max(11);
-            let res_width = monitors
-                .iter()
-                .map(|m| format!("{}x{}", m.width, m.height).len())
-                .max()
-                .unwrap_or(10)
-                .max(10);
-            let header = format!(
-                "{:<number_width$}  {:<name_width$}  {:<rel_width$}  {:<res_width$}  {:<7}",
-                "#", "NAME", "RELATIVE TO", "RESOLUTION", "REFRESH"
-            );
-            println!("{header}");
-            println!("{}", "─".repeat(header.len()));
-            for (m, rel) in monitors.iter().zip(&rels) {
-                println!(
-                    "{:<number_width$}  {:<name_width$}  {:<rel_width$}  {:<res_width$}  {:<7}",
-                    m.number,
-                    m.name,
-                    rel,
-                    format!("{}x{}", m.width, m.height),
-                    format!("{}Hz", m.refresh)
-                );
-            }
+            println!("{}", grid(&monitors));
             0
         }
         Err(e) => {
             eprintln!("error: {e}");
             2
         }
+    }
+}
+
+/// The arrangement grid: header, separator and one aligned row per monitor,
+/// every column sized to its widest entry.
+fn grid(monitors: &[Monitor]) -> String {
+    let rels: Vec<String> = monitors.iter().map(|m| relative_to(monitors, m)).collect();
+    let number_width = monitors
+        .iter()
+        .map(|m| m.number.to_string().len())
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let name_width = monitors
+        .iter()
+        .map(|m| m.name.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
+    let id_width = monitors
+        .iter()
+        .map(|m| m.fingerprint.len())
+        .max()
+        .unwrap_or(2)
+        .max(2);
+    let rel_width = rels.iter().map(|r| r.len()).max().unwrap_or(11).max(11);
+    let res_width = monitors
+        .iter()
+        .map(|m| format!("{}x{}", m.width, m.height).len())
+        .max()
+        .unwrap_or(10)
+        .max(10);
+    let rot_width = monitors
+        .iter()
+        .map(|m| rotation_angle(m.orientation).len())
+        .max()
+        .unwrap_or(3)
+        .max(3);
+    let header = format!(
+        "{:<number_width$}  {:<name_width$}  {:<id_width$}  {:<rel_width$}  {:<res_width$}  {:<7}  {:<rot_width$}",
+        "#", "NAME", "ID", "RELATIVE TO", "RESOLUTION", "REFRESH", "ROT"
+    );
+    let header_len = header.len();
+    let mut lines = vec![header, "─".repeat(header_len)];
+    for (m, rel) in monitors.iter().zip(&rels) {
+        lines.push(format!(
+            "{:<number_width$}  {:<name_width$}  {:<id_width$}  {:<rel_width$}  {:<res_width$}  {:<7}  {:<rot_width$}",
+            m.number,
+            m.name,
+            m.fingerprint,
+            rel,
+            format!("{}x{}", m.width, m.height),
+            format!("{}Hz", m.refresh),
+            rotation_angle(m.orientation)
+        ));
+    }
+    lines.join("\n")
+}
+
+/// The `ROT` cell: the display orientation value as its angle in degrees.
+fn rotation_angle(orientation: u32) -> String {
+    match orientation {
+        0 => "0".to_string(),
+        1 => "90".to_string(),
+        2 => "180".to_string(),
+        3 => "270".to_string(),
+        _ => orientation.to_string(),
     }
 }
 
@@ -549,5 +582,55 @@ mod tests {
     #[test]
     fn relative_to_empty_list_is_empty() {
         assert_eq!(relative_to(&[], &monitor(1, 0, 0, true)), "");
+    }
+
+    #[test]
+    fn rotation_angle_maps_orientation_values() {
+        assert_eq!(rotation_angle(0), "0");
+        assert_eq!(rotation_angle(1), "90");
+        assert_eq!(rotation_angle(2), "180");
+        assert_eq!(rotation_angle(3), "270");
+        assert_eq!(rotation_angle(4), "4");
+    }
+
+    #[test]
+    fn grid_renders_all_columns_aligned() {
+        let monitors = vec![monitor(1, 0, 0, true), monitor(2, 1920, 0, false)];
+        let out = grid(&monitors);
+        let mut lines = out.lines();
+        assert_eq!(
+            lines.next().unwrap(),
+            "#  NAME  ID       RELATIVE TO  RESOLUTION  REFRESH  ROT"
+        );
+        assert_eq!(lines.next().unwrap(), "─".repeat(55));
+        assert_eq!(
+            lines.next().unwrap(),
+            "1  M1    finger1  (primary)    1920x1080   60Hz     0  "
+        );
+        assert_eq!(
+            lines.next().unwrap(),
+            "2  M2    finger2  right of 1   1920x1080   60Hz     0  "
+        );
+        assert!(lines.next().is_none());
+    }
+
+    #[test]
+    fn grid_shows_fingerprint_for_each_monitor() {
+        let monitors = vec![monitor(1, 0, 0, true), monitor(2, 1920, 0, false)];
+        let out = grid(&monitors);
+        assert!(out.contains("finger1"), "missing fingerprint: {out}");
+        assert!(out.contains("finger2"), "missing fingerprint: {out}");
+    }
+
+    #[test]
+    fn grid_marks_rotated_monitor_with_angle() {
+        let mut rotated = monitor(2, 1920, 0, false);
+        rotated.orientation = 1;
+        let monitors = vec![monitor(1, 0, 0, true), rotated];
+        let out = grid(&monitors);
+        assert!(
+            out.lines().any(|l| l.trim_end().ends_with("90")),
+            "missing rotation angle: {out}"
+        );
     }
 }
