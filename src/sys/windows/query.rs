@@ -350,7 +350,7 @@ pub fn connected_displays_list() -> String {
     let mut parts = Vec::new();
     for (i, name) in names.iter().enumerate() {
         let mode = current_mode(name);
-        let display_name = if let Some(mode) = &mode {
+        let display_name = if mode.is_some() {
             friendly_name(&encode_wide(name)).unwrap_or_else(|| name.to_string())
         } else {
             name.to_string()
