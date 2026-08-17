@@ -8,10 +8,13 @@
 use crate::cli::parser::parse_monitor_target;
 use crate::cli::{BrightnessBackend, Command, HelpTopic, MonitorAction, MonitorTarget};
 use crate::sys::windows::{
-    self, AttachOutcome, BrightnessLayer, BrightnessOutcome, BrightnessValue, brightness::mode_word,
+    self, AttachOutcome, BrightnessLayer, BrightnessOutcome, BrightnessValue, ContrastBackend,
+    ContrastOutcome, brightness::mode_word,
 };
 
-use super::{confirm_or_revert_attach, confirm_or_revert_attach_all, describe_attach, resolve_target};
+use super::{
+    confirm_or_revert_attach, confirm_or_revert_attach_all, describe_attach, resolve_target,
+};
 
 /// Runs the `monitor` command with the parsed action and target.
 pub(super) fn run_monitor(action: MonitorAction, monitor: MonitorTarget, yes: bool) -> i32 {
@@ -42,6 +45,8 @@ pub(super) fn run_monitor(action: MonitorAction, monitor: MonitorTarget, yes: bo
         },
         MonitorAction::Disable | MonitorAction::Enable => run_attach(action, monitor, yes),
         MonitorAction::Brightness { value, via } => run_brightness(value, via, monitor),
+        MonitorAction::Contrast { value, via } => run_contrast(value, via, monitor),
+        MonitorAction::ContrastReset => run_contrast_reset(monitor),
     }
 }
 
@@ -251,6 +256,117 @@ fn layer_backend(outcome: &BrightnessOutcome) -> &str {
     }
 }
 
+/// Runs the contrast command against the targeted display(s).
+fn run_contrast(value: u32, via: Option<ContrastBackend>, monitor: MonitorTarget) -> i32 {
+    match monitor {
+        MonitorTarget::Primary => report_contrast(windows::set_contrast(None, value, via)),
+        MonitorTarget::Index(n) => report_contrast(windows::set_contrast(Some(n), value, via)),
+        MonitorTarget::Id(_) => match resolve_target(&monitor) {
+            Ok(idx) => report_contrast(windows::set_contrast(idx, value, via)),
+            Err(e) => {
+                eprintln!("error: {e}");
+                2
+            }
+        },
+        MonitorTarget::All => contrast_all(value, via),
+    }
+}
+
+/// Applies contrast to all displays.
+fn contrast_all(value: u32, via: Option<ContrastBackend>) -> i32 {
+    let count = windows::enumerate_devices().len();
+    let mut any_error = false;
+    for n in 1..=count as u32 {
+        match windows::set_contrast(Some(n), value, via) {
+            Ok(outcome) => print_contrast(&outcome),
+            Err(e) => {
+                eprintln!("error: {e}");
+                any_error = true;
+            }
+        }
+    }
+    if any_error { 2 } else { 0 }
+}
+
+/// Reports a single-display contrast outcome.
+fn report_contrast(outcome: Result<ContrastOutcome, String>) -> i32 {
+    match outcome {
+        Ok(outcome) => {
+            print_contrast(&outcome);
+            0
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            2
+        }
+    }
+}
+
+/// Runs the contrast reset command against the targeted display(s).
+fn run_contrast_reset(monitor: MonitorTarget) -> i32 {
+    match monitor {
+        MonitorTarget::Primary => report_contrast(windows::reset_contrast(None)),
+        MonitorTarget::Index(n) => report_contrast(windows::reset_contrast(Some(n))),
+        MonitorTarget::Id(_) => match resolve_target(&monitor) {
+            Ok(idx) => report_contrast(windows::reset_contrast(idx)),
+            Err(e) => {
+                eprintln!("error: {e}");
+                2
+            }
+        },
+        MonitorTarget::All => contrast_all_reset(),
+    }
+}
+
+/// Applies contrast reset to all displays.
+fn contrast_all_reset() -> i32 {
+    let count = windows::enumerate_devices().len();
+    let mut any_error = false;
+    for n in 1..=count as u32 {
+        match windows::reset_contrast(Some(n)) {
+            Ok(outcome) => print_contrast(&outcome),
+            Err(e) => {
+                eprintln!("error: {e}");
+                any_error = true;
+            }
+        }
+    }
+    if any_error { 2 } else { 0 }
+}
+
+/// Describes a contrast outcome: the applied line with its backend, or
+/// the already-at line.
+fn describe_contrast(outcome: &ContrastOutcome) -> String {
+    if outcome.unchanged {
+        format!("{} is already at {}%", outcome.display, outcome.value)
+    } else {
+        format!(
+            "set {} contrast to {}% via {}",
+            outcome.display,
+            outcome.value,
+            outcome.backend.name()
+        )
+    }
+}
+
+/// The clip warning printed after an applied contrast boost, or `None` otherwise.
+fn contrast_clip_warning(outcome: &ContrastOutcome) -> Option<&'static str> {
+    if outcome.clipped && !outcome.unchanged {
+        Some("contrast boost clips shadows and highlights")
+    } else {
+        None
+    }
+}
+
+/// Prints a contrast outcome's report lines: the describe line, then the
+/// clip warning when the applied boost ramp was clipped.
+fn print_contrast(outcome: &ContrastOutcome) {
+    println!("{}", describe_contrast(outcome));
+    if let Some(warning) = contrast_clip_warning(outcome) {
+        println!("{warning}");
+    }
+}
+
 /// Reports a single-display attach outcome and runs the confirmation flow
 /// when the change was applied.
 fn report_single(outcome: Result<AttachOutcome, String>, yes: bool) -> i32 {
@@ -272,7 +388,7 @@ fn report_single(outcome: Result<AttachOutcome, String>, yes: bool) -> i32 {
 
 pub(crate) fn parse_monitor(args: &[impl AsRef<str>]) -> Result<Command, String> {
     if args.len() < 2 {
-return Err("monitor needs an action. attach, detach, sleep, wake, or brightness\ne.g. rmod monitor detach -m 2".to_string());
+        return Err("monitor needs an action. attach, detach, sleep, wake, brightness, or contrast\ne.g. rmod monitor detach -m 2".to_string());
     }
     let action_str = args[1].as_ref();
     if action_str == "--help" {
@@ -283,6 +399,12 @@ return Err("monitor needs an action. attach, detach, sleep, wake, or brightness\
     if action_str == "brightness" {
         return parse_monitor_brightness(args);
     }
+    if action_str == "contrast" {
+        if args.len() > 2 && args[2].as_ref() == "reset" {
+            return parse_monitor_contrast_reset(args);
+        }
+        return parse_monitor_contrast(args);
+    }
     let action = match action_str {
         "detach" | "disable" | "off" => MonitorAction::Disable,
         "attach" | "enable" | "on" => MonitorAction::Enable,
@@ -290,7 +412,7 @@ return Err("monitor needs an action. attach, detach, sleep, wake, or brightness\
         "wake" => MonitorAction::Wake,
         other => {
             return Err(format!(
-                "unknown action {} for monitor. use attach, detach, sleep, wake, or brightness",
+                "unknown action {} for monitor. use attach, detach, sleep, wake, brightness, or contrast",
                 other
             ));
         }
@@ -305,7 +427,9 @@ return Err("monitor needs an action. attach, detach, sleep, wake, or brightness\
         match arg {
             "--help" => {
                 return Ok(Command::Help {
-                    topic: Some(HelpTopic::Monitor { action: Some(action) }),
+                    topic: Some(HelpTopic::Monitor {
+                        action: Some(action),
+                    }),
                 });
             }
             "-m" | "--monitor" => {
@@ -317,13 +441,15 @@ return Err("monitor needs an action. attach, detach, sleep, wake, or brightness\
                 i += 1;
                 let Some(val) = args.get(i) else {
                     return Err(
-                        "-m, --monitor needs a value. a monitor ID or all\ne.g. -m a1b2c3d4".to_string(),
+                        "-m, --monitor needs a value. a monitor ID or all\ne.g. -m a1b2c3d4"
+                            .to_string(),
                     );
                 };
                 let val = val.as_ref();
                 if val.starts_with('-') {
                     return Err(
-                        "-m, --monitor needs a value. a monitor ID or all\ne.g. -m a1b2c3d4".to_string(),
+                        "-m, --monitor needs a value. a monitor ID or all\ne.g. -m a1b2c3d4"
+                            .to_string(),
                     );
                 }
                 monitor = parse_monitor_target(val)?;
@@ -447,15 +573,13 @@ pub(crate) fn parse_monitor_brightness(args: &[impl AsRef<str>]) -> Result<Comma
                 i += 1;
                 let Some(val) = args.get(i) else {
                     return Err(
-                        "-v, --via needs a value. ddc, slider, or gamma\ne.g. -v ddc"
-                            .to_string(),
+                        "-v, --via needs a value. ddc, slider, or gamma\ne.g. -v ddc".to_string(),
                     );
                 };
                 let val = val.as_ref();
                 if val.starts_with('-') {
                     return Err(
-                        "-v, --via needs a value. ddc, slider, or gamma\ne.g. -v ddc"
-                            .to_string(),
+                        "-v, --via needs a value. ddc, slider, or gamma\ne.g. -v ddc".to_string(),
                     );
                 }
                 via = Some(parse_backend(val)?);
@@ -491,10 +615,163 @@ fn parse_backend(arg: &str) -> Result<BrightnessBackend, String> {
     }
 }
 
+/// Parses `rmod monitor contrast <VALUE> [OPTIONS]`.
+pub(crate) fn parse_monitor_contrast(args: &[impl AsRef<str>]) -> Result<Command, String> {
+    let Some(value_arg) = args.get(2) else {
+        return Err(
+            "monitor contrast needs a value. a number between 0 and 130\ne.g. rmod monitor contrast 60"
+                .to_string(),
+        );
+    };
+    let value_arg = value_arg.as_ref();
+    if value_arg == "--help" {
+        return Ok(Command::Help {
+            topic: Some(HelpTopic::Monitor {
+                action: Some(MonitorAction::Contrast {
+                    value: 0,
+                    via: None,
+                }),
+            }),
+        });
+    }
+    let value = value_arg
+        .parse::<u32>()
+        .map_err(|_| format!("invalid contrast {value_arg}. use a number between 0 and 130"))?;
+    if value > 130 {
+        return Err(format!(
+            "invalid contrast {value_arg}. use a number between 0 and 130"
+        ));
+    }
+    let mut monitor = MonitorTarget::Primary;
+    let mut via = None;
+    let mut i = 3;
+    while i < args.len() {
+        let arg = args[i].as_ref();
+        match arg {
+            "--help" => {
+                return Ok(Command::Help {
+                    topic: Some(HelpTopic::Monitor {
+                        action: Some(MonitorAction::Contrast { value, via }),
+                    }),
+                });
+            }
+            "-m" | "--monitor" => {
+                i += 1;
+                let Some(val) = args.get(i) else {
+                    return Err(
+                        "-m, --monitor needs a value. a monitor number or all\ne.g. -m 2"
+                            .to_string(),
+                    );
+                };
+                let val = val.as_ref();
+                if val.starts_with('-') {
+                    return Err(
+                        "-m, --monitor needs a value. a monitor number or all\ne.g. -m 2"
+                            .to_string(),
+                    );
+                }
+                monitor = parse_monitor_target(val)?;
+                i += 1;
+            }
+            "-v" | "--via" => {
+                i += 1;
+                let Some(val) = args.get(i) else {
+                    return Err("-v, --via needs a value. ddc or gamma\ne.g. -v ddc".to_string());
+                };
+                let val = val.as_ref();
+                if val.starts_with('-') {
+                    return Err("-v, --via needs a value. ddc or gamma\ne.g. -v ddc".to_string());
+                }
+                via = Some(parse_contrast_backend(val)?);
+                i += 1;
+            }
+            "-y" | "--yes" => {
+                return Err(
+                    "-y, --yes is not valid for monitor contrast. contrast does not prompt for confirmation"
+                        .to_string(),
+                );
+            }
+            other => {
+                return Err(format!(
+                    "unexpected argument {other} for monitor contrast. use -m/--monitor or -v/--via"
+                ));
+            }
+        }
+    }
+    Ok(Command::Monitor {
+        action: MonitorAction::Contrast { value, via },
+        monitor,
+        yes: false,
+    })
+}
+
+/// Parses a contrast `--via` backend name.
+fn parse_contrast_backend(arg: &str) -> Result<ContrastBackend, String> {
+    match arg {
+        "ddc" => Ok(ContrastBackend::Ddc),
+        "gamma" => Ok(ContrastBackend::Gamma),
+        _ => Err(format!("unknown backend {arg}. use ddc or gamma")),
+    }
+}
+
+/// Parses `rmod monitor contrast reset [OPTIONS]`.
+fn parse_monitor_contrast_reset(args: &[impl AsRef<str>]) -> Result<Command, String> {
+    let mut monitor = MonitorTarget::Primary;
+    let mut i = 3;
+    while i < args.len() {
+        let arg = args[i].as_ref();
+        match arg {
+            "--help" => {
+                return Ok(Command::Help {
+                    topic: Some(HelpTopic::Monitor {
+                        action: Some(MonitorAction::ContrastReset),
+                    }),
+                });
+            }
+            "-m" | "--monitor" => {
+                i += 1;
+                let Some(val) = args.get(i) else {
+                    return Err(
+                        "-m, --monitor needs a value. a monitor number or all\ne.g. -m 2"
+                            .to_string(),
+                    );
+                };
+                let val = val.as_ref();
+                if val.starts_with('-') {
+                    return Err(
+                        "-m, --monitor needs a value. a monitor number or all\ne.g. -m 2"
+                            .to_string(),
+                    );
+                }
+                monitor = parse_monitor_target(val)?;
+                i += 1;
+            }
+            "-y" | "--yes" => {
+                return Err(
+                    "-y, --yes is not valid for monitor contrast reset. reset does not prompt for confirmation"
+                        .to_string(),
+                );
+            }
+            other => {
+                return Err(format!(
+                    "unexpected argument {other} for monitor contrast reset. use -m/--monitor"
+                ));
+            }
+        }
+    }
+    Ok(Command::Monitor {
+        action: MonitorAction::ContrastReset,
+        monitor,
+        yes: false,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::sys::windows::BrightnessBackend;
+    use crate::sys::windows::ContrastBackend;
+    use crate::sys::windows::ContrastOutcome;
 
     fn outcome(value: u32, backend: BrightnessBackend, unchanged: bool) -> BrightnessOutcome {
         let layer = match backend {
@@ -510,6 +787,22 @@ mod tests {
             unchanged,
             layers: vec![layer],
             clipped: false,
+        }
+    }
+
+    fn contrast_outcome(
+        display: &str,
+        value: u32,
+        backend: ContrastBackend,
+        unchanged: bool,
+        clipped: bool,
+    ) -> ContrastOutcome {
+        ContrastOutcome {
+            display: display.to_string(),
+            value,
+            unchanged,
+            backend,
+            clipped,
         }
     }
 
@@ -683,6 +976,75 @@ mod tests {
         assert_eq!(clip_warning(&out), None);
     }
 
+    #[test]
+    fn describe_contrast_applied_mentions_backend() {
+        let out = contrast_outcome(
+            "RMOD Fake Monitor 1 [:1]",
+            60,
+            ContrastBackend::Ddc,
+            false,
+            false,
+        );
+        assert_eq!(
+            describe_contrast(&out),
+            "set RMOD Fake Monitor 1 [:1] contrast to 60% via ddc"
+        );
+    }
+
+    #[test]
+    fn describe_contrast_unchanged_omits_backend() {
+        let out = contrast_outcome(
+            "RMOD Fake Monitor 1 [:1]",
+            75,
+            ContrastBackend::Gamma,
+            true,
+            false,
+        );
+        assert_eq!(
+            describe_contrast(&out),
+            "RMOD Fake Monitor 1 [:1] is already at 75%"
+        );
+    }
+
+    #[test]
+    fn describe_contrast_clipped_warning_included() {
+        let out = contrast_outcome(
+            "RMOD Fake Monitor 1 [:1]",
+            130,
+            ContrastBackend::Gamma,
+            false,
+            true,
+        );
+        assert_eq!(
+            contrast_clip_warning(&out),
+            Some("contrast boost clips shadows and highlights")
+        );
+    }
+
+    #[test]
+    fn describe_contrast_clipped_warning_omitted_when_unchanged() {
+        let out = contrast_outcome(
+            "RMOD Fake Monitor 1 [:1]",
+            130,
+            ContrastBackend::Gamma,
+            true,
+            true,
+        );
+        assert_eq!(contrast_clip_warning(&out), None);
+    }
+
+    #[test]
+    fn describe_contrast_clipped_warning_omitted_when_not_clipped() {
+        let out = contrast_outcome(
+            "RMOD Fake Monitor 1 [:1]",
+            60,
+            ContrastBackend::Ddc,
+            false,
+            false,
+        );
+        assert_eq!(contrast_clip_warning(&out), None);
+    }
+
     const SERIAL_A: &str = "ABC12345678";
 
     fn parse(args: &[&str]) -> Result<Command, String> {
@@ -807,13 +1169,17 @@ mod tests {
     fn monitor_sleep_rejects_monitor_flag() {
         assert_eq!(
             parse(&["monitor", "sleep", "-m", SERIAL_A]),
-            Err("-m, --monitor is not valid for monitor sleep. sleep applies to all monitors"
-                .to_string())
+            Err(
+                "-m, --monitor is not valid for monitor sleep. sleep applies to all monitors"
+                    .to_string()
+            )
         );
         assert_eq!(
             parse(&["monitor", "wake", "-m", SERIAL_A]),
-            Err("-m, --monitor is not valid for monitor wake. wake applies to all monitors"
-                .to_string())
+            Err(
+                "-m, --monitor is not valid for monitor wake. wake applies to all monitors"
+                    .to_string()
+            )
         );
     }
 
@@ -821,8 +1187,10 @@ mod tests {
     fn monitor_sleep_rejects_yes_flag() {
         assert_eq!(
             parse(&["monitor", "sleep", "-y"]),
-            Err("-y, --yes is not valid for monitor sleep. sleep applies to all monitors"
-                .to_string())
+            Err(
+                "-y, --yes is not valid for monitor sleep. sleep applies to all monitors"
+                    .to_string()
+            )
         );
     }
 
@@ -831,7 +1199,7 @@ mod tests {
         assert_eq!(
             parse(&["monitor"]),
             Err(
-"monitor needs an action. attach, detach, sleep, wake, or brightness\ne.g. rmod monitor detach -m 2"
+"monitor needs an action. attach, detach, sleep, wake, brightness, or contrast\ne.g. rmod monitor detach -m 2"
                     .to_string()
             )
         );
@@ -842,7 +1210,7 @@ mod tests {
         assert_eq!(
             parse(&["monitor", "frobnicate"]),
             Err(
-                "unknown action frobnicate for monitor. use attach, detach, sleep, wake, or brightness"
+                "unknown action frobnicate for monitor. use attach, detach, sleep, wake, brightness, or contrast"
                     .to_string()
             )
         );
@@ -873,10 +1241,7 @@ mod tests {
     fn monitor_missing_monitor_value_is_error() {
         assert_eq!(
             parse(&["monitor", "detach", "-m"]),
-            Err(
-                "-m, --monitor needs a value. a monitor ID or all\ne.g. -m a1b2c3d4"
-                    .to_string()
-            )
+            Err("-m, --monitor needs a value. a monitor ID or all\ne.g. -m a1b2c3d4".to_string())
         );
     }
 
@@ -884,10 +1249,7 @@ mod tests {
     fn monitor_unknown_argument_is_error() {
         assert_eq!(
             parse(&["monitor", "detach", "foo"]),
-            Err(
-                "unexpected argument foo for monitor detach. use --monitor or --yes"
-                    .to_string()
-            )
+            Err("unexpected argument foo for monitor detach. use --monitor or --yes".to_string())
         );
     }
 
@@ -1094,7 +1456,10 @@ mod tests {
     fn monitor_brightness_unknown_argument_is_error() {
         assert_eq!(
             parse(&["monitor", "brightness", "60", "foo"]),
-            Err("unexpected argument foo for monitor brightness. use -m/--monitor or -v/--via".to_string())
+            Err(
+                "unexpected argument foo for monitor brightness. use -m/--monitor or -v/--via"
+                    .to_string()
+            )
         );
     }
 
@@ -1253,6 +1618,188 @@ mod tests {
                 "unexpected argument foo for monitor brightness. use -m/--monitor or -v/--via"
                     .to_string()
             )
+        );
+    }
+
+    #[test]
+    fn monitor_contrast_primary_default() {
+        assert_eq!(
+            parse(&["monitor", "contrast", "60"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Contrast {
+                    value: 60,
+                    via: None
+                },
+                monitor: MonitorTarget::Primary,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_contrast_with_monitor_and_backend() {
+        assert_eq!(
+            parse(&["monitor", "contrast", "40", "-m", "2", "--via", "ddc"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Contrast {
+                    value: 40,
+                    via: Some(ContrastBackend::Ddc)
+                },
+                monitor: MonitorTarget::Index(2),
+                yes: false,
+            })
+        );
+        assert_eq!(
+            parse(&["monitor", "contrast", "40", "-m", "all", "--via", "gamma"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Contrast {
+                    value: 40,
+                    via: Some(ContrastBackend::Gamma)
+                },
+                monitor: MonitorTarget::All,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_contrast_via_short_flag() {
+        assert_eq!(
+            parse(&["monitor", "contrast", "80", "-v", "ddc"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Contrast {
+                    value: 80,
+                    via: Some(ContrastBackend::Ddc)
+                },
+                monitor: MonitorTarget::Primary,
+                yes: false,
+            })
+        );
+        assert_eq!(
+            parse(&["monitor", "contrast", "80", "-v", "gamma"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Contrast {
+                    value: 80,
+                    via: Some(ContrastBackend::Gamma)
+                },
+                monitor: MonitorTarget::Primary,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_contrast_slider_backend_is_error() {
+        assert_eq!(
+            parse(&["monitor", "contrast", "60", "-v", "slider"]),
+            Err("unknown backend slider. use ddc or gamma".to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_contrast_via_short_flag_missing_value() {
+        assert_eq!(
+            parse(&["monitor", "contrast", "60", "-v"]),
+            Err("-v, --via needs a value. ddc or gamma\ne.g. -v ddc".to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_contrast_zero_hundred_and_hundredthirty_are_valid() {
+        for value in ["0", "100", "130"] {
+            assert_eq!(
+                parse(&["monitor", "contrast", value]),
+                Ok(Command::Monitor {
+                    action: MonitorAction::Contrast {
+                        value: value.parse().unwrap(),
+                        via: None
+                    },
+                    monitor: MonitorTarget::Primary,
+                    yes: false,
+                }),
+                "value {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn monitor_contrast_out_of_range_is_error() {
+        assert_eq!(
+            parse(&["monitor", "contrast", "131"]),
+            Err("invalid contrast 131. use a number between 0 and 130".to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_contrast_non_numeric_is_error() {
+        assert_eq!(
+            parse(&["monitor", "contrast", "fifty"]),
+            Err("invalid contrast fifty. use a number between 0 and 130".to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_contrast_missing_value_is_error() {
+        assert_eq!(
+            parse(&["monitor", "contrast"]),
+            Err("monitor contrast needs a value. a number between 0 and 130\ne.g. rmod monitor contrast 60".to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_contrast_rejects_yes_flag() {
+        assert_eq!(
+            parse(&["monitor", "contrast", "60", "-y"]),
+            Err("-y, --yes is not valid for monitor contrast. contrast does not prompt for confirmation".to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_contrast_help_routes() {
+        assert_eq!(
+            parse(&["monitor", "contrast", "--help"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::Monitor {
+                    action: Some(MonitorAction::Contrast {
+                        value: 0,
+                        via: None
+                    })
+                })
+            })
+        );
+        assert_eq!(
+            parse(&["monitor", "contrast", "60", "--help"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::Monitor {
+                    action: Some(MonitorAction::Contrast {
+                        value: 60,
+                        via: None
+                    })
+                })
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_contrast_unknown_argument_is_error() {
+        assert_eq!(
+            parse(&["monitor", "contrast", "60", "foo"]),
+            Err(
+                "unexpected argument foo for monitor contrast. use -m/--monitor or -v/--via"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn monitor_contrast_flag_like_values_are_error() {
+        assert_eq!(
+            parse(&["monitor", "contrast", "60", "-m", "--via"]),
+            Err("-m, --monitor needs a value. a monitor number or all\ne.g. -m 2".to_string())
+        );
+        assert_eq!(
+            parse(&["monitor", "contrast", "60", "--via", "-y"]),
+            Err("-v, --via needs a value. ddc or gamma\ne.g. -v ddc".to_string())
         );
     }
 }

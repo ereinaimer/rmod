@@ -14,7 +14,7 @@ pub(crate) mod temp;
 
 use crate::cli::{
     Command, HelpTopic, MonitorAction, MonitorTarget, help, layout as layout_help, ls,
-    monitor as monitor_help, monitor_attach, monitor_brightness, monitor_detach, set as set_help,
+    monitor as monitor_help, monitor_attach, monitor_brightness, monitor_contrast, monitor_detach, set as set_help,
     temp as temp_help, version,
 };
 use crate::sys::windows::{AttachAction, AttachChange, Change, Mode};
@@ -63,6 +63,7 @@ pub fn run(command: Command) -> i32 {
                 Some(MonitorAction::Disable) => monitor_detach(),
                 Some(MonitorAction::Enable) => monitor_attach(),
                 Some(MonitorAction::Brightness { .. }) => monitor_brightness(),
+                Some(MonitorAction::Contrast { .. }) => monitor_contrast(),
                 _ => monitor_help(),
             };
             println!("{page}");

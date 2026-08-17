@@ -5,7 +5,7 @@
 //! `flags`; this module only renders them.
 
 use crate::cli::flags::{
-    BRIGHTNESS_FLAGS, Flag, LAYOUT_FLAGS, LS_FLAGS, MONITOR_FLAGS, ORIENTATIONS, SET_FLAGS,
+    BRIGHTNESS_FLAGS, CONTRAST_FLAGS, Flag, LAYOUT_FLAGS, LS_FLAGS, MONITOR_FLAGS, ORIENTATIONS, SET_FLAGS,
     TEMP_FLAGS, TEMP_PRESETS, TOP_COMMANDS, TOP_FLAGS,
 };
 
@@ -141,6 +141,7 @@ Attach, detach, sleep, or wake monitors
   detach     Detach a monitor from the desktop
   attach     Re-attach a monitor to the desktop
   brightness Set the display backlight level (0-100, or min, max, boost)
+  contrast   Set the display contrast (0-130, 100 = neutral)
   sleep      Put every monitor to sleep
   wake       Wake every monitor
 
@@ -152,6 +153,7 @@ Attach, detach, sleep, or wake monitors
   rmod monitor disable -m a1b2c3d4 -y
   rmod monitor attach -m 2
   rmod monitor brightness 60
+  rmod monitor contrast 60
   rmod monitor sleep
   rmod monitor wake",
         usage = section("Usage:"),
@@ -235,6 +237,31 @@ Set the display backlight level (0-100, or min, max, boost)
         usage = section("Usage:"),
         options = section("Options:"),
         option_rows = options(BRIGHTNESS_FLAGS),
+        examples = section("Examples:"),
+    )
+}
+
+/// Help page for `rmod monitor contrast`.
+pub fn monitor_contrast() -> String {
+    format!(
+        "rmod monitor contrast
+Set the display contrast (0-130, 100 = neutral)
+
+{usage}
+  rmod monitor contrast <VALUE> [OPTIONS]
+  rmod monitor contrast reset [OPTIONS]
+
+{options}
+{option_rows}
+
+{examples}
+  rmod monitor contrast 60
+  rmod monitor contrast 130 -v gamma
+  rmod monitor contrast 75 -m all
+  rmod monitor contrast reset",
+        usage = section("Usage:"),
+        options = section("Options:"),
+        option_rows = options(CONTRAST_FLAGS),
         examples = section("Examples:"),
     )
 }
@@ -484,6 +511,7 @@ Actions:
   detach     Detach a monitor from the desktop
   attach     Re-attach a monitor to the desktop
   brightness Set the display backlight level (0-100, or min, max, boost)
+  contrast   Set the display contrast (0-130, 100 = neutral)
   sleep      Put every monitor to sleep
   wake       Wake every monitor
 
@@ -497,6 +525,7 @@ Examples:
   rmod monitor disable -m a1b2c3d4 -y
   rmod monitor attach -m 2
   rmod monitor brightness 60
+  rmod monitor contrast 60
   rmod monitor sleep
   rmod monitor wake";
         assert_eq!(strip_ansi(&monitor()), expected);
@@ -578,6 +607,28 @@ Examples:
   rmod monitor brightness min -m 2
   rmod monitor brightness boost";
         assert_eq!(strip_ansi(&monitor_brightness()), expected);
+    }
+
+    #[test]
+    fn monitor_contrast_help_matches_spec_mockup() {
+        let expected = "rmod monitor contrast
+Set the display contrast (0-130, 100 = neutral)
+
+Usage:
+  rmod monitor contrast <VALUE> [OPTIONS]
+  rmod monitor contrast reset [OPTIONS]
+
+Options:
+  -m, --monitor  Monitor number or all (default: primary)
+  -v, --via      Backend: ddc or gamma (default: auto)
+  --help         Print help
+
+Examples:
+  rmod monitor contrast 60
+  rmod monitor contrast 130 -v gamma
+  rmod monitor contrast 75 -m all
+  rmod monitor contrast reset";
+        assert_eq!(strip_ansi(&monitor_contrast()), expected);
     }
 
     #[test]
@@ -698,6 +749,7 @@ Examples:
             (layout(), LAYOUT_FLAGS, "layout"),
             (monitor(), MONITOR_FLAGS, "monitor"),
             (monitor_brightness(), BRIGHTNESS_FLAGS, "monitor_brightness"),
+            (monitor_contrast(), CONTRAST_FLAGS, "monitor_contrast"),
             (temp(), TEMP_FLAGS, "temp"),
         ] {
             let rendered = strip_ansi(&page);
@@ -721,6 +773,7 @@ Examples:
             LAYOUT_FLAGS,
             MONITOR_FLAGS,
             BRIGHTNESS_FLAGS,
+            CONTRAST_FLAGS,
             TEMP_FLAGS,
         ];
         for flags in registries {

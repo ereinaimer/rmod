@@ -12,6 +12,10 @@ pub(crate) mod gamma;
 pub(crate) mod probe;
 pub(crate) mod slider;
 
+// Re-export internal utilities needed by contrast module.
+pub(crate) use ddc::physical_monitors;
+pub(crate) use probe::{DDC_BUDGET, timed};
+
 use super::{query, wmi};
 use ddc::{set_via_ddc, set_via_ddc_floor};
 use gamma::set_via_gamma;

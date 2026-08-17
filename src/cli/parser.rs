@@ -7,6 +7,7 @@ use std::env;
 
 pub use crate::sys::windows::BrightnessBackend;
 pub use crate::sys::windows::BrightnessValue;
+pub use crate::sys::windows::ContrastBackend;
 pub use crate::sys::windows::Direction;
 pub use crate::sys::windows::apply::Refresh;
 
@@ -55,6 +56,16 @@ pub enum MonitorAction {
         /// Forced backend, or `None` for auto-detect.
         via: Option<BrightnessBackend>,
     },
+    /// `rmod monitor contrast <VALUE>` — set display contrast
+    /// (0-130; 100 = neutral, above 100 overdrives the gamma ramp).
+    Contrast {
+        /// Contrast level 0-130, 100 = neutral.
+        value: u32,
+        /// Forced backend, or `None` for auto-detect.
+        via: Option<ContrastBackend>,
+    },
+    /// `rmod monitor contrast reset` — reset contrast to defaults (DDC 100 + gamma identity).
+    ContrastReset,
 }
 
 /// What the `temp` command should do.

@@ -9,17 +9,18 @@
 //! instead, so the integration tests never touch the real display.
 
 pub(crate) mod apply;
-pub(crate) mod plan;
 pub(crate) mod attach;
 pub(crate) mod bindings;
 pub(crate) mod brightness;
 mod capabilities;
 pub(crate) mod com;
+pub(crate) mod contrast;
 pub(crate) mod edid;
 mod fade;
 mod fake;
 pub(crate) mod hdr;
 mod layout;
+pub(crate) mod plan;
 pub(crate) mod power;
 pub(crate) mod query;
 pub(crate) mod registry;
@@ -30,6 +31,7 @@ pub use apply::{ApplyOutcome, Change, MainChange, MainOutcome, Refresh};
 pub use attach::{AttachAction, AttachChange, AttachOutcome};
 pub use brightness::{BrightnessBackend, BrightnessLayer, BrightnessOutcome, BrightnessValue};
 pub use capabilities::Mode;
+pub use contrast::{ContrastBackend, ContrastOutcome};
 pub use layout::{Direction, PlacementChange, PlacementOutcome};
 pub use query::{Monitor, connected_displays_list};
 pub use temp::TempChange;
@@ -379,6 +381,36 @@ pub fn set_brightness(
         fake::set_brightness(monitor, value, via)
     } else {
         brightness::set_brightness(monitor, value, via)
+    }
+}
+
+/// Sets a display's contrast, auto-detecting the backend chain
+/// `ddc -> gamma`, or forcing the backend in `via`.
+/// `value` is 0-130; 100 is neutral, values above 100 overdrive the
+/// gamma ramp (clipped at 0/65535).
+/// # Errors
+/// Unknown monitor, a forced backend the display does not support,
+/// `value > 100` forced through `ddc`, or no contrast-control path at all.
+pub fn set_contrast(
+    monitor: Option<u32>,
+    value: u32,
+    via: Option<ContrastBackend>,
+) -> Result<ContrastOutcome, String> {
+    if fake::enabled() {
+        fake::set_contrast(monitor, value, via)
+    } else {
+        contrast::set_contrast(monitor, value, via)
+    }
+}
+
+/// Resets contrast to defaults (DDC VCP 100 + gamma identity) for a display.
+/// # Errors
+/// Unknown monitor or no contrast-control path available.
+pub fn reset_contrast(monitor: Option<u32>) -> Result<ContrastOutcome, String> {
+    if fake::enabled() {
+        fake::reset_contrast(monitor)
+    } else {
+        contrast::reset_contrast(monitor)
     }
 }
 

@@ -174,10 +174,28 @@ pub(crate) const BRIGHTNESS_FLAGS: &[Flag] = &[
         doc: "Composite modes: min (barely lit), max (hardware 100 + gamma 100), boost (hardware 100 + overdriven gamma)",
         example: &["monitor", "brightness", "min", "-m", "2"],
     },
+Flag {
+            flag: "--help",
+            doc: "Print help",
+            example: &["monitor", "brightness", "--help"],
+        },
+    ];
+
+pub(crate) const CONTRAST_FLAGS: &[Flag] = &[
+    Flag {
+        flag: "-m, --monitor",
+        doc: "Monitor number or all (default: primary)",
+        example: &["monitor", "contrast", "60", "-m", "2"],
+    },
+    Flag {
+        flag: "-v, --via",
+        doc: "Backend: ddc or gamma (default: auto)",
+        example: &["monitor", "contrast", "60", "-v", "ddc"],
+    },
     Flag {
         flag: "--help",
         doc: "Print help",
-        example: &["monitor", "brightness", "--help"],
+        example: &["monitor", "contrast", "--help"],
     },
 ];
 

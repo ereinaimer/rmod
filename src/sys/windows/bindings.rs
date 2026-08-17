@@ -82,6 +82,7 @@ pub(crate) const SWP_SHOWWINDOW: u32 = 0x0040;
 pub(crate) const HWND_TOPMOST: isize = -1;
 pub(crate) const PM_REMOVE: u32 = 0x1;
 pub(crate) const MCCS_BRIGHTNESS: u8 = 0x10;
+pub(crate) const MCCS_CONTRAST: u8 = 0x12;
 pub(crate) const QDC_ONLY_ACTIVE_PATHS: u32 = 2;
 pub(crate) const DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME: i32 = 1;
 pub(crate) const DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO: i32 = 9;
@@ -580,6 +581,7 @@ mod tests {
     #[test]
     fn brightness_constants() {
         assert_eq!(MCCS_BRIGHTNESS, 0x10);
+        assert_eq!(MCCS_CONTRAST, 0x12);
     }
 
     #[test]
