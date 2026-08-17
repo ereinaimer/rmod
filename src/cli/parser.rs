@@ -621,7 +621,8 @@ fn parse_set(args: &[impl AsRef<str>]) -> Result<Command, String> {
                 };
                 let val = val.as_ref();
                 let lower = val.to_lowercase();
-                if let Some((name, _, _)) = PROFILES.iter().find(|(n, _, _)| *n == lower) {
+                let canonical = lower.strip_suffix('p').unwrap_or(&lower);
+                if let Some((name, _, _)) = PROFILES.iter().find(|(n, _, _)| *n == canonical) {
                     profile = Some(name.to_string());
                 } else {
                     let names = PROFILES
@@ -2291,18 +2292,57 @@ mod tests {
     #[test]
     fn set_unknown_profile_is_error() {
         assert!(parse(&["set", "-p", "480"]).is_err());
-        assert!(parse(&["set", "-p", "1080p"]).is_err());
+        assert!(parse(&["set", "-p", "1080px"]).is_err());
     }
 
     #[test]
     fn set_profile_case_insensitive() {
-        for (upper, lower) in [("4K", "4k"), ("1080P", "1080p")] {
+        for (upper, lower) in [("4K", "4k"), ("720P", "720p")] {
             assert_eq!(
                 parse(&["set", "-p", upper]),
                 parse(&["set", "-p", lower]),
                 "profile '{}' must parse to the same result as '{}'",
                 upper,
                 lower
+            );
+        }
+    }
+
+    #[test]
+    fn set_profile_p_suffix_resolves_to_the_profile() {
+        for variant in ["1080P", "1080p", "720P", "1440P", "4KP", "8KP"] {
+            let (canonical, refresh) = match variant.to_lowercase().trim_end_matches('p') {
+                "720" => ("720", None),
+                "1080" => ("1080", None),
+                "1440" => ("1440", None),
+                "4k" => ("4k", None),
+                "8k" => ("8k", Some("60")),
+                _ => unreachable!(),
+            };
+            let mut args = vec!["set", "-p", variant];
+            if let Some(r) = refresh {
+                args.push("-r");
+                args.push(r);
+            }
+            let expected = if let Some(r) = refresh {
+                SetSpec::ProfileWithRefresh(
+                    canonical.to_string(),
+                    Refresh::Fixed(r.parse().unwrap()),
+                )
+            } else {
+                SetSpec::Profile(canonical.to_string())
+            };
+            assert_eq!(
+                parse(&args),
+                Ok(Command::Set {
+                    spec: expected,
+                    monitor: MonitorTarget::Primary,
+                    orientation: None,
+                    yes: false
+                }),
+                "profile '{}' with a p suffix must resolve to '{}'",
+                variant,
+                canonical
             );
         }
     }
@@ -2330,10 +2370,15 @@ mod tests {
     }
 
     #[test]
-    fn set_profile_upper_case_unknown_is_same_error() {
+    fn set_profile_p_suffix_stores_canonical_name() {
         assert_eq!(
             parse(&["set", "-p", "1080P"]),
-            Err("unknown profile 1080p. use one of: 720, 1080, 1440, 4k, 8k".to_string())
+            Ok(Command::Set {
+                spec: SetSpec::Profile("1080".to_string()),
+                monitor: MonitorTarget::Primary,
+                orientation: None,
+                yes: false
+            })
         );
     }
 
