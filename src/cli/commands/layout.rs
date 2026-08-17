@@ -7,7 +7,10 @@
 //! keep-or-revert confirmation flow, and [`run_primary`] promotes a display
 //! via [`crate::sys::windows::make_main`].
 
-use crate::cli::{Confirm, Direction, LayoutAction, MonitorTarget, confirm_keep};
+use crate::cli::parser::parse_monitor_target;
+use crate::cli::{
+    Command, Confirm, Direction, HelpTopic, LayoutAction, MonitorTarget, confirm_keep,
+};
 use crate::sys::windows::{
     MainChange, MainOutcome, Monitor, PlacementChange, PlacementOutcome, apply_placement,
     make_main, revert_main, revert_placement,
@@ -325,6 +328,140 @@ pub(super) fn run_layout(action: LayoutAction, yes: bool) -> i32 {
     }
 }
 
+pub(crate) fn parse_layout(args: &[impl AsRef<str>]) -> Result<Command, String> {
+    let mut monitor: Option<MonitorTarget> = None;
+    let mut monitor_explicit = false;
+    let mut placement: Option<(Direction, MonitorTarget)> = None;
+    let mut primary = false;
+    let mut yes = false;
+    let mut i = 1;
+
+    while i < args.len() {
+        let arg = args[i].as_ref();
+        match arg {
+            "--help" => {
+                return Ok(Command::Help {
+                    topic: Some(HelpTopic::Layout),
+                });
+            }
+            "-m" | "--monitor" => {
+                i += 1;
+                let Some(val) = args.get(i) else {
+                    return Err(
+                        "-m, --monitor needs a value. a monitor ID\ne.g. -m a1b2c3d4".to_string(),
+                    );
+                };
+                let val = val.as_ref();
+                if val.starts_with('-') {
+                    return Err(
+                        "-m, --monitor needs a value. a monitor ID\ne.g. -m a1b2c3d4".to_string(),
+                    );
+                }
+                let target = parse_monitor_target(val)?;
+                if matches!(target, MonitorTarget::All) {
+                    return Err(
+                        "layout -m accepts a monitor ID or 'primary', not 'all'\ne.g. rmod layout -m a1b2c3d4 --left-of b2c3d4e5".to_string(),
+                    );
+                }
+                monitor = Some(target);
+                monitor_explicit = true;
+                i += 1;
+            }
+            "--left-of" | "--right-of" | "--above" | "--below" => {
+                if placement.is_some() {
+                    return Err(
+                        "use only one direction flag\ne.g. rmod layout -m a1b2c3d4 --left-of b2c3d4e5"
+                            .to_string(),
+                    );
+                }
+                let direction = match arg {
+                    "--left-of" => Direction::Left,
+                    "--right-of" => Direction::Right,
+                    "--above" => Direction::Above,
+                    _ => Direction::Below,
+                };
+                i += 1;
+                let Some(next) = args.get(i) else {
+                    return Err(format!(
+                        "{arg} needs a value. a monitor ID\ne.g. {arg} b2c3d4e5"
+                    ));
+                };
+                let next = next.as_ref();
+                if next.starts_with('-') {
+                    return Err(format!(
+                        "{arg} needs a value. a monitor ID\ne.g. {arg} b2c3d4e5"
+                    ));
+                }
+                let target = parse_monitor_target(next)?;
+                if matches!(target, MonitorTarget::All) {
+                    return Err(format!(
+                        "layout {arg} accepts a monitor ID or 'primary', not 'all'\ne.g. rmod layout -m a1b2c3d4 --left-of b2c3d4e5"
+                    ));
+                }
+                placement = Some((direction, target));
+                i += 1;
+            }
+            "--primary" => {
+                primary = true;
+                i += 1;
+            }
+            "-y" | "--yes" => {
+                yes = true;
+                i += 1;
+            }
+            other => {
+                return Err(format!(
+                    "unexpected argument {} for layout. use --left-of, --right-of, --above, --below, or --primary",
+                    other
+                ));
+            }
+        }
+    }
+
+    if primary {
+        if placement.is_some() {
+            return Err(
+                "use --primary or a direction flag, not both\ne.g. rmod layout -m a1b2c3d4 --primary"
+                    .to_string(),
+            );
+        }
+        let Some(monitor) = monitor else {
+            return Err(
+                "missing monitor for layout\ne.g. rmod layout -m a1b2c3d4 --primary".to_string(),
+            );
+        };
+        return Ok(Command::Layout {
+            action: LayoutAction::Primary { monitor },
+            yes,
+        });
+    }
+
+    if monitor_explicit && placement.is_none() {
+        return Err("-m, --monitor needs a direction flag or --primary\ne.g. rmod layout -m a1b2c3d4 --left-of b2c3d4e5".to_string());
+    }
+
+    if let Some((direction, reference)) = placement {
+        let Some(monitor) = monitor else {
+            return Err(
+                "missing monitor for layout\ne.g. rmod layout -m a1b2c3d4 --left-of b2c3d4e5".to_string(),
+            );
+        };
+        return Ok(Command::Layout {
+            action: LayoutAction::Place {
+                monitor,
+                direction,
+                reference,
+            },
+            yes,
+        });
+    }
+
+    Ok(Command::Layout {
+        action: LayoutAction::Show,
+        yes,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -634,6 +771,304 @@ mod tests {
         assert!(
             out.lines().any(|l| l.trim_end().ends_with("90")),
             "missing rotation angle: {out}"
+        );
+    }
+
+    const SERIAL_A: &str = "ABC12345678";
+    const SERIAL_B: &str = "DEF45678901";
+
+    fn parse(args: &[&str]) -> Result<Command, String> {
+        let mut full_args = vec!["rmod"];
+        full_args.extend_from_slice(args);
+        crate::cli::parser::parse_from(&full_args)
+    }
+
+    #[test]
+    fn layout_no_args_is_show() {
+        assert_eq!(
+            parse(&["layout"]),
+            Ok(Command::Layout {
+                action: LayoutAction::Show,
+                yes: false
+            })
+        );
+    }
+
+    #[test]
+    fn layout_place_left_of_with_reference() {
+        assert_eq!(
+            parse(&["layout", "-m", SERIAL_A, "--left-of", SERIAL_B]),
+            Ok(Command::Layout {
+                action: LayoutAction::Place {
+                    monitor: MonitorTarget::Id(SERIAL_A.to_string()),
+                    direction: Direction::Left,
+                    reference: MonitorTarget::Id(SERIAL_B.to_string()),
+                },
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn layout_place_with_explicit_reference() {
+        assert_eq!(
+            parse(&["layout", "-m", SERIAL_A, "--above", SERIAL_B]),
+            Ok(Command::Layout {
+                action: LayoutAction::Place {
+                    monitor: MonitorTarget::Id(SERIAL_A.to_string()),
+                    direction: Direction::Above,
+                    reference: MonitorTarget::Id(SERIAL_B.to_string()),
+                },
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn layout_direction_flags_cover_all_four() {
+        for (flag, direction) in [
+            ("--left-of", Direction::Left),
+            ("--right-of", Direction::Right),
+            ("--above", Direction::Above),
+            ("--below", Direction::Below),
+        ] {
+            assert_eq!(
+                parse(&["layout", "-m", SERIAL_A, flag, SERIAL_B]),
+                Ok(Command::Layout {
+                    action: LayoutAction::Place {
+                        monitor: MonitorTarget::Id(SERIAL_A.to_string()),
+                        direction,
+                        reference: MonitorTarget::Id(SERIAL_B.to_string()),
+                    },
+                    yes: false,
+                }),
+                "flag '{}'",
+                flag
+            );
+        }
+    }
+
+    #[test]
+    fn layout_missing_value_for_direction_is_error() {
+        for flag in ["--left-of", "--right-of", "--above", "--below"] {
+            assert_eq!(
+                parse(&["layout", "-m", SERIAL_A, flag]),
+                Err(format!(
+                    "{flag} needs a value. a monitor ID\ne.g. {flag} b2c3d4e5"
+                )),
+                "flag '{}'",
+                flag
+            );
+            assert_eq!(
+                parse(&["layout", "-m", SERIAL_A, flag, "--primary"]),
+                Err(format!(
+                    "{flag} needs a value. a monitor ID\ne.g. {flag} b2c3d4e5"
+                )),
+                "flag '{}'",
+                flag
+            );
+        }
+    }
+
+    #[test]
+    fn layout_second_direction_flag_is_error() {
+        assert_eq!(
+            parse(&["layout", "-m", SERIAL_A, "--left-of", SERIAL_B, "--right-of", SERIAL_A]),
+            Err("use only one direction flag\ne.g. rmod layout -m a1b2c3d4 --left-of b2c3d4e5".to_string())
+        );
+    }
+
+    #[test]
+    fn layout_primary_with_direction_is_error() {
+        assert_eq!(
+            parse(&["layout", "-m", SERIAL_A, "--primary", "--left-of", SERIAL_B]),
+            Err(
+                "use --primary or a direction flag, not both\ne.g. rmod layout -m a1b2c3d4 --primary"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            parse(&["layout", "-m", SERIAL_A, "--left-of", SERIAL_B, "--primary"]),
+            Err(
+                "use --primary or a direction flag, not both\ne.g. rmod layout -m a1b2c3d4 --primary"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn layout_primary_with_monitor() {
+        for args in [
+            &["layout", "-m", SERIAL_A, "--primary"][..],
+            &["layout", "--primary", "-m", SERIAL_A][..],
+        ] {
+            assert_eq!(
+                parse(args),
+                Ok(Command::Layout {
+                    action: LayoutAction::Primary {
+                        monitor: MonitorTarget::Id(SERIAL_A.to_string())
+                    },
+                    yes: false
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn layout_primary_without_monitor_is_error() {
+        assert_eq!(
+            parse(&["layout", "--primary"]),
+            Err("missing monitor for layout\ne.g. rmod layout -m a1b2c3d4 --primary".to_string())
+        );
+    }
+
+    #[test]
+    fn layout_direction_without_monitor_is_error() {
+        assert_eq!(
+            parse(&["layout", "--left-of", SERIAL_B]),
+            Err("missing monitor for layout\ne.g. rmod layout -m a1b2c3d4 --left-of b2c3d4e5".to_string())
+        );
+    }
+
+    #[test]
+    fn layout_yes_flag() {
+        for args in [
+            &["layout", "-y", "--left-of", SERIAL_B, "-m", SERIAL_A][..],
+            &["layout", "--left-of", SERIAL_B, "-y", "-m", SERIAL_A][..],
+        ] {
+            assert_eq!(
+                parse(args),
+                Ok(Command::Layout {
+                    action: LayoutAction::Place {
+                        monitor: MonitorTarget::Id(SERIAL_A.to_string()),
+                        direction: Direction::Left,
+                        reference: MonitorTarget::Id(SERIAL_B.to_string()),
+                    },
+                    yes: true,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn layout_monitor_without_action_is_error() {
+        assert_eq!(
+            parse(&["layout", "-m", SERIAL_A]),
+            Err("-m, --monitor needs a direction flag or --primary\ne.g. rmod layout -m a1b2c3d4 --left-of b2c3d4e5".to_string())
+        );
+    }
+
+    #[test]
+    fn layout_missing_value_for_monitor_flag() {
+        assert_eq!(
+            parse(&["layout", "-m", "--left-of", SERIAL_B]),
+            Err("-m, --monitor needs a value. a monitor ID\ne.g. -m a1b2c3d4".to_string())
+        );
+    }
+
+    #[test]
+    fn layout_help_flag() {
+        assert!(parse(&["layout", "-h"]).is_err());
+        assert_eq!(
+            parse(&["layout", "--help"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::Layout)
+            })
+        );
+    }
+
+    #[test]
+    fn layout_unknown_argument_is_error() {
+        assert_eq!(
+            parse(&["layout", "foo"]),
+            Err("unexpected argument foo for layout. use --left-of, --right-of, --above, --below, or --primary".to_string())
+        );
+    }
+
+    #[test]
+    fn layout_any_string_is_id() {
+        assert_eq!(
+            parse(&["layout", "-m", "x", "--left-of", SERIAL_B]),
+            Ok(Command::Layout {
+                action: LayoutAction::Place {
+                    monitor: MonitorTarget::Id("x".to_string()),
+                    direction: Direction::Left,
+                    reference: MonitorTarget::Id(SERIAL_B.to_string()),
+                },
+                yes: false,
+            })
+        );
+        assert_eq!(
+            parse(&["layout", "-m", "2", "--left-of", SERIAL_B]),
+            Ok(Command::Layout {
+                action: LayoutAction::Place {
+                    monitor: MonitorTarget::Index(2),
+                    direction: Direction::Left,
+                    reference: MonitorTarget::Id(SERIAL_B.to_string()),
+                },
+                yes: false,
+            })
+        );
+        assert!(parse(&["layout", "-m", "0", "--left-of", SERIAL_B]).is_err());
+    }
+
+    #[test]
+    fn layout_monitor_primary_keyword() {
+        assert_eq!(
+            parse(&["layout", "-m", "primary", "--primary"]),
+            Ok(Command::Layout {
+                action: LayoutAction::Primary {
+                    monitor: MonitorTarget::Primary
+                },
+                yes: false
+            })
+        );
+    }
+
+    #[test]
+    fn layout_reference_primary_keyword() {
+        assert_eq!(
+            parse(&["layout", "-m", SERIAL_A, "--left-of", "primary"]),
+            Ok(Command::Layout {
+                action: LayoutAction::Place {
+                    monitor: MonitorTarget::Id(SERIAL_A.to_string()),
+                    direction: Direction::Left,
+                    reference: MonitorTarget::Primary,
+                },
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn layout_keywords_are_case_insensitive() {
+        assert_eq!(
+            parse(&["layout", "-m", "PRIMARY", "--primary"]),
+            parse(&["layout", "-m", "primary", "--primary"])
+        );
+        assert_eq!(
+            parse(&["layout", "-m", SERIAL_A, "--left-of", "PRIMARY"]),
+            parse(&["layout", "-m", SERIAL_A, "--left-of", "primary"])
+        );
+    }
+
+    #[test]
+    fn layout_all_is_rejected() {
+        assert!(
+            parse(&["layout", "-m", "all", "--primary"]).is_err()
+                && parse(&["layout", "-m", "all", "--primary"])
+                    .unwrap_err()
+                    .contains("not 'all'"),
+            "expected -m all rejection, got: {:?}",
+            parse(&["layout", "-m", "all", "--primary"])
+        );
+        assert!(
+            parse(&["layout", "-m", SERIAL_A, "--left-of", "all"]).is_err()
+                && parse(&["layout", "-m", SERIAL_A, "--left-of", "all"])
+                    .unwrap_err()
+                    .contains("not 'all'"),
+            "expected --left-of all rejection, got: {:?}",
+            parse(&["layout", "-m", SERIAL_A, "--left-of", "all"])
         );
     }
 }

@@ -5,11 +5,11 @@
 //! [`crate::sys::windows`], report the outcome, and run the shared
 //! keep-or-revert confirmation flow.
 
-mod layout;
-mod ls;
-mod monitor;
-mod set;
-mod temp;
+pub(crate) mod layout;
+pub(crate) mod ls;
+pub(crate) mod monitor;
+pub(crate) mod set;
+pub(crate) mod temp;
 
 use crate::cli::{
     Command, Confirm, HelpTopic, MonitorAction, MonitorTarget, confirm_keep, help,
