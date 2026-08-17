@@ -1496,7 +1496,7 @@ fn unknown_serial_errors_for_every_command() {
         let out = rmod(args);
         assert_eq!(out.status.code(), Some(2), "args: {args:?}");
         assert!(
-            stderr(&out).contains("not found. run rmod list to see connected displays"),
+            stderr(&out).contains("monitor with id 'NOPE' not found. connected:"),
             "args: {args:?}: {}",
             stderr(&out)
         );
