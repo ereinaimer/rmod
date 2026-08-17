@@ -130,7 +130,12 @@ fn describe_attach_revert(change: &AttachChange) -> String {
 /// Injectable variant of [`confirm_or_revert_attach`]: the confirm prompt
 /// and the revert call are supplied as closures so tests can exercise the
 /// Revert branch without touching the display.
-fn confirm_or_revert_attach_with<C, R>(change: AttachChange, yes: bool, confirm: C, revert: R) -> i32
+fn confirm_or_revert_attach_with<C, R>(
+    change: AttachChange,
+    yes: bool,
+    confirm: C,
+    revert: R,
+) -> i32
 where
     C: FnOnce() -> Confirm,
     R: FnOnce(&AttachChange) -> Result<(), String>,

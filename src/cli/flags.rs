@@ -43,13 +43,11 @@ pub(crate) const TOP_FLAGS: &[Flag] = &[
     },
 ];
 
-pub(crate) const LS_FLAGS: &[Flag] = &[
-    Flag {
-        flag: "--help",
-        doc: "Print help",
-        example: &["list", "--help"],
-    },
-];
+pub(crate) const LS_FLAGS: &[Flag] = &[Flag {
+    flag: "--help",
+    doc: "Print help",
+    example: &["list", "--help"],
+}];
 
 pub(crate) const SET_FLAGS: &[Flag] = &[
     Flag {

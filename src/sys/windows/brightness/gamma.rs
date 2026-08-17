@@ -14,12 +14,15 @@ pub(crate) fn set_via_gamma(
 ) -> Result<Option<bool>, String> {
     let name_wide = encode_wide(name);
     let dc = unsafe {
-        CreateDCW(std::ptr::null(), name_wide.as_ptr(), std::ptr::null(), std::ptr::null())
+        CreateDCW(
+            std::ptr::null(),
+            name_wide.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+        )
     };
     if dc == 0 {
-        return Err(format!(
-            "cannot open the display for gamma control: {name}"
-        ));
+        return Err(format!("cannot open the display for gamma control: {name}"));
     }
     let result = set_via_gamma_dc(dc, value, display, exact);
     let _ = unsafe { DeleteDC(dc) };

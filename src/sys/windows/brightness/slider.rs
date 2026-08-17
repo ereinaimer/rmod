@@ -1,10 +1,10 @@
 use super::super::bindings::{GetMonitorBrightness, SetMonitorBrightness};
+use super::super::wmi;
 use super::ddc::physical_monitors;
 use super::probe::{DDC_BUDGET, timed};
-use super::super::wmi;
 use super::{BrightnessBackend, HardwareChange};
 
-/// The dxva2 floor leg for [`BrightnessValue::Min`]: the reported minimum.
+/// The dxva2 floor leg for [`super::BrightnessValue::Min`]: the reported minimum.
 /// Skipped when the minimum is 0 (off) or unreadable; `Ok(None)` when the
 /// display exposes no dxva2 brightness control.
 pub(crate) fn set_via_slider_floor(name: &str) -> Result<Option<HardwareChange>, String> {

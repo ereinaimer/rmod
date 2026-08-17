@@ -1,8 +1,8 @@
 use std::any::Any;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
@@ -15,7 +15,10 @@ type ProbeResult = Box<dyn Any + Send>;
 
 /// A probe job: the closure plus the per-call response channel, so results
 /// are never cross-delivered between concurrent callers.
-type ProbeJob = (Box<dyn FnOnce() -> ProbeResult + Send>, mpsc::Sender<ProbeResult>);
+type ProbeJob = (
+    Box<dyn FnOnce() -> ProbeResult + Send>,
+    mpsc::Sender<ProbeResult>,
+);
 
 /// The shared probe worker: one thread running DDC/dxva2 probes
 /// sequentially, started on first use. `busy` is the caller-side gate: a
@@ -71,7 +74,10 @@ where
         return timed_on_fresh_thread(budget, f);
     }
     let (response_tx, response_rx) = mpsc::channel();
-    let job: ProbeJob = (Box::new(move || -> ProbeResult { Box::new(f()) }), response_tx);
+    let job: ProbeJob = (
+        Box::new(move || -> ProbeResult { Box::new(f()) }),
+        response_tx,
+    );
     if worker.tx.send(job).is_err() {
         worker.busy.store(false, Ordering::Release);
         return Ok(None);
@@ -148,7 +154,9 @@ mod tests {
             });
             assert_eq!(result, Ok(Some(true)));
         });
-        started_rx.recv_timeout(Duration::from_millis(1000)).unwrap();
+        started_rx
+            .recv_timeout(Duration::from_millis(1000))
+            .unwrap();
         let result = timed(Duration::from_millis(50), || Ok(Some(42)));
         assert_eq!(result, Ok(Some(42)));
         let _ = release_tx.send(());

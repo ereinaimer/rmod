@@ -1,8 +1,7 @@
 use super::super::bindings::{
-    DestroyPhysicalMonitors, EnumDisplayMonitors, GetMonitorInfoW,
-    GetPhysicalMonitorsFromHMONITOR, GetVCPFeatureAndVCPFeatureReply,
-    MCCS_BRIGHTNESS, MonitorInfoExW, PhysicalMonitor, Rect, SetVCPFeature,
-    encode_wide,
+    DestroyPhysicalMonitors, EnumDisplayMonitors, GetMonitorInfoW, GetPhysicalMonitorsFromHMONITOR,
+    GetVCPFeatureAndVCPFeatureReply, MCCS_BRIGHTNESS, MonitorInfoExW, PhysicalMonitor, Rect,
+    SetVCPFeature, encode_wide,
 };
 use super::probe::{DDC_BUDGET, timed};
 use super::{BrightnessBackend, HardwareChange};
@@ -15,7 +14,9 @@ pub(crate) struct PhysicalMonitors {
 impl Drop for PhysicalMonitors {
     fn drop(&mut self) {
         if !self.handles.is_empty() {
-            unsafe { DestroyPhysicalMonitors(self.handles.len() as u32, self.handles.as_mut_ptr()) };
+            unsafe {
+                DestroyPhysicalMonitors(self.handles.len() as u32, self.handles.as_mut_ptr())
+            };
         }
     }
 }
@@ -81,12 +82,20 @@ pub(crate) fn physical_monitors(name: &str) -> Result<Option<PhysicalMonitors>, 
         return Ok(None);
     }
     let mut count = 0u32;
-    let _ = unsafe { GetPhysicalMonitorsFromHMONITOR(ctx.handle, &mut count, std::ptr::null_mut()) };
+    let _ =
+        unsafe { GetPhysicalMonitorsFromHMONITOR(ctx.handle, &mut count, std::ptr::null_mut()) };
     if count == 0 {
         return Ok(None);
     }
-    let mut handles = vec![PhysicalMonitor { handle: 0, description: [0; 128] }; count as usize];
-    let ok = unsafe { GetPhysicalMonitorsFromHMONITOR(ctx.handle, &mut count, handles.as_mut_ptr()) };
+    let mut handles = vec![
+        PhysicalMonitor {
+            handle: 0,
+            description: [0; 128]
+        };
+        count as usize
+    ];
+    let ok =
+        unsafe { GetPhysicalMonitorsFromHMONITOR(ctx.handle, &mut count, handles.as_mut_ptr()) };
     if ok == 0 {
         return Ok(None);
     }
@@ -110,7 +119,7 @@ fn current_vcp(monitor: usize) -> Option<u32> {
     if ok == 0 { None } else { Some(current) }
 }
 
-/// The DDC floor leg for [`BrightnessValue::Min`]: the VCP register at 1.
+/// The DDC floor leg for [`super::BrightnessValue::Min`]: the VCP register at 1.
 /// `Ok(None)` when the display exposes no DDC/CI control.
 pub(crate) fn set_via_ddc_floor(name: &str) -> Result<Option<HardwareChange>, String> {
     let name = name.to_string();
@@ -203,6 +212,9 @@ mod tests {
 
     #[test]
     fn wide_eq_rejects_a_prefix_match() {
-        assert!(!wide_eq(&wide("\\\\.\\DISPLAY1"), &wide("\\\\.\\DISPLAY10")));
+        assert!(!wide_eq(
+            &wide("\\\\.\\DISPLAY1"),
+            &wide("\\\\.\\DISPLAY10")
+        ));
     }
 }

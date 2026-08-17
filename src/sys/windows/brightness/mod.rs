@@ -12,10 +12,10 @@ pub(crate) mod gamma;
 pub(crate) mod probe;
 pub(crate) mod slider;
 
+use super::{query, wmi};
 use ddc::{set_via_ddc, set_via_ddc_floor};
 use gamma::set_via_gamma;
 use slider::{set_via_slider, set_via_slider_floor};
-use super::{query, wmi};
 
 /// The brightness-control backend used for a change.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -209,11 +209,7 @@ impl HardwareChange {
 
 /// The mode path: the best available hardware write (when any applies) plus
 /// the mode's gamma write.
-fn set_mode(
-    name: &str,
-    mode: BrightnessValue,
-    display: &str,
-) -> Result<BrightnessOutcome, String> {
+fn set_mode(name: &str, mode: BrightnessValue, display: &str) -> Result<BrightnessOutcome, String> {
     let mut layers = Vec::with_capacity(2);
     let mut hardware_unchanged = true;
     match mode {
@@ -249,7 +245,9 @@ fn set_mode(
     let level = gamma_level_for(mode);
     let gamma_unchanged = match set_via_gamma(name, level, display, true)? {
         Some(unchanged) => unchanged,
-        None => unreachable!("gamma control always reports Some; set_via_gamma only returns None for unsupported backends"),
+        None => unreachable!(
+            "gamma control always reports Some; set_via_gamma only returns None for unsupported backends"
+        ),
     };
     layers.push(BrightnessLayer::Gamma { level });
     Ok(BrightnessOutcome {
