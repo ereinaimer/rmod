@@ -421,6 +421,26 @@ fn dispatch_id(disp: *mut c_void, name: &str) -> Result<i32, String> {
     dispatch_id_inner(disp, name)
 }
 
+/// The `DISPPARAMS` layout for a call: the args reversed into a fixed
+/// stack array (COM wants the last argument at index 0 of `rgvarg`) with
+/// the named dispid slots aligned to their reversed positions. The base
+/// index is where `rgvarg` starts; `c_args` limits what COM reads.
+fn reversed_args(args: &[Variant], named: &[(i32, usize)]) -> ([Variant; 7], [i32; 7], usize) {
+    // The largest call is `ConnectServer` with seven args, so the fixed
+    // arrays always cover the argument list.
+    const MAX_ARGS: usize = 7;
+    debug_assert!(args.len() <= MAX_ARGS, "more than {MAX_ARGS} arguments");
+    let mut reversed = [Variant::empty(); MAX_ARGS];
+    for (i, arg) in args.iter().enumerate() {
+        reversed[MAX_ARGS - 1 - i] = *arg;
+    }
+    let mut named_disps = [0i32; MAX_ARGS];
+    for (dispid, forward_index) in named {
+        named_disps[MAX_ARGS - 1 - forward_index] = *dispid;
+    }
+    (reversed, named_disps, MAX_ARGS - args.len())
+}
+
 /// Runs `IDispatch::Invoke` and returns the result variant.
 fn dispatch_invoke(
     disp: *mut c_void,
@@ -440,18 +460,13 @@ fn dispatch_invoke(
     ) -> Result<Variant, String> {
         let vtbl = unsafe { idispatch_vtbl(disp) };
 
-        let mut reversed = args.to_vec();
-        reversed.reverse();
-        let mut named_disps = vec![0i32; args.len()];
-        for (dispid, forward_index) in named {
-            named_disps[args.len() - 1 - forward_index] = *dispid;
-        }
+        let (mut reversed, mut named_disps, base) = reversed_args(args, named);
         let params = DispParams {
-            rgvarg: reversed.as_mut_ptr(),
+            rgvarg: unsafe { reversed.as_mut_ptr().add(base) },
             rgdispid_named_args: if named.is_empty() {
                 ptr::null_mut()
             } else {
-                named_disps.as_mut_ptr()
+                unsafe { named_disps.as_mut_ptr().add(base) }
             },
             c_args: args.len() as u32,
             c_named_args: named.len() as u32,
@@ -731,96 +746,6 @@ impl Connection {
         result.object().ok_or_else(|| format!("Get({path}) returned no object"))
     }
 
-    /// The instance of `class` for the display addressed by `name` (e.g.
-    /// `\\.\DISPLAY1`), or `Ok(None)` when the display has no such WMI
-    /// instance.
-    ///
-    /// The `InstanceName` is the PnP device instance from the registry plus
-    /// the monitor ordinal; the correct ordinal is not known up front, so
-    /// each candidate path is tried until one resolves.
-    fn resolve_instance(&self, class: &str, name: &str) -> Result<Option<*mut c_void>, String> {
-        let Some(devices) = display_device_instances(name) else {
-            return Ok(None);
-        };
-        for device in devices {
-            for ordinal in 0..4 {
-                let instance_name = format!("{device}_{ordinal}");
-                let path = instance_path(class, &instance_name);
-                if let Ok(object) = self.get_object(&path) {
-                    return Ok(Some(object));
-                }
-            }
-        }
-        Ok(None)
-    }
-
-    /// The current brightness of the display addressed by `name`, or
-    /// `None`.
-    fn current(&self, name: &str) -> Option<u32> {
-        let instance = self.resolve_instance(CLASS_STATE, name).ok()??;
-        let set = get_prop(instance, "Properties_").ok()?;
-        let set = set.object()?;
-        let props = call(set, "Item", &mut [Variant::bstr("CurrentBrightness")]).ok()?;
-        let props = props.object()?;
-        let mut value = get_prop(props, "Value").ok()?;
-        let result = if value.vt == VT_UI1 {
-            Some(value.data[0] as u8 as u32)
-        } else {
-            None
-        };
-        unsafe { VariantClear(&mut value) };
-        unsafe { release(props) };
-        unsafe { release(set) };
-        unsafe { release(instance) };
-        result
-    }
-
-    /// The smallest positive `Level` entry of the display addressed by
-    /// `name`, or `None` when the value is unreadable.
-    fn min_level(&self, name: &str) -> Option<u32> {
-        let instance = match self.resolve_instance(CLASS_STATE, name) {
-            Ok(Some(instance)) => instance,
-            _ => return None,
-        };
-        let set = get_prop(instance, "Properties_").ok()?;
-        let set = set.object()?;
-        let levels = call(set, "Item", &mut [Variant::bstr(PROP_LEVEL)]).ok()?;
-        let levels = levels.object()?;
-        let mut value = get_prop(levels, "Value").ok()?;
-        let result = if value.vt == VT_UI1 | VT_ARRAY {
-            unsafe { min_positive_ui1(value.data[0] as *mut SafeArray) }
-        } else if value.vt == VT_VARIANT | VT_ARRAY {
-            unsafe { min_positive_variant(value.data[0] as *mut SafeArray) }
-        } else {
-            None
-        };
-        unsafe { VariantClear(&mut value) };
-        unsafe { release(levels) };
-        unsafe { release(set) };
-        unsafe { release(instance) };
-        result
-    }
-
-    /// Sets the brightness of the display addressed by `name`.
-    ///
-    /// `Ok(None)` means the display has no WMI brightness instance.
-    fn set_brightness(&self, name: &str, value: u32) -> Result<Option<bool>, String> {
-        let Some(instance) = self.resolve_instance(CLASS_METHODS, name)? else {
-            return Ok(None);
-        };
-        let current = self.current(name);
-        if current.is_some_and(|current| current == value) {
-            unsafe { release(instance) };
-            return Ok(Some(true));
-        }
-        let result = self.exec_method(instance, value);
-        unsafe { release(instance) };
-        match result {
-            Ok(()) => Ok(Some(false)),
-            Err(e) => Err(e),
-        }
-    }
-
     /// Calls `WmiSetBrightness` on a methods instance with the given value.
     fn exec_method(&self, instance: *mut c_void, value: u32) -> Result<(), String> {
         let methods = get_prop(instance, "Methods_")?;
@@ -894,12 +819,122 @@ impl Drop for Connection {
     }
 }
 
+/// A live `root\wmi` connection plus the pre-enumerated device instances of
+/// one display, so the WMI legs of a single command share one connection
+/// and one registry enumeration.
+pub(crate) struct Session {
+    connection: Connection,
+    devices: Vec<String>,
+}
+
+impl Session {
+    /// Connects to `root\wmi` and enumerates the device instances of the
+    /// display addressed by `name` (e.g. `\\.\DISPLAY1`). `Err` when the
+    /// connection itself fails; `Ok(None)` when the display has no monitor
+    /// device ID to match on.
+    pub(crate) fn for_display(name: &str) -> Result<Option<Session>, String> {
+        let connection = Connection::new()?;
+        let Some(devices) = display_device_instances(name) else {
+            return Ok(None);
+        };
+        Ok(Some(Session { connection, devices }))
+    }
+
+    /// The instance of `class` for the display this session was created
+    /// for, or `Ok(None)` when the display has no such WMI instance.
+    ///
+    /// The `InstanceName` is the PnP device instance from the registry plus
+    /// the monitor ordinal; the correct ordinal is not known up front, so
+    /// each candidate path is tried until one resolves.
+    fn resolve_instance(&self, class: &str) -> Result<Option<*mut c_void>, String> {
+        for device in &self.devices {
+            for ordinal in 0..4 {
+                let instance_name = format!("{device}_{ordinal}");
+                let path = instance_path(class, &instance_name);
+                if let Ok(object) = self.connection.get_object(&path) {
+                    return Ok(Some(object));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// The current brightness of the display, or `None`.
+    fn current(&self) -> Option<u32> {
+        let instance = self.resolve_instance(CLASS_STATE).ok()??;
+        let set = get_prop(instance, "Properties_").ok()?;
+        let set = set.object()?;
+        let props = call(set, "Item", &mut [Variant::bstr("CurrentBrightness")]).ok()?;
+        let props = props.object()?;
+        let mut value = get_prop(props, "Value").ok()?;
+        let result = if value.vt == VT_UI1 {
+            Some(value.data[0] as u8 as u32)
+        } else {
+            None
+        };
+        unsafe { VariantClear(&mut value) };
+        unsafe { release(props) };
+        unsafe { release(set) };
+        unsafe { release(instance) };
+        result
+    }
+
+    /// The smallest positive `Level` entry of the display, or `None` when
+    /// the value is unreadable.
+    pub(crate) fn min_level(&self) -> Option<u32> {
+        let instance = match self.resolve_instance(CLASS_STATE) {
+            Ok(Some(instance)) => instance,
+            _ => return None,
+        };
+        let set = get_prop(instance, "Properties_").ok()?;
+        let set = set.object()?;
+        let levels = call(set, "Item", &mut [Variant::bstr(PROP_LEVEL)]).ok()?;
+        let levels = levels.object()?;
+        let mut value = get_prop(levels, "Value").ok()?;
+        let result = if value.vt == VT_UI1 | VT_ARRAY {
+            unsafe { min_positive_ui1(value.data[0] as *mut SafeArray) }
+        } else if value.vt == VT_VARIANT | VT_ARRAY {
+            unsafe { min_positive_variant(value.data[0] as *mut SafeArray) }
+        } else {
+            None
+        };
+        unsafe { VariantClear(&mut value) };
+        unsafe { release(levels) };
+        unsafe { release(set) };
+        unsafe { release(instance) };
+        result
+    }
+
+    /// Sets the brightness of the display through WMI.
+    ///
+    /// `Ok(None)` means the display has no WMI brightness instance.
+    pub(crate) fn set(&self, value: u32) -> Result<Option<bool>, String> {
+        let Some(instance) = self.resolve_instance(CLASS_METHODS)? else {
+            return Ok(None);
+        };
+        let current = self.current();
+        if current.is_some_and(|current| current == value) {
+            unsafe { release(instance) };
+            return Ok(Some(true));
+        }
+        let result = self.connection.exec_method(instance, value);
+        unsafe { release(instance) };
+        match result {
+            Ok(()) => Ok(Some(false)),
+            Err(e) => Err(e),
+        }
+    }
+}
+
 /// Sets the brightness of the display addressed by `name` through WMI.
 ///
 /// `Ok(None)` means the display has no WMI brightness instance.
+#[allow(dead_code)]
 pub(crate) fn set(name: &str, value: u32) -> Result<Option<bool>, String> {
-    let connection = Connection::new()?;
-    connection.set_brightness(name, value)
+    let Some(session) = Session::for_display(name)? else {
+        return Ok(None);
+    };
+    session.set(value)
 }
 
 /// The smallest positive `Level` entry of the display addressed by `name`,
@@ -908,8 +943,9 @@ pub(crate) fn set(name: &str, value: u32) -> Result<Option<bool>, String> {
 /// The `Level` array lists every brightness level the panel accepts; the
 /// smallest positive entry is the hardware floor `min` writes directly. A
 /// zero-only array means the panel can go dark, so there is no floor.
+#[allow(dead_code)]
 pub(crate) fn min_level(name: &str) -> Option<u32> {
-    Connection::new().ok()?.min_level(name)
+    Session::for_display(name).ok().flatten()?.min_level()
 }
 
 /// The smallest positive entry of a `Levels` array, or `None` when every
@@ -1213,6 +1249,39 @@ mod tests {
         let floor = unsafe { min_positive_variant(array) };
         free_synthetic_variant_array(array);
         assert_eq!(floor, None);
+    }
+
+    #[test]
+    fn reversed_args_puts_the_last_argument_first() {
+        let args = [Variant::i4(1), Variant::i4(2), Variant::i4(3)];
+        let (reversed, _, base) = reversed_args(&args, &[]);
+        assert_eq!(base, 4);
+        assert_eq!(reversed[4].data[0], 3);
+        assert_eq!(reversed[5].data[0], 2);
+        assert_eq!(reversed[6].data[0], 1);
+        assert_eq!(reversed[0].vt, VT_EMPTY);
+    }
+
+    #[test]
+    fn reversed_args_aligns_named_dispid_with_its_reversed_slot() {
+        let args = [Variant::i4(1), Variant::i4(2)];
+        let (_, named_disps, base) = reversed_args(&args, &[(DISPID_PROPERTYPUT, 1)]);
+        assert_eq!(base, 5);
+        assert_eq!(named_disps[5], DISPID_PROPERTYPUT);
+    }
+
+    #[test]
+    fn reversed_args_put_prop_layout_is_dispid_at_the_base() {
+        let args = [Variant::i4(9)];
+        let (_, named_disps, base) = reversed_args(&args, &[(DISPID_PROPERTYPUT, 0)]);
+        assert_eq!(base, 6);
+        assert_eq!(named_disps[6], DISPID_PROPERTYPUT);
+    }
+
+    #[test]
+    fn reversed_args_empty_call_has_base_one_past_the_array() {
+        let (_, _, base) = reversed_args(&[], &[]);
+        assert_eq!(base, 7);
     }
 
     #[test]

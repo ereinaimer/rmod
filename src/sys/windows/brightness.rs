@@ -437,10 +437,13 @@ fn set_via_slider_floor(name: &str) -> Result<Option<HardwareChange>, String> {
 /// `Level` entry. Skipped when the value is unreadable; `Ok(None)` when
 /// the display has no WMI brightness instance.
 fn set_via_wmi_floor(name: &str) -> Result<Option<HardwareChange>, String> {
-    let Some(floor) = wmi::min_level(name) else {
+    let Some(session) = wmi::Session::for_display(name).ok().flatten() else {
         return Ok(None);
     };
-    match wmi::set(name, floor)? {
+    let Some(floor) = session.min_level() else {
+        return Ok(None);
+    };
+    match session.set(floor)? {
         Some(unchanged) => Ok(Some(HardwareChange {
             backend: BrightnessBackend::Slider,
             level: floor,
@@ -603,7 +606,10 @@ fn set_via_slider(name: &str, value: u32) -> Result<Option<bool>, String> {
     if let Some(unchanged) = set_via_slider_dxva2(name, value)? {
         return Ok(Some(unchanged));
     }
-    wmi::set(name, value)
+    let Some(session) = wmi::Session::for_display(name)? else {
+        return Ok(None);
+    };
+    session.set(value)
 }
 
 /// The dxva2 physical-monitor path; `Ok(None)` when the display exposes no
