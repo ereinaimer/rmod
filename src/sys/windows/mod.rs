@@ -21,6 +21,7 @@ pub(crate) mod hdr;
 mod layout;
 pub(crate) mod power;
 pub(crate) mod query;
+pub(crate) mod registry;
 pub(crate) mod temp;
 mod wmi;
 

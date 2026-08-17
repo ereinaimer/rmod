@@ -6,9 +6,8 @@
 use super::bindings::{
     DevmodeW, DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, DISPLAY_DEVICE_DISCONNECT,
     DISPLAY_DEVICE_MIRRORING_DRIVER, DISPLAY_DEVICEW, ENUM_CURRENT_SETTINGS,
-    ENUM_REGISTRY_SETTINGS, ERROR_SUCCESS, EnumDisplayDevicesW, EnumDisplaySettingsW,
-    HKEY_LOCAL_MACHINE, KEY_READ, REG_BINARY, RegCloseKey, RegEnumKeyExW, RegOpenKeyExW,
-    RegQueryValueExW, encode_wide, wide_to_string,
+    ENUM_REGISTRY_SETTINGS, EnumDisplayDevicesW, EnumDisplaySettingsW, HKEY_LOCAL_MACHINE,
+    encode_wide, wide_to_string,
 };
 use super::capabilities::{enumerate_modes, normalize_modes};
 use super::edid::{
@@ -16,8 +15,7 @@ use super::edid::{
     parse_edid,
 };
 use super::hdr::{connector_for_path, hdr_from_path, match_path, query_connector, HdrInfo};
-use std::ffi::c_void;
-use std::ptr;
+use super::registry::{enum_subkeys, read_reg_binary};
 
 /// A display attached to the desktop and its current settings.
 pub struct Monitor {
@@ -446,87 +444,6 @@ fn monitor_model_id(device_name: &str) -> Option<String> {
         .nth(1)
         .map(|s| s.to_string())
         .filter(|s| !s.is_empty())
-}
-
-/// Enumerates the sub-key names of a registry key.
-fn enum_subkeys(hive: isize, path: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    unsafe {
-        let path_wide = encode_wide(path);
-        let mut key: *mut c_void = ptr::null_mut();
-        if RegOpenKeyExW(hive as *mut c_void, path_wide.as_ptr(), 0, KEY_READ, &mut key)
-            != ERROR_SUCCESS
-        {
-            return out;
-        }
-        let mut index: u32 = 0;
-        loop {
-            let mut name_buf = [0u16; 260];
-            let mut name_len: u32 = name_buf.len() as u32;
-            let hr = RegEnumKeyExW(
-                key,
-                index,
-                name_buf.as_mut_ptr(),
-                &mut name_len,
-                ptr::null_mut(),
-                ptr::null_mut(),
-                ptr::null_mut(),
-                ptr::null_mut(),
-            );
-            if hr != ERROR_SUCCESS {
-                break;
-            }
-            out.push(String::from_utf16_lossy(&name_buf[..name_len as usize]));
-            index += 1;
-        }
-        RegCloseKey(key);
-    }
-    out
-}
-
-/// Reads a REG_BINARY value as raw bytes.
-fn read_reg_binary(hive: isize, path: &str, value: &str) -> Option<Vec<u8>> {
-    unsafe {
-        let path_wide = encode_wide(path);
-        let value_wide = encode_wide(value);
-        let mut key: *mut c_void = ptr::null_mut();
-        if RegOpenKeyExW(hive as *mut c_void, path_wide.as_ptr(), 0, KEY_READ, &mut key)
-            != ERROR_SUCCESS
-        {
-            return None;
-        }
-        let mut size: u32 = 0;
-        let mut ty: u32 = 0;
-        let hr = RegQueryValueExW(
-            key,
-            value_wide.as_ptr(),
-            ptr::null_mut(),
-            &mut ty,
-            ptr::null_mut(),
-            &mut size,
-        );
-        let data = if hr == ERROR_SUCCESS && ty == REG_BINARY && size > 0 {
-            let mut buf = vec![0u8; size as usize];
-            let hr = RegQueryValueExW(
-                key,
-                value_wide.as_ptr(),
-                ptr::null_mut(),
-                &mut ty,
-                buf.as_mut_ptr(),
-                &mut size,
-            );
-            if hr == ERROR_SUCCESS {
-                buf.truncate(size as usize);
-                Some(buf)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        RegCloseKey(key);
-        data
-    }
 }
 
 /// Lists every display with full EDID data and supported modes.

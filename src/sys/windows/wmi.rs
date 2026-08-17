@@ -23,10 +23,7 @@
 use std::ffi::c_void;
 use std::ptr;
 
-use super::bindings::{
-    DISPLAY_DEVICEW, EnumDisplayDevicesW, RegCloseKey, RegEnumKeyExW, RegOpenKeyExW,
-    RegQueryValueExW, encode_wide, wide_to_string,
-};
+use super::bindings::{DISPLAY_DEVICEW, EnumDisplayDevicesW, encode_wide, wide_to_string};
 use super::com::{
     CLSCTX_INPROC_SERVER, CLSID_WBEMSCRIPTING_LOCATOR, COINIT_MULTITHREADED, CoCreateInstance,
     CoInitializeEx, CoInitializeSecurity, CoUninitialize, EOAC_NONE, IID_IDISPATCH,
@@ -35,6 +32,7 @@ use super::com::{
     VT_I4, VT_UI1, VT_VARIANT, Variant, VariantClear, call, get_prop, put_prop, release,
     release_disp,
 };
+use super::registry::{read_reg_string, registry_keys};
 
 /// The WMI class exposing `WmiSetBrightness`.
 const CLASS_METHODS: &str = "WmiMonitorBrightnessMethods";
@@ -49,10 +47,6 @@ const PROP_LEVEL: &str = "Level";
 
 /// `HKEY_LOCAL_MACHINE`.
 const HKEY_LOCAL_MACHINE: *mut c_void = 0x8000_0002usize as *mut c_void;
-/// `KEY_READ` access rights for registry keys.
-const KEY_READ: u32 = 0x20019;
-/// `REG_SZ` registry value type.
-const REG_SZ: u32 = 1;
 /// The registry key holding every display device instance.
 const KEY_DISPLAY: &str = "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY";
 
@@ -75,40 +69,6 @@ fn init_security() {
             ptr::null_mut(),
         );
     });
-}
-
-/// The immediate subkey names of a registry key, in enumeration order.
-fn registry_keys(root: *mut c_void, subpath: &str) -> Vec<String> {
-    let mut keys = Vec::new();
-    let mut key: *mut c_void = ptr::null_mut();
-    let hr = unsafe { RegOpenKeyExW(root, encode_wide(subpath).as_ptr(), 0, KEY_READ, &mut key) };
-    if hr != 0 || key.is_null() {
-        return keys;
-    }
-    let mut index = 0u32;
-    loop {
-        let mut name = [0u16; 256];
-        let mut len = 256u32;
-        let hr = unsafe {
-            RegEnumKeyExW(
-                key,
-                index,
-                name.as_mut_ptr(),
-                &mut len,
-                ptr::null_mut(),
-                ptr::null_mut(),
-                ptr::null_mut(),
-                ptr::null_mut(),
-            )
-        };
-        if hr != 0 {
-            break;
-        }
-        keys.push(String::from_utf16_lossy(&name[..len as usize]));
-        index += 1;
-    }
-    unsafe { RegCloseKey(key) };
-    keys
 }
 
 /// The monitor-level device ID of the display addressed by `name` (e.g.
@@ -139,53 +99,6 @@ fn monitor_parts(device_id: &str) -> Option<(String, String)> {
         return None;
     }
     Some((model.to_string(), driver))
-}
-
-/// Reads a REG_SZ value as a string, or `None` when the value is missing
-/// or not a string.
-fn read_reg_string(root: *mut c_void, subpath: &str, value: &str) -> Option<String> {
-    let mut key: *mut c_void = ptr::null_mut();
-    let hr = unsafe { RegOpenKeyExW(root, encode_wide(subpath).as_ptr(), 0, KEY_READ, &mut key) };
-    if hr != 0 || key.is_null() {
-        return None;
-    }
-    let mut ty: u32 = 0;
-    let mut size: u32 = 0;
-    let hr = unsafe {
-        RegQueryValueExW(
-            key,
-            encode_wide(value).as_ptr(),
-            ptr::null_mut(),
-            &mut ty,
-            ptr::null_mut(),
-            &mut size,
-        )
-    };
-    let mut out = None;
-    if hr == 0 && ty == REG_SZ && size > 0 {
-        let mut buf = vec![0u16; (size / 2) as usize];
-        let mut ty2: u32 = 0;
-        let mut size2 = size;
-        let hr = unsafe {
-            RegQueryValueExW(
-                key,
-                encode_wide(value).as_ptr(),
-                ptr::null_mut(),
-                &mut ty2,
-                buf.as_mut_ptr() as *mut u8,
-                &mut size2,
-            )
-        };
-        if hr == 0 && ty2 == REG_SZ {
-            out = Some(
-                String::from_utf16_lossy(&buf)
-                    .trim_end_matches('\0')
-                    .to_string(),
-            );
-        }
-    }
-    unsafe { RegCloseKey(key) };
-    out
 }
 
 /// The `DISPLAY\<model>\<instance>` device instances that belong to the
