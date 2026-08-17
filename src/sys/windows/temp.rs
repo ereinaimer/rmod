@@ -1,9 +1,11 @@
 //! Color temperature backend: gamma-ramp blue-light reduction.
 //!
 //! [`set_temp`] scales the per-channel gamma ramp of a display with
-//! multipliers derived from a Kelvin value (Tanner Helland conversion);
-//! [`reset_temp`] restores the pure identity ramp; [`get_temp`] reads the
-//! current ramp and reports the closest known preset as an approximation.
+//! multipliers derived from a Kelvin value (Tanner Helland conversion),
+//! preserving the current brightness dim level; [`reset_temp`] restores the
+//! identity ramp, keeping the dim level; [`get_temp`] reads the current ramp
+//! and reports the closest known preset as an approximation, also on dimmed
+//! ramps.
 
 use super::bindings::{
     CreateDCW, DeleteDC, GetDeviceGammaRamp, Ramp, SetDeviceGammaRamp, encode_wide,
@@ -43,7 +45,9 @@ pub fn set_temp(monitor: Option<u32>, kelvin: u32) -> Result<TempChange, String>
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
     let (r, g, b) = kelvin_to_rgb(kelvin);
-    apply_ramp(name, &build_ramp(r, g, b))?;
+    let ratio = dim_ratio(&read_ramp(name)?);
+    let ramp = scale(&build_ramp(r, g, b), ratio);
+    apply_ramp(name, &ramp)?;
     Ok(TempChange {
         display: query::display_label(name, index as u32 + 1),
         kelvin,
@@ -51,7 +55,8 @@ pub fn set_temp(monitor: Option<u32>, kelvin: u32) -> Result<TempChange, String>
 }
 
 /// Restores the identity gamma ramp of a display (the `6500K` baseline),
-/// using a pure identity ramp rather than a computed one to avoid drift.
+/// using a pure identity ramp rather than a computed one to avoid drift,
+/// scaled to keep the current brightness dim level.
 ///
 /// `None` selects the primary display; `Some(n)` the 1-based monitor.
 ///
@@ -60,7 +65,8 @@ pub fn set_temp(monitor: Option<u32>, kelvin: u32) -> Result<TempChange, String>
 pub fn reset_temp(monitor: Option<u32>) -> Result<TempChange, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
-    apply_ramp(name, &identity_ramp())?;
+    let estimated = dim_ratio(&read_ramp(name)?);
+    apply_ramp(name, &scale(&identity_ramp(), estimated))?;
     Ok(TempChange {
         display: query::display_label(name, index as u32 + 1),
         kelvin: MAX_KELVIN,
@@ -145,6 +151,46 @@ fn identity_ramp() -> Ramp {
     build_ramp(1.0, 1.0, 1.0)
 }
 
+/// The brightness percent recovered from a gamma ramp: the red channel's
+/// max entry scaled to 0-100. An approximation: a boosted ramp (value above
+/// 100) saturates at 100, and integer math rounds down (a 50% ramp reads
+/// 49). 0 for an all-zero ramp. The canonical definition lives alongside
+/// `brightness::b_est`; the red channel carries only brightness because its
+/// Kelvin multiplier is 1.0 for every valid temperature.
+fn b_est(ramp: &Ramp) -> u32 {
+    ramp.red[255] as u32 * 100 / 65535
+}
+
+/// The dim ratio of `ramp`: its [`b_est`] relative to the full-scale
+/// reading, so a ramp at full scale maps to exactly `1.0` and a dimmed one
+/// to its preserved level. An all-zero ramp (nothing to preserve) maps to
+/// `1.0` as well.
+fn dim_ratio(ramp: &Ramp) -> f64 {
+    let estimated = b_est(ramp);
+    if estimated == 0 {
+        1.0
+    } else {
+        estimated as f64 / b_est(&identity_ramp()) as f64
+    }
+}
+
+/// Scales every entry of `ramp` by `ratio` with round-to-nearest, clamped at
+/// 65535. The ramp keeps its shape: a channel at half scale stays at half
+/// scale, and a channel already at full scale stays pinned there.
+fn scale(ramp: &Ramp, ratio: f64) -> Ramp {
+    let mut out = Ramp {
+        red: [0; 256],
+        green: [0; 256],
+        blue: [0; 256],
+    };
+    for i in 0..256 {
+        out.red[i] = (ramp.red[i] as f64 * ratio).round().min(65535.0) as u16;
+        out.green[i] = (ramp.green[i] as f64 * ratio).round().min(65535.0) as u16;
+        out.blue[i] = (ramp.blue[i] as f64 * ratio).round().min(65535.0) as u16;
+    }
+    out
+}
+
 /// Applies a gamma ramp to the display named by `name` (a `\\.\DISPLAYN`
 /// device name). The DC is created per call and released immediately.
 ///
@@ -201,13 +247,17 @@ fn ramp_diff(a: &Ramp, b: &Ramp) -> u64 {
 }
 
 /// Reports the preset Kelvin closest to the read ramp; the identity ramp
-/// maps to [`MAX_KELVIN`].
+/// maps to [`MAX_KELVIN`]. A dimmed ramp (brightness below full scale) is
+/// compared against the candidates scaled to the same dim level, so the
+/// estimate survives a brightness change; an all-zero ramp compares
+/// unscaled.
 fn estimate_kelvin(ramp: &Ramp) -> u32 {
+    let ratio = dim_ratio(ramp);
     let mut best = MAX_KELVIN;
-    let mut best_diff = ramp_diff(ramp, &identity_ramp());
+    let mut best_diff = ramp_diff(ramp, &scale(&identity_ramp(), ratio));
     for k in PRESET_KELVINS {
         let (r, g, b) = kelvin_to_rgb(*k);
-        let diff = ramp_diff(ramp, &build_ramp(r, g, b));
+        let diff = ramp_diff(ramp, &scale(&build_ramp(r, g, b), ratio));
         if diff < best_diff {
             best_diff = diff;
             best = *k;
@@ -300,5 +350,69 @@ mod tests {
             let (r, g, b) = kelvin_to_rgb(*k);
             assert_eq!(estimate_kelvin(&build_ramp(r, g, b)), *k, "kelvin {k}");
         }
+    }
+
+    #[test]
+    fn b_est_reads_brightness_from_a_ramp() {
+        assert_eq!(b_est(&identity_ramp()), 99);
+        assert_eq!(b_est(&scale(&identity_ramp(), 0.5)), 49);
+        assert_eq!(b_est(&build_ramp(1.0, 0.5, 0.5)), 99);
+        let black = Ramp {
+            red: [0; 256],
+            green: [0; 256],
+            blue: [0; 256],
+        };
+        assert_eq!(b_est(&black), 0);
+    }
+
+    #[test]
+    fn dim_ratio_is_one_at_full_scale_and_zero_for_black() {
+        assert_eq!(dim_ratio(&identity_ramp()), 1.0);
+        let black = Ramp {
+            red: [0; 256],
+            green: [0; 256],
+            blue: [0; 256],
+        };
+        assert_eq!(dim_ratio(&black), 1.0);
+        let half = scale(&identity_ramp(), 0.5);
+        assert!((dim_ratio(&half) - 0.494_949).abs() < 0.0001);
+    }
+
+    #[test]
+    fn scale_preserves_a_temp_ramps_shape() {
+        let ramp = build_ramp(1.0, 0.5, 0.5);
+        let scaled = scale(&ramp, 0.5);
+        assert_eq!(scaled.red[255], 32640);
+        assert_eq!(scaled.green[255], 16320);
+        assert_eq!(scaled.blue[255], 16320);
+        assert_eq!(b_est(&scaled), 49);
+        let full = scale(&ramp, 1.0);
+        assert_eq!(full.red[255], 65280);
+        assert_eq!(full.green[255], 32640);
+    }
+
+    #[test]
+    fn scale_is_stable_across_repeated_application() {
+        let dimmed = scale(&build_ramp(1.0, 0.5, 0.5), 0.5);
+        let again = scale(&build_ramp(1.0, 0.5, 0.5), dim_ratio(&dimmed));
+        assert_eq!(b_est(&again), b_est(&dimmed));
+        assert_eq!(
+            scale(&build_ramp(1.0, 0.5, 0.5), dim_ratio(&again)),
+            again
+        );
+    }
+
+    #[test]
+    fn estimate_a_dimmed_preset_ramp_matches() {
+        for k in PRESET_KELVINS {
+            let (r, g, b) = kelvin_to_rgb(*k);
+            let dimmed = scale(&build_ramp(r, g, b), 0.5);
+            assert_eq!(estimate_kelvin(&dimmed), *k, "kelvin {k}");
+        }
+    }
+
+    #[test]
+    fn estimate_a_dimmed_identity_ramp_is_6500() {
+        assert_eq!(estimate_kelvin(&scale(&identity_ramp(), 0.5)), 6500);
     }
 }

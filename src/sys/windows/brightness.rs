@@ -272,7 +272,7 @@ fn set_mode(
         BrightnessValue::Percent(_) => unreachable!("set_mode only runs for modes"),
     }
     let level = gamma_level_for(mode);
-    let gamma_unchanged = match set_via_gamma(name, level, display)? {
+    let gamma_unchanged = match set_via_gamma(name, level, display, true)? {
         Some(unchanged) => unchanged,
         None => unreachable!("gamma control always reports Some; set_via_gamma only returns None for unsupported backends"),
     };
@@ -382,7 +382,7 @@ fn set_via(
     match backend {
         BrightnessBackend::Ddc => set_via_ddc(name, value),
         BrightnessBackend::Slider => set_via_slider(name, value),
-        BrightnessBackend::Gamma => set_via_gamma(name, value, display),
+        BrightnessBackend::Gamma => set_via_gamma(name, value, display, false),
     }
 }
 
@@ -540,8 +540,15 @@ fn set_via_slider_dxva2(name: &str, value: u32) -> Result<Option<bool>, String> 
 }
 
 /// Sets brightness through a gamma ramp; this is the fallback that works on
-/// every display.
-fn set_via_gamma(name: &str, value: u32, display: &str) -> Result<Option<bool>, String> {
+/// every display. `exact` selects the mode-leg semantics (an exact ramp
+/// match and a pure [`gamma_ramp`] write) over the percent-leg semantics
+/// (a [`b_est`] tolerance and a shape-preserving re-scale).
+fn set_via_gamma(
+    name: &str,
+    value: u32,
+    display: &str,
+    exact: bool,
+) -> Result<Option<bool>, String> {
     let name_wide = encode_wide(name);
     let dc = unsafe {
         CreateDCW(std::ptr::null(), name_wide.as_ptr(), std::ptr::null(), std::ptr::null())
@@ -551,19 +558,29 @@ fn set_via_gamma(name: &str, value: u32, display: &str) -> Result<Option<bool>, 
             "cannot open the display for gamma control: {name}"
         ));
     }
-    let result = set_via_gamma_dc(dc, value, display);
+    let result = set_via_gamma_dc(dc, value, display, exact);
     let _ = unsafe { DeleteDC(dc) };
     result
 }
 
-fn set_via_gamma_dc(dc: usize, value: u32, display: &str) -> Result<Option<bool>, String> {
+fn set_via_gamma_dc(
+    dc: usize,
+    value: u32,
+    display: &str,
+    exact: bool,
+) -> Result<Option<bool>, String> {
     let mut ramp = [0u16; 768];
     let ok = unsafe { GetDeviceGammaRamp(dc, ramp.as_mut_ptr()) };
-    if ok != 0 && gamma_matches(&ramp, value) {
-        return Ok(Some(true));
-    }
-    let new_ramp = gamma_ramp(value);
-    let set = unsafe { SetDeviceGammaRamp(dc, new_ramp.as_ptr() as *mut u16) };
+    let write = match (exact, ok != 0) {
+        (true, true) if gamma_matches(&ramp, value) => return Ok(Some(true)),
+        (true, _) => gamma_ramp(value),
+        (false, true) => match percent_write(&ramp, value) {
+            None => return Ok(Some(true)),
+            Some(write) => write,
+        },
+        (false, false) => gamma_ramp(value),
+    };
+    let set = unsafe { SetDeviceGammaRamp(dc, write.as_ptr() as *mut u16) };
     if set == 0 {
         return Err(gamma_error(value, display));
     }
@@ -599,6 +616,49 @@ pub(crate) fn gamma_ramp(value: u32) -> [u16; 768] {
 /// True when the ramp already represents `value`.
 fn gamma_matches(ramp: &[u16; 768], value: u32) -> bool {
     gamma_ramp(value) == *ramp
+}
+
+/// The brightness percent recovered from a gamma ramp: the red channel's
+/// max entry scaled to 0-100. An approximation: a boosted ramp (value above
+/// 100) saturates at 100, and integer math rounds down (a 50% ramp reads
+/// 49). 0 for an all-zero ramp.
+pub(crate) fn b_est(ramp: &[u16; 768]) -> u32 {
+    ramp[255] as u32 * 100 / 65535
+}
+
+/// True when the ramp already reads within 1 of `value` percent, the
+/// rounding tolerance of [`b_est`].
+fn percent_unchanged(ramp: &[u16; 768], value: u32) -> bool {
+    b_est(ramp).abs_diff(value) <= 1
+}
+
+/// Scales `ramp` by `value / estimated` with round-to-nearest, clamped at
+/// 65535. The ramp keeps its shape: a channel at half scale stays at half
+/// scale, and a channel already at full scale stays pinned there.
+fn scale_ramp(ramp: &[u16; 768], value: u32, estimated: u32) -> [u16; 768] {
+    let mut out = [0u16; 768];
+    let ratio = value as f64 / estimated as f64;
+    for (i, entry) in ramp.iter().enumerate() {
+        let scaled = (*entry as f64 * ratio).round() as u64;
+        out[i] = scaled.min(65535) as u16;
+    }
+    out
+}
+
+/// The percent write decision: `None` when the ramp is already within the
+/// [`percent_unchanged`] tolerance of `value`, else the ramp to write —the
+/// current ramp re-scaled to `value` when it carries brightness, a fresh
+/// [`gamma_ramp`] when it is all zero (nothing to preserve).
+fn percent_write(ramp: &[u16; 768], value: u32) -> Option<[u16; 768]> {
+    let estimated = b_est(ramp);
+    if percent_unchanged(ramp, value) {
+        return None;
+    }
+    if estimated > 0 {
+        Some(scale_ramp(ramp, value, estimated))
+    } else {
+        Some(gamma_ramp(value))
+    }
 }
 
 #[cfg(test)]
@@ -663,6 +723,78 @@ mod tests {
         assert!(gamma_matches(&gamma_ramp(130), 130));
         assert!(!gamma_matches(&gamma_ramp(130), 100));
         assert!(!gamma_matches(&gamma_ramp(100), 130));
+    }
+
+    #[test]
+    fn b_est_reads_the_identity_ramp_as_full_brightness() {
+        assert_eq!(b_est(&gamma_ramp(100)), 100);
+    }
+
+    #[test]
+    fn b_est_reads_a_fifty_percent_ramp_as_forty_nine() {
+        assert_eq!(b_est(&gamma_ramp(50)), 49);
+    }
+
+    #[test]
+    fn b_est_reads_a_black_ramp_as_zero() {
+        assert_eq!(b_est(&[0u16; 768]), 0);
+    }
+
+    #[test]
+    fn b_est_saturates_at_full_scale_for_a_boost_ramp() {
+        assert_eq!(b_est(&gamma_ramp(130)), 100);
+    }
+
+    #[test]
+    fn percent_unchanged_accepts_the_rounding_off_by_one() {
+        assert!(percent_unchanged(&gamma_ramp(50), 50));
+        assert!(percent_unchanged(&gamma_ramp(50), 49));
+        assert!(percent_unchanged(&gamma_ramp(50), 48));
+        assert!(percent_unchanged(&[0u16; 768], 0));
+        assert!(percent_unchanged(&[0u16; 768], 1));
+        assert!(!percent_unchanged(&gamma_ramp(50), 51));
+        assert!(!percent_unchanged(&gamma_ramp(50), 40));
+    }
+
+    #[test]
+    fn percent_write_returns_none_within_tolerance() {
+        assert_eq!(percent_write(&gamma_ramp(50), 50), None);
+        assert_eq!(percent_write(&gamma_ramp(50), 49), None);
+        assert_eq!(percent_write(&[0u16; 768], 0), None);
+    }
+
+    #[test]
+    fn percent_write_scales_a_ramp_that_carries_brightness() {
+        let scaled = percent_write(&gamma_ramp(100), 50).unwrap();
+        assert_eq!(scaled[255], 32768);
+        assert_eq!(scaled[100], 12850);
+        assert!(percent_unchanged(&scaled, 50));
+    }
+
+    #[test]
+    fn percent_write_falls_back_to_a_pure_ramp_when_black() {
+        assert_eq!(percent_write(&[0u16; 768], 2), Some(gamma_ramp(2)));
+        assert_eq!(percent_write(&[0u16; 768], 100), Some(gamma_ramp(100)));
+    }
+
+    #[test]
+    fn scale_ramp_preserves_a_temp_shaped_ramp() {
+        let mut ramp = gamma_ramp(100);
+        for i in 256..768 {
+            ramp[i] = ramp[i] / 2;
+        }
+        let scaled = scale_ramp(&ramp, 50, b_est(&ramp));
+        assert_eq!(scaled[255], 32768);
+        assert_eq!(scaled[255 + 256], 16384);
+        assert_eq!(scaled[255 + 512], 16384);
+        assert!(percent_unchanged(&scaled, 50));
+    }
+
+    #[test]
+    fn scale_ramp_clamps_entries_at_full_scale() {
+        let scaled = scale_ramp(&gamma_ramp(50), 100, b_est(&gamma_ramp(50)));
+        assert_eq!(scaled[255], 65535);
+        assert_eq!(b_est(&scaled), 100);
     }
 
     #[test]
