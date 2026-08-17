@@ -106,7 +106,10 @@ fn resolve_target(target: &MonitorTarget) -> Result<Option<u32>, String> {
         }
         MonitorTarget::Id(id) => {
             crate::sys::windows::resolve_by_id(id).map(Some).ok_or_else(|| {
-                format!("monitor with id '{id}' not found. run rmod list to see connected displays")
+                format!(
+                    "monitor with id '{id}' not found. connected: {}",
+                    crate::sys::windows::connected_displays_list()
+                )
             })
         }
     }

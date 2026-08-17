@@ -11,6 +11,7 @@ use super::bindings::{
     DISP_CHANGE_BADFLAGS, DISP_CHANGE_BADMODE, DISP_CHANGE_BADPARAM, DISP_CHANGE_FAILED,
     DISP_CHANGE_NOTUPDATED, DISP_CHANGE_RESTART, DISP_CHANGE_SUCCESSFUL, DM_DISPLAYFREQUENCY,
     DM_DISPLAYORIENTATION, DM_PELSHEIGHT, DM_PELSWIDTH, DM_POSITION, DevmodeW, Pointl, encode_wide,
+    wide_to_string,
 };
 use super::capabilities::{self, Mode};
 use super::fade;
@@ -415,9 +416,26 @@ fn validate_mode(name: &str, display: &str, devmode: &DevmodeW) -> Result<(), St
 /// the attempted resolution and refresh rate.
 fn describe_change_failure(code: i32, display: &str, devmode: &DevmodeW) -> String {
     if code == DISP_CHANGE_BADMODE {
+        let width = devmode.dm_pels_width;
+        let height = devmode.dm_pels_height;
+        let refresh = devmode.dm_display_frequency;
+        let device_name = wide_to_string(&devmode.dm_device_name);
+        let supported_refreshes = capabilities::enumerate_modes(&device_name)
+            .into_iter()
+            .filter(|m| m.width == width && m.height == height)
+            .map(|m| m.refresh)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .map(|r| format!("{}Hz", r))
+            .collect::<Vec<_>>()
+            .join(", ");
+        if supported_refreshes.is_empty() {
+            return format!(
+                "{display} does not support {width}x{height}@{refresh}Hz. run rmod list to see supported modes"
+            );
+        }
         return format!(
-            "{display} does not support {}x{}@{}Hz. run rmod list to see supported modes",
-            devmode.dm_pels_width, devmode.dm_pels_height, devmode.dm_display_frequency
+            "{display} does not support {width}x{height}@{refresh}Hz. supported: {supported_refreshes} at {width}x{height}"
         );
     }
     describe_change_result(code)

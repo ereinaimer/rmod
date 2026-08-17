@@ -28,7 +28,7 @@ pub use attach::{AttachAction, AttachChange, AttachOutcome};
 pub use brightness::{BrightnessBackend, BrightnessLayer, BrightnessOutcome, BrightnessValue};
 pub use capabilities::Mode;
 pub use layout::{Direction, PlacementChange, PlacementOutcome};
-pub use query::Monitor;
+pub use query::{Monitor, connected_displays_list};
 pub use temp::TempChange;
 
 /// Lists every display attached to the desktop with its current settings.

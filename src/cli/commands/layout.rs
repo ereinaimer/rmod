@@ -26,7 +26,10 @@ fn resolve_layout_target(target: &MonitorTarget, not_found: &str) -> Result<u32,
         MonitorTarget::Primary => crate::sys::windows::get_primary_mode().map(|m| m.number),
         MonitorTarget::Index(n) => Ok(*n),
         MonitorTarget::Id(id) => crate::sys::windows::resolve_by_id(id).ok_or_else(|| {
-            format!("{not_found} '{id}' not found. run rmod list to see connected displays")
+            format!(
+                "{not_found} '{id}' not found. connected: {}",
+                crate::sys::windows::connected_displays_list()
+            )
         }),
         MonitorTarget::All => unreachable!(),
     }

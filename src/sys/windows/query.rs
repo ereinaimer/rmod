@@ -340,6 +340,30 @@ pub fn resolve_by_id(id: &str) -> Option<u32> {
     None
 }
 
+/// Returns a string listing all connected displays with their numbers and names,
+/// for use in error messages when a monitor is not found.
+pub fn connected_displays_list() -> String {
+    let names = enumerate_devices();
+    if names.is_empty() {
+        return "no displays connected".to_string();
+    }
+    let mut parts = Vec::new();
+    for (i, name) in names.iter().enumerate() {
+        let mode = current_mode(name);
+        let display_name = if let Some(mode) = &mode {
+            friendly_name(&encode_wide(name)).unwrap_or_else(|| name.to_string())
+        } else {
+            name.to_string()
+        };
+        let current_mode_str = mode
+            .as_ref()
+            .map(|m| format!("{}x{}@{}Hz", m.dm_pels_width, m.dm_pels_height, m.dm_display_frequency))
+            .unwrap_or_else(|| "unknown".to_string());
+        parts.push(format!("{} ({}) {}", i + 1, current_mode_str, display_name));
+    }
+    parts.join(", ")
+}
+
 /// Returns the current mode for a specific monitor number (1-based).
 pub fn get_current_mode(monitor: u32) -> Result<Monitor, String> {
     let names = enumerate_devices();
