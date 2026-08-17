@@ -18,11 +18,17 @@ fn resolve_spec(
     use crate::cli::parser::PROFILES;
     match spec {
         SetSpec::Profile(name) => {
-            let (_, w, h) = PROFILES.iter().find(|(n, _, _)| *n == name).unwrap();
+            let (_, w, h) = PROFILES
+                .iter()
+                .find(|(n, _, _)| n.eq_ignore_ascii_case(name))
+                .unwrap();
             (Some(*w), Some(*h), Refresh::Keep)
         }
         SetSpec::ProfileWithRefresh(name, refresh) => {
-            let (_, w, h) = PROFILES.iter().find(|(n, _, _)| *n == name).unwrap();
+            let (_, w, h) = PROFILES
+                .iter()
+                .find(|(n, _, _)| n.eq_ignore_ascii_case(name))
+                .unwrap();
             (Some(*w), Some(*h), *refresh)
         }
         SetSpec::Explicit {
@@ -192,5 +198,26 @@ pub(super) fn run_set(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_spec_matches_profile_case_insensitively() {
+        assert_eq!(
+            resolve_spec(&SetSpec::Profile("4K".to_string()), 1920, 1080),
+            (Some(3840), Some(2160), Refresh::Keep)
+        );
+        assert_eq!(
+            resolve_spec(
+                &SetSpec::ProfileWithRefresh("8K".to_string(), Refresh::Max),
+                1920,
+                1080
+            ),
+            (Some(7680), Some(4320), Refresh::Max)
+        );
     }
 }

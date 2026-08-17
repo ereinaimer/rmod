@@ -619,19 +619,18 @@ fn parse_set(args: &[impl AsRef<str>]) -> Result<Command, String> {
                             .to_string(),
                     );
                 };
-                if !PROFILES.iter().any(|(name, _, _)| *name == val.as_ref()) {
+                let val = val.as_ref();
+                let lower = val.to_lowercase();
+                if let Some((name, _, _)) = PROFILES.iter().find(|(n, _, _)| *n == lower) {
+                    profile = Some(name.to_string());
+                } else {
                     let names = PROFILES
                         .iter()
                         .map(|(name, _, _)| *name)
                         .collect::<Vec<_>>()
                         .join(", ");
-                    return Err(format!(
-                        "unknown profile {}. use one of: {}",
-                        val.as_ref(),
-                        names
-                    ));
+                    return Err(format!("unknown profile {}. use one of: {}", lower, names));
                 }
-                profile = Some(val.as_ref().to_string());
                 i += 1;
             }
             "-m" | "--monitor" => {
@@ -2293,6 +2292,49 @@ mod tests {
     fn set_unknown_profile_is_error() {
         assert!(parse(&["set", "-p", "480"]).is_err());
         assert!(parse(&["set", "-p", "1080p"]).is_err());
+    }
+
+    #[test]
+    fn set_profile_case_insensitive() {
+        for (upper, lower) in [("4K", "4k"), ("1080P", "1080p")] {
+            assert_eq!(
+                parse(&["set", "-p", upper]),
+                parse(&["set", "-p", lower]),
+                "profile '{}' must parse to the same result as '{}'",
+                upper,
+                lower
+            );
+        }
+    }
+
+    #[test]
+    fn set_profile_upper_case_stores_canonical_name() {
+        assert_eq!(
+            parse(&["set", "-p", "4K"]),
+            Ok(Command::Set {
+                spec: SetSpec::Profile("4k".to_string()),
+                monitor: MonitorTarget::Primary,
+                orientation: None,
+                yes: false
+            })
+        );
+        assert_eq!(
+            parse(&["set", "-p", "8K", "-r", "60"]),
+            Ok(Command::Set {
+                spec: SetSpec::ProfileWithRefresh("8k".to_string(), Refresh::Fixed(60)),
+                monitor: MonitorTarget::Primary,
+                orientation: None,
+                yes: false
+            })
+        );
+    }
+
+    #[test]
+    fn set_profile_upper_case_unknown_is_same_error() {
+        assert_eq!(
+            parse(&["set", "-p", "1080P"]),
+            Err("unknown profile 1080p. use one of: 720, 1080, 1440, 4k, 8k".to_string())
+        );
     }
 
     #[test]
