@@ -5,7 +5,7 @@
 //! [`crate::sys::windows`], report the outcome, and run the shared
 //! keep-or-revert confirmation flow.
 
-pub(crate) mod confirm_flow;
+pub(crate) mod flow;
 pub(crate) mod layout;
 pub(crate) mod ls;
 pub(crate) mod monitor;
@@ -19,7 +19,7 @@ use crate::cli::{
 };
 use crate::sys::windows::{AttachAction, AttachChange, Change, Mode};
 
-use confirm_flow::{
+use flow::{
     confirm_or_revert, confirm_or_revert_all, confirm_or_revert_attach, confirm_or_revert_attach_all,
 };
 use layout::run_layout;

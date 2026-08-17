@@ -6,7 +6,7 @@
 //! active is reported as unchanged and never re-applied. `make_main`
 //! swaps desktop positions so a display becomes the primary (origin 0,0).
 
-use super::apply_plan::{Planned, has_applied, plan_max, plan_set};
+use super::plan::{Planned, has_applied, plan_max, plan_set};
 use super::bindings::{
     CDS_TEST, CDS_UPDATEREGISTRY, ChangeDisplaySettingsExW, DISP_CHANGE_BADDUALVIEW,
     DISP_CHANGE_BADFLAGS, DISP_CHANGE_BADMODE, DISP_CHANGE_BADPARAM, DISP_CHANGE_FAILED,
