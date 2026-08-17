@@ -9,6 +9,7 @@
 //! instead, so the integration tests never touch the real display.
 
 pub(crate) mod apply;
+pub(crate) mod apply_plan;
 pub(crate) mod attach;
 pub(crate) mod bindings;
 pub(crate) mod brightness;
