@@ -13,6 +13,7 @@ pub(crate) mod attach;
 pub(crate) mod bindings;
 pub(crate) mod brightness;
 mod capabilities;
+pub(crate) mod com;
 pub(crate) mod edid;
 mod fade;
 mod fake;
@@ -20,8 +21,8 @@ pub(crate) mod hdr;
 mod layout;
 pub(crate) mod power;
 pub(crate) mod query;
-mod wmi;
 pub(crate) mod temp;
+mod wmi;
 
 pub use apply::{ApplyOutcome, Change, MainChange, MainOutcome, Refresh};
 pub use attach::{AttachAction, AttachChange, AttachOutcome};

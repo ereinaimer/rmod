@@ -23,75 +23,18 @@
 use std::ffi::c_void;
 use std::ptr;
 
-use super::bindings::{DISPLAY_DEVICEW, EnumDisplayDevicesW, encode_wide, wide_to_string};
-
-/// A Windows GUID (16 bytes, packed).
-#[repr(C)]
-struct Guid {
-    data1: u32,
-    data2: u16,
-    data3: u16,
-    data4: [u8; 8],
-}
-
-const IID_NULL: Guid = Guid {
-    data1: 0,
-    data2: 0,
-    data3: 0,
-    data4: [0; 8],
+use super::bindings::{
+    DISPLAY_DEVICEW, EnumDisplayDevicesW, RegCloseKey, RegEnumKeyExW, RegOpenKeyExW,
+    RegQueryValueExW, encode_wide, wide_to_string,
 };
-const IID_IDISPATCH: Guid = Guid {
-    data1: 0x00020400,
-    data2: 0,
-    data3: 0,
-    data4: [0xC0, 0, 0, 0, 0, 0, 0, 0x46],
+use super::com::{
+    CLSCTX_INPROC_SERVER, CLSID_WBEMSCRIPTING_LOCATOR, COINIT_MULTITHREADED, CoCreateInstance,
+    CoInitializeEx, CoInitializeSecurity, CoUninitialize, EOAC_NONE, IID_IDISPATCH,
+    RPC_C_AUTHN_LEVEL_PKT_PRIVACY, RPC_C_IMP_LEVEL_IMPERSONATE, S_FALSE, S_OK, SafeArray,
+    SafeArrayAccessData, SafeArrayGetLBound, SafeArrayGetUBound, SafeArrayUnaccessData, VT_ARRAY,
+    VT_I4, VT_UI1, VT_VARIANT, Variant, VariantClear, call, get_prop, put_prop, release,
+    release_disp,
 };
-
-/// `CLSID_WbemScriptingLocator` — the `WbemScripting.SWbemLocator` object.
-const CLSID_WBEMSCRIPTING_LOCATOR: Guid = Guid {
-    data1: 0x76A64158,
-    data2: 0xCB41,
-    data3: 0x11D1,
-    data4: [0x8B, 0x02, 0x00, 0x60, 0x08, 0x06, 0xD9, 0xB6],
-};
-
-const COINIT_MULTITHREADED: u32 = 0;
-const CLSCTX_INPROC_SERVER: u32 = 0x3;
-const S_OK: i32 = 0;
-const S_FALSE: i32 = 1;
-
-/// `RPC_C_AUTHN_LEVEL_PKT_PRIVACY` for `CoInitializeSecurity`.
-const RPC_C_AUTHN_LEVEL_PKT_PRIVACY: u32 = 6;
-/// `RPC_C_IMP_LEVEL_IMPERSONATE`, needed so WMI calls can impersonate the
-/// caller.
-const RPC_C_IMP_LEVEL_IMPERSONATE: u32 = 3;
-/// `EOAC_NONE`.
-const EOAC_NONE: u32 = 0;
-
-const DISPATCH_METHOD: u16 = 0x1;
-const DISPATCH_PROPERTYGET: u16 = 0x2;
-const DISPATCH_PROPERTYPUT: u16 = 0x4;
-const DISPID_PROPERTYPUT: i32 = -3;
-const DISP_E_EXCEPTION: i32 = 0x80020009u32 as i32;
-
-/// `VT_EMPTY`.
-const VT_EMPTY: u16 = 0;
-/// `VT_I4`.
-const VT_I4: u16 = 3;
-/// `VT_BSTR`.
-const VT_BSTR: u16 = 8;
-/// `VT_DISPATCH`.
-const VT_DISPATCH: u16 = 9;
-/// `VT_UNKNOWN`.
-const VT_UNKNOWN: u16 = 0x0D;
-/// `VT_UI1`.
-const VT_UI1: u16 = 0x11;
-/// `VT_UI4`.
-const VT_UI4: u16 = 0x13;
-/// `VT_VARIANT`: a `VARIANT` value (used for arrays of variants).
-const VT_VARIANT: u16 = 0x0C;
-/// `VT_ARRAY`; combined with an element type (e.g. `VT_UI1 | VT_ARRAY`).
-const VT_ARRAY: u16 = 0x2000;
 
 /// The WMI class exposing `WmiSetBrightness`.
 const CLASS_METHODS: &str = "WmiMonitorBrightnessMethods";
@@ -132,404 +75,6 @@ fn init_security() {
             ptr::null_mut(),
         );
     });
-}
-
-/// Minimal `VARIANT` covering the scalar and object types used here.
-///
-/// On x64 a `VARIANT` is `vt` + 3 reserved words + a 16-byte union, so the
-/// data payload must be 16 bytes to match what COM reads and writes.
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct Variant {
-    vt: u16,
-    w_reserved1: u16,
-    w_reserved2: u16,
-    w_reserved3: u16,
-    data: [u64; 2],
-}
-
-impl Variant {
-    fn empty() -> Variant {
-        Variant {
-            vt: VT_EMPTY,
-            w_reserved1: 0,
-            w_reserved2: 0,
-            w_reserved3: 0,
-            data: [0, 0],
-        }
-    }
-
-    fn bstr(s: &str) -> Variant {
-        Variant {
-            vt: VT_BSTR,
-            w_reserved1: 0,
-            w_reserved2: 0,
-            w_reserved3: 0,
-            data: [sys_alloc(&encode_wide(s)) as u64, 0],
-        }
-    }
-
-    fn i4(value: i32) -> Variant {
-        Variant {
-            vt: VT_I4,
-            w_reserved1: 0,
-            w_reserved2: 0,
-            w_reserved3: 0,
-            data: [value as u32 as u64, 0],
-        }
-    }
-
-    fn ui1(value: u8) -> Variant {
-        Variant {
-            vt: VT_UI1,
-            w_reserved1: 0,
-            w_reserved2: 0,
-            w_reserved3: 0,
-            data: [value as u64, 0],
-        }
-    }
-
-    fn ui4(value: u32) -> Variant {
-        Variant {
-            vt: VT_UI4,
-            w_reserved1: 0,
-            w_reserved2: 0,
-            w_reserved3: 0,
-            data: [value as u64, 0],
-        }
-    }
-
-    fn dispatch(object: *mut c_void) -> Variant {
-        Variant {
-            vt: VT_DISPATCH,
-            w_reserved1: 0,
-            w_reserved2: 0,
-            w_reserved3: 0,
-            data: [object as u64, 0],
-        }
-    }
-
-    /// The object pointer when this is a `VT_DISPATCH` or `VT_UNKNOWN`,
-    /// else `None`.
-    fn object(&self) -> Option<*mut c_void> {
-        if (self.vt == VT_DISPATCH || self.vt == VT_UNKNOWN) && self.data[0] != 0 {
-            Some(self.data[0] as *mut c_void)
-        } else {
-            None
-        }
-    }
-}
-
-/// A bound of a `SAFEARRAY`: the element count and inclusive lower bound.
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct SafeArrayBound {
-    c_elements: u32,
-    l_bound: i32,
-}
-
-/// The `SAFEARRAY` header; only the fields needed to read a 1-D byte array
-/// are used, and the trailing bound array is fixed at one entry.
-#[repr(C)]
-struct SafeArray {
-    c_dims: u16,
-    f_features: u16,
-    cb_elements: u32,
-    c_locks: u32,
-    pv_data: *mut c_void,
-    rgsa_bounds: [SafeArrayBound; 1],
-}
-
-/// `DISPPARAMS` for `IDispatch::Invoke`.
-#[repr(C)]
-struct DispParams {
-    rgvarg: *mut Variant,
-    rgdispid_named_args: *mut i32,
-    c_args: u32,
-    c_named_args: u32,
-}
-
-/// `EXCEPINFO` for `IDispatch::Invoke`; only `scode` is consulted.
-#[repr(C)]
-struct ExcepInfo {
-    w_code: u16,
-    w_reserved: u16,
-    bstr_source: *mut u16,
-    bstr_description: *mut u16,
-    bstr_help_file: *mut u16,
-    dw_help_context: u32,
-    pv_reserved: *mut c_void,
-    hr_error: i32,
-    scode: i32,
-}
-
-impl ExcepInfo {
-    fn new() -> ExcepInfo {
-        ExcepInfo {
-            w_code: 0,
-            w_reserved: 0,
-            bstr_source: ptr::null_mut(),
-            bstr_description: ptr::null_mut(),
-            bstr_help_file: ptr::null_mut(),
-            dw_help_context: 0,
-            pv_reserved: ptr::null_mut(),
-            hr_error: 0,
-            scode: 0,
-        }
-    }
-}
-
-#[link(name = "ole32")]
-unsafe extern "system" {
-    fn CoInitializeEx(pv_reserved: usize, dw_co_init: u32) -> i32;
-    fn CoUninitialize();
-    fn CoInitializeSecurity(
-        p_void: *mut c_void,
-        c_auth_svc: i32,
-        as_auth_svc: *mut c_void,
-        p_reserved1: *mut c_void,
-        dw_authn_level: u32,
-        dw_imp_level: u32,
-        p_auth_list: *mut c_void,
-        dw_capabilities: u32,
-        p_reserved3: *mut c_void,
-    ) -> i32;
-    fn CoCreateInstance(
-        rclsid: *const Guid,
-        p_unk_outer: usize,
-        dw_cls_context: u32,
-        riid: *const Guid,
-        ppv: *mut *mut c_void,
-    ) -> i32;
-}
-#[link(name = "oleaut32")]
-unsafe extern "system" {
-    fn SysAllocString(psz: *const u16) -> *mut u16;
-    fn VariantClear(pvar: *mut Variant) -> i32;
-    fn SafeArrayGetLBound(psa: *mut SafeArray, n_dim: u32, pl_lbound: *mut i32) -> i32;
-    fn SafeArrayGetUBound(psa: *mut SafeArray, n_dim: u32, pl_ubound: *mut i32) -> i32;
-    fn SafeArrayAccessData(psa: *mut SafeArray, ppv_data: *mut *mut c_void) -> i32;
-    fn SafeArrayUnaccessData(psa: *mut SafeArray) -> i32;
-}
-#[link(name = "advapi32")]
-unsafe extern "system" {
-    fn RegOpenKeyExW(
-        h_key: *mut c_void,
-        lp_sub_key: *const u16,
-        ul_options: u32,
-        sam_desired: u32,
-        phk_result: *mut *mut c_void,
-    ) -> i32;
-    fn RegEnumKeyExW(
-        h_key: *mut c_void,
-        dw_index: u32,
-        lp_name: *mut u16,
-        lpcch_name: *mut u32,
-        lp_reserved: *mut u32,
-        lp_class: *mut u16,
-        lpcch_class: *mut u32,
-        lpft_last_write_time: *mut c_void,
-    ) -> i32;
-    fn RegQueryValueExW(
-        h_key: *mut c_void,
-        lp_value_name: *const u16,
-        lp_reserved: *mut u32,
-        lp_type: *mut u32,
-        lp_data: *mut u8,
-        lpcb_data: *mut u32,
-    ) -> i32;
-    fn RegCloseKey(h_key: *mut c_void) -> i32;
-}
-
-/// The `IDispatch` vtable, laid out as a `repr(C)` struct of function
-/// pointers so method slots are reached by field access rather than by
-/// transmuting a pointer into a function pointer (which the optimizer can
-/// treat as undefined behavior and miscompile).
-#[repr(C)]
-struct IDispatchVtbl {
-    query_interface: unsafe extern "system" fn(*mut c_void, *const Guid, *mut *mut c_void) -> i32,
-    add_ref: unsafe extern "system" fn(*mut c_void) -> u32,
-    release: unsafe extern "system" fn(*mut c_void) -> u32,
-    get_type_info_count: unsafe extern "system" fn(*mut c_void, *mut u32) -> i32,
-    get_type_info: unsafe extern "system" fn(*mut c_void, u32, u32, *mut *mut c_void) -> i32,
-    get_ids_of_names: unsafe extern "system" fn(
-        *mut c_void,
-        *const Guid,
-        *mut *mut u16,
-        u32,
-        u32,
-        *mut i32,
-    ) -> i32,
-    invoke: unsafe extern "system" fn(
-        *mut c_void,
-        i32,
-        *const Guid,
-        u32,
-        u16,
-        *const DispParams,
-        *mut Variant,
-        *mut ExcepInfo,
-        *mut u32,
-    ) -> i32,
-}
-
-/// The `IDispatch` vtable of a COM object. Every COM interface pointer
-/// points to an object whose first member is the vtable pointer.
-unsafe fn idispatch_vtbl(com: *const c_void) -> &'static IDispatchVtbl {
-    unsafe { &**(com as *const *const IDispatchVtbl) }
-}
-
-/// Releases a COM interface through its vtable `Release` slot.
-unsafe fn release(com: *mut c_void) {
-    unsafe {
-        let vtbl = idispatch_vtbl(com);
-        (vtbl.release)(com);
-    }
-}
-
-/// Releases a dispatch object, if non-null.
-fn release_disp(object: *mut c_void) {
-    if !object.is_null() {
-        unsafe { release(object) };
-    }
-}
-
-/// Allocates a `BSTR` copy of a null-terminated wide string.
-fn sys_alloc(wide: &[u16]) -> *mut u16 {
-    unsafe { SysAllocString(wide.as_ptr()) }
-}
-
-/// Runs `f` with a null-terminated wide copy of `s`.
-fn with_wide<R>(s: &str, f: impl FnOnce(*const u16) -> R) -> R {
-    f(encode_wide(s).as_ptr())
-}
-
-/// Looks up a member's `DISPID` on an automation object.
-fn dispatch_id(disp: *mut c_void, name: &str) -> Result<i32, String> {
-    fn dispatch_id_inner(disp: *mut c_void, name: &str) -> Result<i32, String> {
-        let vtbl = unsafe { idispatch_vtbl(disp) };
-        let mut id = 0i32;
-        let hr = with_wide(name, |wide| {
-            let mut names = [wide as *mut u16];
-            unsafe { (vtbl.get_ids_of_names)(disp, &IID_NULL, names.as_mut_ptr(), 1, 0, &mut id) }
-        });
-        if hr != S_OK {
-            return Err(format!("member \"{name}\" not found: 0x{hr:08x}"));
-        }
-        Ok(id)
-    }
-    dispatch_id_inner(disp, name)
-}
-
-/// The `DISPPARAMS` layout for a call: the args reversed into a fixed
-/// stack array (COM wants the last argument at index 0 of `rgvarg`) with
-/// the named dispid slots aligned to their reversed positions. The base
-/// index is where `rgvarg` starts; `c_args` limits what COM reads.
-fn reversed_args(args: &[Variant], named: &[(i32, usize)]) -> ([Variant; 7], [i32; 7], usize) {
-    // The largest call is `ConnectServer` with seven args, so the fixed
-    // arrays always cover the argument list.
-    const MAX_ARGS: usize = 7;
-    debug_assert!(args.len() <= MAX_ARGS, "more than {MAX_ARGS} arguments");
-    let mut reversed = [Variant::empty(); MAX_ARGS];
-    for (i, arg) in args.iter().enumerate() {
-        reversed[MAX_ARGS - 1 - i] = *arg;
-    }
-    let mut named_disps = [0i32; MAX_ARGS];
-    for (dispid, forward_index) in named {
-        named_disps[MAX_ARGS - 1 - forward_index] = *dispid;
-    }
-    (reversed, named_disps, MAX_ARGS - args.len())
-}
-
-/// Runs `IDispatch::Invoke` and returns the result variant.
-fn dispatch_invoke(
-    disp: *mut c_void,
-    member: i32,
-    name: &str,
-    flags: u16,
-    args: &mut [Variant],
-    named: &[(i32, usize)],
-) -> Result<Variant, String> {
-    fn dispatch_invoke_inner(
-        disp: *mut c_void,
-        member: i32,
-        name: &str,
-        flags: u16,
-        args: &mut [Variant],
-        named: &[(i32, usize)],
-    ) -> Result<Variant, String> {
-        let vtbl = unsafe { idispatch_vtbl(disp) };
-
-        let (mut reversed, mut named_disps, base) = reversed_args(args, named);
-        let params = DispParams {
-            rgvarg: unsafe { reversed.as_mut_ptr().add(base) },
-            rgdispid_named_args: if named.is_empty() {
-                ptr::null_mut()
-            } else {
-                unsafe { named_disps.as_mut_ptr().add(base) }
-            },
-            c_args: args.len() as u32,
-            c_named_args: named.len() as u32,
-        };
-        let mut result = Variant::empty();
-        let mut excep = ExcepInfo::new();
-        // Pin the `DISPPARAMS`, result, and `EXCEPINFO` in real memory before
-        // the call. Under `opt-level = "z"` with whole-program LTO, LLVM can
-        // otherwise keep these values in registers and emit an `Invoke` that
-        // reaches oleaut32 with a valid HRESULT but no marshaled arguments or
-        // result (`ConnectServer` then returns VT_EMPTY or the stub reports
-        // bad data, 0x800706F7). The reads force the values to be spilled, so
-        // the pointers `Invoke` receives point at real, initialized memory.
-        std::hint::black_box(&params);
-        std::hint::black_box(&mut result);
-        std::hint::black_box(&mut excep);
-        let hr = unsafe {
-            (vtbl.invoke)(
-                disp,
-                member,
-                &IID_NULL,
-                0,
-                flags,
-                &params,
-                &mut result,
-                &mut excep,
-                ptr::null_mut(),
-            )
-        };
-        for arg in args {
-            if arg.vt == VT_BSTR {
-                unsafe { VariantClear(arg) };
-            }
-        }
-        if hr != S_OK {
-            if hr == DISP_E_EXCEPTION && excep.scode != 0 {
-                return Err(format!("{name}: 0x{:08x}", excep.scode));
-            }
-            return Err(format!("{name}: 0x{hr:08x}"));
-        }
-        Ok(result)
-    }
-    dispatch_invoke_inner(disp, member, name, flags, args, named)
-}
-
-/// Calls a method by name with positional args.
-fn call(disp: *mut c_void, name: &str, args: &mut [Variant]) -> Result<Variant, String> {
-    let member = dispatch_id(disp, name)?;
-    dispatch_invoke(disp, member, name, DISPATCH_METHOD, args, &[])
-}
-
-/// Reads a property by name.
-fn get_prop(disp: *mut c_void, name: &str) -> Result<Variant, String> {
-    let member = dispatch_id(disp, name)?;
-    dispatch_invoke(disp, member, name, DISPATCH_PROPERTYGET, &mut [], &[])
-}
-
-/// Writes a property by name (single named argument).
-fn put_prop(disp: *mut c_void, name: &str, value: &Variant) -> Result<(), String> {
-    let member = dispatch_id(disp, name)?;
-    let mut args = [*value];
-    dispatch_invoke(disp, member, name, DISPATCH_PROPERTYPUT, &mut args, &[(DISPID_PROPERTYPUT, 0)])
-        .map(|_| ())
 }
 
 /// The immediate subkey names of a registry key, in enumeration order.
@@ -577,11 +122,7 @@ fn monitor_device_id(name: &str) -> Option<String> {
         return None;
     }
     let id = wide_to_string(&monitor.device_id);
-    if id.is_empty() {
-        None
-    } else {
-        Some(id)
-    }
+    if id.is_empty() { None } else { Some(id) }
 }
 
 /// Splits a monitor device ID into its model and driver instance tail,
@@ -636,7 +177,11 @@ fn read_reg_string(root: *mut c_void, subpath: &str, value: &str) -> Option<Stri
             )
         };
         if hr == 0 && ty2 == REG_SZ {
-            out = Some(String::from_utf16_lossy(&buf).trim_end_matches('\0').to_string());
+            out = Some(
+                String::from_utf16_lossy(&buf)
+                    .trim_end_matches('\0')
+                    .to_string(),
+            );
         }
     }
     unsafe { RegCloseKey(key) };
@@ -657,7 +202,9 @@ fn display_device_instances(name: &str) -> Option<Vec<String>> {
     for instance in registry_keys(HKEY_LOCAL_MACHINE, &subpath) {
         let instance_name = format!("DISPLAY\\{model}\\{instance}");
         let instance_key = format!("{subpath}\\{instance}");
-        if read_reg_string(HKEY_LOCAL_MACHINE, &instance_key, "Driver").as_deref() == Some(driver.as_str()) {
+        if read_reg_string(HKEY_LOCAL_MACHINE, &instance_key, "Driver").as_deref()
+            == Some(driver.as_str())
+        {
             matched.push(instance_name);
         } else {
             rest.push(instance_name);
@@ -743,7 +290,9 @@ impl Connection {
     fn get_object(&self, path: &str) -> Result<*mut c_void, String> {
         let mut args = [Variant::bstr(path)];
         let result = call(self.services, "Get", &mut args)?;
-        result.object().ok_or_else(|| format!("Get({path}) returned no object"))
+        result
+            .object()
+            .ok_or_else(|| format!("Get({path}) returned no object"))
     }
 
     /// Calls `WmiSetBrightness` on a methods instance with the given value.
@@ -756,9 +305,7 @@ impl Connection {
         let method = method.object().ok_or("WmiSetBrightness method not found")?;
 
         let in_params_class = get_prop(method, "InParameters")?;
-        let in_params_class = in_params_class
-            .object()
-            .ok_or("InParameters not found")?;
+        let in_params_class = in_params_class.object().ok_or("InParameters not found")?;
 
         let spawned = call(in_params_class, "SpawnInstance_", &mut [])?;
         let spawned = spawned.object().ok_or("SpawnInstance_ failed")?;
@@ -802,7 +349,9 @@ impl Connection {
         unsafe { release(methods) };
 
         if status != 0 {
-            return Err(format!("the system brightness change failed: 0x{status:08x}"));
+            return Err(format!(
+                "the system brightness change failed: 0x{status:08x}"
+            ));
         }
         Ok(())
     }
@@ -837,7 +386,10 @@ impl Session {
         let Some(devices) = display_device_instances(name) else {
             return Ok(None);
         };
-        Ok(Some(Session { connection, devices }))
+        Ok(Some(Session {
+            connection,
+            devices,
+        }))
     }
 
     /// The instance of `class` for the display this session was created
@@ -1038,6 +590,7 @@ unsafe fn min_positive_variant(psa: *mut SafeArray) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::com::SafeArrayBound;
     use super::*;
 
     /// A hand-built 1-D `VT_UI1` SAFEARRAY over `bytes`, allocated without
@@ -1125,25 +678,6 @@ mod tests {
     }
 
     #[test]
-    fn variant_ui1_encodes_vt_and_value() {
-        let variant = Variant::ui1(42);
-        assert_eq!(variant.vt, VT_UI1);
-        assert_eq!(variant.data[0], 42);
-    }
-
-    #[test]
-    fn variant_ui4_encodes_vt_and_value() {
-        let variant = Variant::ui4(1);
-        assert_eq!(variant.vt, VT_UI4);
-        assert_eq!(variant.data[0], 1);
-    }
-
-    #[test]
-    fn variant_matches_x64_variant_size() {
-        assert_eq!(std::mem::size_of::<Variant>(), 24);
-    }
-
-    #[test]
     fn brightness_constants_name_the_right_classes() {
         assert_eq!(CLASS_METHODS, "WmiMonitorBrightnessMethods");
         assert_eq!(CLASS_STATE, "WmiMonitorBrightness");
@@ -1165,12 +699,6 @@ mod tests {
     #[test]
     fn smallest_positive_all_zero_is_none() {
         assert_eq!(smallest_positive(&[0, 0, 0]), None);
-    }
-
-    #[test]
-    fn safe_array_layout_is_32_bytes_on_x64() {
-        assert_eq!(std::mem::size_of::<SafeArray>(), 32);
-        assert_eq!(std::mem::size_of::<SafeArrayBound>(), 8);
     }
 
     #[test]
@@ -1252,39 +780,6 @@ mod tests {
     }
 
     #[test]
-    fn reversed_args_puts_the_last_argument_first() {
-        let args = [Variant::i4(1), Variant::i4(2), Variant::i4(3)];
-        let (reversed, _, base) = reversed_args(&args, &[]);
-        assert_eq!(base, 4);
-        assert_eq!(reversed[4].data[0], 3);
-        assert_eq!(reversed[5].data[0], 2);
-        assert_eq!(reversed[6].data[0], 1);
-        assert_eq!(reversed[0].vt, VT_EMPTY);
-    }
-
-    #[test]
-    fn reversed_args_aligns_named_dispid_with_its_reversed_slot() {
-        let args = [Variant::i4(1), Variant::i4(2)];
-        let (_, named_disps, base) = reversed_args(&args, &[(DISPID_PROPERTYPUT, 1)]);
-        assert_eq!(base, 5);
-        assert_eq!(named_disps[5], DISPID_PROPERTYPUT);
-    }
-
-    #[test]
-    fn reversed_args_put_prop_layout_is_dispid_at_the_base() {
-        let args = [Variant::i4(9)];
-        let (_, named_disps, base) = reversed_args(&args, &[(DISPID_PROPERTYPUT, 0)]);
-        assert_eq!(base, 6);
-        assert_eq!(named_disps[6], DISPID_PROPERTYPUT);
-    }
-
-    #[test]
-    fn reversed_args_empty_call_has_base_one_past_the_array() {
-        let (_, _, base) = reversed_args(&[], &[]);
-        assert_eq!(base, 7);
-    }
-
-    #[test]
     fn monitor_parts_splits_model_and_driver_tail() {
         let (model, driver) =
             monitor_parts("MONITOR\\LEN9059\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0002")
@@ -1295,7 +790,10 @@ mod tests {
 
     #[test]
     fn monitor_parts_rejects_non_monitor_ids() {
-        assert_eq!(monitor_parts("PCI\\VEN_8086&DEV_9A60&SUBSYS_3E8C17AA&REV_01"), None);
+        assert_eq!(
+            monitor_parts("PCI\\VEN_8086&DEV_9A60&SUBSYS_3E8C17AA&REV_01"),
+            None
+        );
     }
 
     #[test]
