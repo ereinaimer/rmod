@@ -319,7 +319,7 @@ fn set_mode(
     mode: BrightnessValue,
     display: &str,
 ) -> Result<BrightnessOutcome, String> {
-    let mut layers = Vec::new();
+    let mut layers = Vec::with_capacity(2);
     let mut hardware_unchanged = true;
     match mode {
         BrightnessValue::Min => {
@@ -891,8 +891,8 @@ mod tests {
     #[test]
     fn scale_ramp_preserves_a_temp_shaped_ramp() {
         let mut ramp = gamma_ramp(100);
-        for i in 256..768 {
-            ramp[i] = ramp[i] / 2;
+        for entry in &mut ramp[256..] {
+            *entry /= 2;
         }
         let scaled = scale_ramp(&ramp, 50, b_est(&ramp));
         assert_eq!(scaled[255], 32768);

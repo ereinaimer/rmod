@@ -66,7 +66,7 @@ pub fn reset_temp(monitor: Option<u32>) -> Result<TempChange, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
     let estimated = dim_ratio(&read_ramp(name)?);
-    apply_ramp(name, &scale(&identity_ramp(), estimated))?;
+    apply_ramp(name, &scale(&IDENTITY_RAMP, estimated))?;
     Ok(TempChange {
         display: query::display_label(name, index as u32 + 1),
         kelvin: MAX_KELVIN,
@@ -147,9 +147,22 @@ fn build_ramp(red: f64, green: f64, blue: f64) -> Ramp {
 }
 
 /// The identity gamma ramp (all multipliers `1.0`), the `6500K` baseline.
-fn identity_ramp() -> Ramp {
-    build_ramp(1.0, 1.0, 1.0)
-}
+static IDENTITY_RAMP: Ramp = {
+    let mut ramp = Ramp {
+        red: [0; 256],
+        green: [0; 256],
+        blue: [0; 256],
+    };
+    let mut i = 0;
+    while i < 256 {
+        let value = (i as u32 * 256) as u16;
+        ramp.red[i] = value;
+        ramp.green[i] = value;
+        ramp.blue[i] = value;
+        i += 1;
+    }
+    ramp
+};
 
 /// The brightness percent recovered from a gamma ramp: the red channel's
 /// max entry scaled to 0-100. An approximation: a boosted ramp (value above
@@ -170,7 +183,7 @@ fn dim_ratio(ramp: &Ramp) -> f64 {
     if estimated == 0 {
         1.0
     } else {
-        estimated as f64 / b_est(&identity_ramp()) as f64
+        estimated as f64 / b_est(&IDENTITY_RAMP) as f64
     }
 }
 
@@ -254,7 +267,7 @@ fn ramp_diff(a: &Ramp, b: &Ramp) -> u64 {
 fn estimate_kelvin(ramp: &Ramp) -> u32 {
     let ratio = dim_ratio(ramp);
     let mut best = MAX_KELVIN;
-    let mut best_diff = ramp_diff(ramp, &scale(&identity_ramp(), ratio));
+    let mut best_diff = ramp_diff(ramp, &scale(&IDENTITY_RAMP, ratio));
     for k in PRESET_KELVINS {
         let (r, g, b) = kelvin_to_rgb(*k);
         let diff = ramp_diff(ramp, &scale(&build_ramp(r, g, b), ratio));
@@ -269,6 +282,10 @@ fn estimate_kelvin(ramp: &Ramp) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn identity_ramp() -> &'static Ramp {
+        &IDENTITY_RAMP
+    }
 
     fn approx(a: f64, b: f64) -> bool {
         (a - b).abs() < 0.01
@@ -341,7 +358,7 @@ mod tests {
 
     #[test]
     fn estimate_identity_ramp_is_6500() {
-        assert_eq!(estimate_kelvin(&identity_ramp()), 6500);
+        assert_eq!(estimate_kelvin(identity_ramp()), 6500);
     }
 
     #[test]
@@ -354,8 +371,8 @@ mod tests {
 
     #[test]
     fn b_est_reads_brightness_from_a_ramp() {
-        assert_eq!(b_est(&identity_ramp()), 99);
-        assert_eq!(b_est(&scale(&identity_ramp(), 0.5)), 49);
+        assert_eq!(b_est(identity_ramp()), 99);
+        assert_eq!(b_est(&scale(identity_ramp(), 0.5)), 49);
         assert_eq!(b_est(&build_ramp(1.0, 0.5, 0.5)), 99);
         let black = Ramp {
             red: [0; 256],
@@ -367,14 +384,14 @@ mod tests {
 
     #[test]
     fn dim_ratio_is_one_at_full_scale_and_zero_for_black() {
-        assert_eq!(dim_ratio(&identity_ramp()), 1.0);
+        assert_eq!(dim_ratio(identity_ramp()), 1.0);
         let black = Ramp {
             red: [0; 256],
             green: [0; 256],
             blue: [0; 256],
         };
         assert_eq!(dim_ratio(&black), 1.0);
-        let half = scale(&identity_ramp(), 0.5);
+        let half = scale(identity_ramp(), 0.5);
         assert!((dim_ratio(&half) - 0.494_949).abs() < 0.0001);
     }
 
@@ -413,6 +430,6 @@ mod tests {
 
     #[test]
     fn estimate_a_dimmed_identity_ramp_is_6500() {
-        assert_eq!(estimate_kelvin(&scale(&identity_ramp(), 0.5)), 6500);
+        assert_eq!(estimate_kelvin(&scale(identity_ramp(), 0.5)), 6500);
     }
 }
