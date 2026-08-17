@@ -1109,6 +1109,7 @@ fn monitor_unknown_monitor_is_error() {
 fn monitor_detach_all_skips_primary_and_detaches_secondary() {
     let out = rmod(&["monitor", "detach", "-m", "all", "-y"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stderr(&out).is_empty(), "stderr: {}", stderr(&out));
     assert!(stdout(&out).contains(
         "skipped RMOD Fake Monitor 1 [:1], the primary display cannot be detached"
     ));
