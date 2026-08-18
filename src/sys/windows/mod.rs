@@ -69,6 +69,17 @@ pub fn list_detailed() -> Result<Vec<Monitor>, String> {
     query::list_detailed()
 }
 
+/// Lists every display (including detached) with full EDID information and supported modes.
+///
+/// # Errors
+/// Returns `Err` when no displays are found or EDID reading fails.
+pub fn list_all_detailed() -> Result<Vec<Monitor>, String> {
+    if fake::enabled() {
+        return fake::list_detailed();
+    }
+    query::list_all_detailed()
+}
+
 /// Returns every supported mode for a device by name, sorted ascending by
 /// resolution then refresh rate.
 pub fn caps_all_modes_for_device(name: &str) -> Vec<Mode> {

@@ -55,6 +55,11 @@ pub(crate) const LS_FLAGS: &[Flag] = &[
         example: &["list", "--short"],
     },
     Flag {
+        flag: "--all",
+        doc: "Show all monitors including detached",
+        example: &["list", "--all"],
+    },
+    Flag {
         flag: "-h, --help",
         doc: "Print help",
         example: &["list", "--help"],

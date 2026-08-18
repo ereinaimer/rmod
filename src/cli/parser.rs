@@ -99,6 +99,7 @@ pub enum TempAction {
 pub enum Command {
     List {
         short: bool,
+        all: bool,
     },
     Layout {
         action: LayoutAction,
@@ -251,12 +252,24 @@ mod tests {
 
     #[test]
     fn ls_command() {
-        assert_eq!(parse(&["ls"]), Ok(Command::List { short: false }));
+        assert_eq!(
+            parse(&["ls"]),
+            Ok(Command::List {
+                short: false,
+                all: false
+            })
+        );
     }
 
     #[test]
     fn list_command() {
-        assert_eq!(parse(&["list"]), Ok(Command::List { short: false }));
+        assert_eq!(
+            parse(&["list"]),
+            Ok(Command::List {
+                short: false,
+                all: false
+            })
+        );
     }
 
     #[test]

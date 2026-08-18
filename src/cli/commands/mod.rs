@@ -104,11 +104,11 @@ pub fn run(command: Command) -> i32 {
             println!("{}", version());
             0
         }
-        Command::List { short } => {
+        Command::List { short, all } => {
             if short {
                 run_list_short()
             } else {
-                run_list()
+                run_list(all)
             }
         }
         Command::Layout { action, yes } => run_layout(action, yes),
@@ -131,6 +131,7 @@ pub fn run(command: Command) -> i32 {
 
 /// Resolves a MonitorTarget to a monitor index (1-based) for backend calls;
 /// the primary display is `None`. An unknown monitor id is a hard error.
+/// Uses `enumerate_devices` (attached displays only).
 ///
 /// # Errors
 /// Returns `Err` when an id matches no attached display.

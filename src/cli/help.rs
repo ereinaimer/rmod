@@ -562,6 +562,7 @@ Alias: ls
 
 Options:
   --short     Compact one-line output
+  --all       Show all monitors including detached
   -h, --help  Print help
 
 Examples:

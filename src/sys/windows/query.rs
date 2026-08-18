@@ -281,7 +281,19 @@ pub fn resolve_device(monitor: Option<u32>, names: &[String]) -> Result<(usize, 
                     && mode.dm_position.y == 0
                 {
                     return Ok((i, name.as_str()));
-                }
+#[test]
+    fn test_get_edid_name() {
+        let names = enumerate_devices();
+        assert!(!names.is_empty(), "Should have at least one display");
+
+        for name in names {
+            let edid_name = get_edid_name(&name);
+            println!("Device: {}, EDID name: {:?}", name, edid_name);
+            // Just verify it doesn't panic
+            let _ = edid_name;
+        }
+    }
+}
             }
             names
                 .first()
@@ -449,6 +461,19 @@ fn monitor_model_id(device_name: &str) -> Option<String> {
 /// Lists every display with full EDID data and supported modes.
 pub fn list_detailed() -> Result<Vec<Monitor>, String> {
     let names = enumerate_devices();
+    list_detailed_from_names(names)
+}
+
+/// Lists every display (including detached) with full EDID data and supported modes.
+pub fn list_all_detailed() -> Result<Vec<Monitor>, String> {
+    let names = enumerate_all_devices();
+    if names.is_empty() {
+        return Err("no displays found, connect a display and try again".to_string());
+    }
+    list_detailed_from_names(names)
+}
+
+fn list_detailed_from_names(names: Vec<String>) -> Result<Vec<Monitor>, String> {
     if names.is_empty() {
         return Err("no displays found, connect a display and try again".to_string());
     }

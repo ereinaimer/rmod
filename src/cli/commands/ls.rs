@@ -79,8 +79,13 @@ fn mode_line(width: u32, height: u32, rates: &str, res_width: usize) -> String {
 }
 
 /// Lists every display with full EDID information and supported modes.
-pub(super) fn run_list() -> i32 {
-    match windows::list_detailed() {
+pub(super) fn run_list(all: bool) -> i32 {
+    let monitors = if all {
+        windows::list_all_detailed()
+    } else {
+        windows::list_detailed()
+    };
+    match monitors {
         Ok(mut monitors) => {
             monitors.sort_by(|a, b| {
                 // Primary first, then by fingerprint
@@ -94,7 +99,7 @@ pub(super) fn run_list() -> i32 {
                 if i > 0 {
                     println!(); // blank line between monitors
                 }
-                print_monitor(m);
+                print_monitor_with_detached(m, all);
             }
             0
         }
@@ -133,9 +138,14 @@ pub(super) fn run_list_short() -> i32 {
     }
 }
 
-/// Prints a single monitor's detailed information.
-fn print_monitor(m: &crate::sys::windows::Monitor) {
-    println!("{}", m.name);
+/// Prints a single monitor's detailed information, optionally showing detached status.
+fn print_monitor_with_detached(m: &crate::sys::windows::Monitor, show_detached: bool) {
+    let detached = if show_detached && m.width == 0 {
+        " (detached)"
+    } else {
+        ""
+    };
+    println!("{}{}", m.name, detached);
     println!(
         "  Primary:         {}",
         if m.is_primary { "true" } else { "false" }
@@ -204,6 +214,7 @@ fn print_monitor(m: &crate::sys::windows::Monitor) {
 pub(crate) fn parse_ls(_cmd: &str, args: &[impl AsRef<str>]) -> Result<Command, String> {
     let mut i = 1;
     let mut short = false;
+    let mut all = false;
 
     while let Some(arg) = args.get(i) {
         match arg.as_ref() {
@@ -217,6 +228,10 @@ pub(crate) fn parse_ls(_cmd: &str, args: &[impl AsRef<str>]) -> Result<Command, 
                 short = true;
                 i += 1;
             }
+            "--all" => {
+                all = true;
+                i += 1;
+            }
             other => {
                 return Err(format!(
                     "unexpected argument {} for list. use --help",
@@ -226,7 +241,7 @@ pub(crate) fn parse_ls(_cmd: &str, args: &[impl AsRef<str>]) -> Result<Command, 
         }
     }
 
-    Ok(Command::List { short })
+    Ok(Command::List { short, all })
 }
 
 #[cfg(test)]
