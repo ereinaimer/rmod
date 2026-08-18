@@ -14,6 +14,7 @@ use crate::sys::windows::{
 
 use super::{
     confirm_or_revert_attach, confirm_or_revert_attach_all, describe_attach, resolve_target,
+    resolve_target_all,
 };
 
 /// Runs the `monitor` command with the parsed action and target.
@@ -54,7 +55,11 @@ pub(super) fn run_monitor(action: MonitorAction, monitor: MonitorTarget, yes: bo
 fn run_attach(action: MonitorAction, monitor: MonitorTarget, yes: bool) -> i32 {
     match monitor {
         MonitorTarget::Id(_) | MonitorTarget::Primary | MonitorTarget::Index(_) => {
-            let monitor_idx = match resolve_target(&monitor) {
+            let monitor_idx = match action {
+                MonitorAction::Enable => resolve_target_all(&monitor),
+                _ => resolve_target(&monitor),
+            };
+            let monitor_idx = match monitor_idx {
                 Ok(idx) => idx,
                 Err(e) => {
                     eprintln!("error: {e}");

@@ -131,6 +131,34 @@ pub fn run(command: Command) -> i32 {
 
 /// Resolves a MonitorTarget to a monitor index (1-based) for backend calls;
 /// the primary display is `None`. An unknown monitor id is a hard error.
+/// Uses `enumerate_all_devices` to include detached monitors.
+///
+/// # Errors
+/// Returns `Err` when an id matches no display (attached or detached).
+pub fn resolve_target_all(target: &MonitorTarget) -> Result<Option<u32>, String> {
+    match target {
+        MonitorTarget::Primary => Ok(None),
+        MonitorTarget::All => unreachable!(),
+        MonitorTarget::Index(n) => crate::sys::windows::resolve_device(
+            Some(*n),
+            &crate::sys::windows::enumerate_all_devices(),
+        )
+        .map(|(index, _)| Some(index as u32 + 1)),
+        MonitorTarget::Id(id) => {
+            crate::sys::windows::resolve_by_id(id)
+                .map(Some)
+                .ok_or_else(|| {
+                    format!(
+                        "monitor with id '{id}' not found. connected: {}",
+                        crate::sys::windows::connected_displays_list()
+                    )
+                })
+        }
+    }
+}
+
+/// Resolves a MonitorTarget to a monitor index (1-based) for backend calls;
+/// the primary display is `None`. An unknown monitor id is a hard error.
 /// Uses `enumerate_devices` (attached displays only).
 ///
 /// # Errors
