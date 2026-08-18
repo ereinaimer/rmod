@@ -164,7 +164,18 @@ pub(crate) fn friendly_name(device: &[u16]) -> Option<String> {
 /// back to the device name) plus the 1-based monitor number, e.g.
 /// `Generic PnP Monitor [:1]`.
 pub(crate) fn display_label(name: &str, number: u32) -> String {
-    let friendly = friendly_name(&encode_wide(name)).unwrap_or_else(|| name.to_string());
+    display_label_with_edid(name, number, None)
+}
+
+/// Human-readable display label with optional EDID name override.
+/// If `edid_name` is provided, it's used instead of the friendly name.
+pub(crate) fn display_label_with_edid(
+    name: &str,
+    number: u32,
+    edid_name: Option<String>,
+) -> String {
+    let friendly = edid_name
+        .unwrap_or_else(|| friendly_name(&encode_wide(name)).unwrap_or_else(|| name.to_string()));
     format!("{friendly} [:{number}]")
 }
 
@@ -281,19 +292,7 @@ pub fn resolve_device(monitor: Option<u32>, names: &[String]) -> Result<(usize, 
                     && mode.dm_position.y == 0
                 {
                     return Ok((i, name.as_str()));
-#[test]
-    fn test_get_edid_name() {
-        let names = enumerate_devices();
-        assert!(!names.is_empty(), "Should have at least one display");
-
-        for name in names {
-            let edid_name = get_edid_name(&name);
-            println!("Device: {}, EDID name: {:?}", name, edid_name);
-            // Just verify it doesn't panic
-            let _ = edid_name;
-        }
-    }
-}
+                }
             }
             names
                 .first()

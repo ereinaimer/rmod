@@ -159,7 +159,14 @@ pub fn set(
 ) -> Result<ApplyOutcome, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
-    let display = query::display_label(name, index as u32 + 1);
+
+    // Get the full monitor info (including fingerprint) for display label
+    let monitors = query::list_detailed()?;
+    let monitor_info = monitors.iter().find(|m| m.device_name == name);
+    let display = monitor_info
+        .map(|m| format!("{} [:{}]", m.name, m.number))
+        .unwrap_or_else(|| query::display_label_with_edid(name, index as u32 + 1, None));
+
     let base = query::current_mode(name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
     let (width, height) = effective_dims(width, height, orientation, &base);
     let modes = capabilities::enumerate_modes(name);

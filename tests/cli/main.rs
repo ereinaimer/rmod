@@ -1,5 +1,6 @@
 mod common;
 mod completions;
+mod edid_name;
 mod errors;
 mod help;
 mod layout;
