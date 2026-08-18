@@ -98,26 +98,70 @@ pub(super) fn run_list() -> i32 {
     }
 }
 
+/// Lists every display in compact one-line format.
+pub(super) fn run_list_short() -> i32 {
+    match windows::list_detailed() {
+        Ok(mut monitors) => {
+            monitors.sort_by(|a, b| {
+                // Primary first, then by fingerprint
+                match (a.is_primary, b.is_primary) {
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    _ => a.fingerprint.cmp(&b.fingerprint),
+                }
+            });
+            for m in monitors {
+                let primary = if m.is_primary { "  (primary)" } else { "" };
+                println!(
+                    "# {}: {} [{}]  {}x{}@{}Hz{}",
+                    m.number, m.name, m.fingerprint, m.width, m.height, m.refresh, primary
+                );
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            2
+        }
+    }
+}
+
 /// Prints a single monitor's detailed information.
 fn print_monitor(m: &crate::sys::windows::Monitor) {
     println!("{}", m.name);
-    println!("  Primary:         {}", if m.is_primary { "true" } else { "false" });
+    println!(
+        "  Primary:         {}",
+        if m.is_primary { "true" } else { "false" }
+    );
     println!("  Manufacturer:    {}", m.manufacturer);
-    println!("  Current:         {}x{} @ {}Hz", m.width, m.height, m.refresh);
-    println!("  Native:          {}x{} @ {}Hz", m.native_width, m.native_height, m.native_refresh);
+    println!(
+        "  Current:         {}x{} @ {}Hz",
+        m.width, m.height, m.refresh
+    );
+    println!(
+        "  Native:          {}x{} @ {}Hz",
+        m.native_width, m.native_height, m.native_refresh
+    );
     println!("  Physical:        {}", physical_line(m.physical_size_cm));
-    println!("  DPI:             {}", dpi_line(m.dpi_physical, m.log_pixels));
+    println!(
+        "  DPI:             {}",
+        dpi_line(m.dpi_physical, m.log_pixels)
+    );
     println!("  Color Depth:     {}", color_depth(m.bits_per_pel));
     println!("  Orientation:     {}", orientation(m.orientation));
     println!("  Connector:       {}", m.connector.unwrap_or("Unknown"));
-    println!("  Manufactured:    Week {}, {}", m.manufactured_week, m.manufactured_year);
+    println!(
+        "  Manufactured:    Week {}, {}",
+        m.manufactured_week, m.manufactured_year
+    );
     println!("  Gamma:           {}", gamma_line(m.gamma));
     println!("  HDR:             {}", hdr_label(m.hdr.as_ref()));
     println!("  Color Gamut:     {}", gamut_line(m.gamut));
     println!("  Supported:");
 
     // Group modes by resolution
-    let mut modes_by_res: std::collections::HashMap<(u32, u32), Vec<u32>> = std::collections::HashMap::new();
+    let mut modes_by_res: std::collections::HashMap<(u32, u32), Vec<u32>> =
+        std::collections::HashMap::new();
     for mode in windows::caps_all_modes_for_device(&m.device_name) {
         modes_by_res
             .entry((mode.width, mode.height))
@@ -151,21 +195,30 @@ fn print_monitor(m: &crate::sys::windows::Monitor) {
 }
 
 pub(crate) fn parse_ls(_cmd: &str, args: &[impl AsRef<str>]) -> Result<Command, String> {
-    let i = 1;
+    let mut i = 1;
+    let mut short = false;
 
-    if let Some(arg) = args.get(i) {
-        return match arg.as_ref() {
-            "--help" => Ok(Command::Help {
-                topic: Some(HelpTopic::List),
-            }),
-            other => Err(format!(
-                "unexpected argument {} for list. use --help",
-                other
-            )),
-        };
+    while let Some(arg) = args.get(i) {
+        match arg.as_ref() {
+            "--help" => {
+                return Ok(Command::Help {
+                    topic: Some(HelpTopic::List),
+                });
+            }
+            "--short" => {
+                short = true;
+                i += 1;
+            }
+            other => {
+                return Err(format!(
+                    "unexpected argument {} for list. use --help",
+                    other
+                ));
+            }
+        }
     }
 
-    Ok(Command::List)
+    Ok(Command::List { short })
 }
 
 #[cfg(test)]
@@ -194,7 +247,10 @@ mod tests {
     #[test]
     fn dpi_line_joins_physical_and_logical() {
         assert_eq!(dpi_line(Some((82, 82)), 96), "82×82 physical / 96 logical");
-        assert_eq!(dpi_line(Some((92, 92)), 144), "92×92 physical / 144 logical");
+        assert_eq!(
+            dpi_line(Some((92, 92)), 144),
+            "92×92 physical / 144 logical"
+        );
     }
 
     #[test]
@@ -239,7 +295,10 @@ mod tests {
 
     #[test]
     fn mode_line_aligns_at_to_longest_resolution() {
-        assert_eq!(mode_line(1920, 1080, "60Hz, 144Hz", 9), "1920x1080 @ 60Hz, 144Hz");
+        assert_eq!(
+            mode_line(1920, 1080, "60Hz, 144Hz", 9),
+            "1920x1080 @ 60Hz, 144Hz"
+        );
         assert_eq!(mode_line(1280, 720, "60Hz", 9), "1280x720  @ 60Hz");
         assert_eq!(mode_line(640, 480, "120Hz", 9), "640x480   @ 120Hz");
     }

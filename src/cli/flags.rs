@@ -28,6 +28,11 @@ pub(crate) const TOP_COMMANDS: &[(&str, &str)] = &[
     ("layout", "Show the monitor arrangement or move monitors"),
     ("monitor", "Attach, detach, sleep, or wake monitors"),
     ("temp", "Set or show the display color temperature"),
+    (
+        "view",
+        "Switch between mirror, extend, project, and single display modes",
+    ),
+    ("completions", "Output PowerShell tab-completion script"),
 ];
 
 pub(crate) const TOP_FLAGS: &[Flag] = &[
@@ -43,11 +48,18 @@ pub(crate) const TOP_FLAGS: &[Flag] = &[
     },
 ];
 
-pub(crate) const LS_FLAGS: &[Flag] = &[Flag {
-    flag: "--help",
-    doc: "Print help",
-    example: &["list", "--help"],
-}];
+pub(crate) const LS_FLAGS: &[Flag] = &[
+    Flag {
+        flag: "--short",
+        doc: "Compact one-line output",
+        example: &["list", "--short"],
+    },
+    Flag {
+        flag: "--help",
+        doc: "Print help",
+        example: &["list", "--help"],
+    },
+];
 
 pub(crate) const SET_FLAGS: &[Flag] = &[
     Flag {
@@ -140,6 +152,30 @@ pub(crate) const LAYOUT_FLAGS: &[Flag] = &[
     },
 ];
 
+pub(crate) const VIEW_FLAGS: &[Flag] = &[
+    Flag {
+        flag: "-m, --monitor",
+        doc: "Monitor ID or number for single mode (default: primary)",
+        example: &["view", "single", "-m", "2"],
+    },
+    Flag {
+        flag: "-y, --yes",
+        doc: "Skip the confirmation prompt",
+        example: &["view", "mirror", "-y"],
+    },
+    Flag {
+        flag: "--help",
+        doc: "Print help",
+        example: &["view", "--help"],
+    },
+];
+
+pub(crate) const COMPLETIONS_FLAGS: &[Flag] = &[Flag {
+    flag: "--help",
+    doc: "Print help",
+    example: &["completions", "--help"],
+}];
+
 pub(crate) const MONITOR_FLAGS: &[Flag] = &[
     Flag {
         flag: "-m, --monitor",
@@ -174,12 +210,12 @@ pub(crate) const BRIGHTNESS_FLAGS: &[Flag] = &[
         doc: "Composite modes: min (barely lit), max (hardware 100 + gamma 100), boost (hardware 100 + overdriven gamma)",
         example: &["monitor", "brightness", "min", "-m", "2"],
     },
-Flag {
-            flag: "--help",
-            doc: "Print help",
-            example: &["monitor", "brightness", "--help"],
-        },
-    ];
+    Flag {
+        flag: "--help",
+        doc: "Print help",
+        example: &["monitor", "brightness", "--help"],
+    },
+];
 
 pub(crate) const CONTRAST_FLAGS: &[Flag] = &[
     Flag {

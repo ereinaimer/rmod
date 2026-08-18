@@ -5,8 +5,9 @@
 //! `flags`; this module only renders them.
 
 use crate::cli::flags::{
-    BRIGHTNESS_FLAGS, CONTRAST_FLAGS, Flag, LAYOUT_FLAGS, LS_FLAGS, MONITOR_FLAGS, ORIENTATIONS, SET_FLAGS,
-    TEMP_FLAGS, TEMP_PRESETS, TOP_COMMANDS, TOP_FLAGS,
+    BRIGHTNESS_FLAGS, COMPLETIONS_FLAGS, CONTRAST_FLAGS, Flag, LAYOUT_FLAGS, LS_FLAGS,
+    MONITOR_FLAGS, ORIENTATIONS, SET_FLAGS, TEMP_FLAGS, TEMP_PRESETS, TOP_COMMANDS, TOP_FLAGS,
+    VIEW_FLAGS,
 };
 
 /// Top-level help page: command index, global options, and examples.
@@ -124,6 +125,148 @@ Show the monitor arrangement, place monitors, or set the primary display
         usage = section("Usage:"),
         options = section("Options:"),
         option_rows = options(LAYOUT_FLAGS),
+        examples = section("Examples:"),
+    )
+}
+
+/// Help page for the `view` command.
+pub fn view() -> String {
+    format!(
+        "rmod view
+Switch between mirror, extend, project, and single display modes
+
+{usage}
+  rmod view <SUBCOMMAND> [OPTIONS]
+
+{subcommands}
+  mirror   Clone all displays: same position (0,0), same resolution (lowest common)
+  extend   Restore extended desktop: side-by-side, auto-arranged left-to-right
+  project  Second screen only: disable primary, keep external monitor(s) enabled
+  single   PC screen only: enable only one monitor, disable all others
+
+{options}
+{option_rows}
+
+{examples}
+  rmod view mirror
+  rmod view extend
+  rmod view project
+  rmod view single -m 2",
+        usage = section("Usage:"),
+        subcommands = section("Subcommands:"),
+        options = section("Options:"),
+        option_rows = options(VIEW_FLAGS),
+        examples = section("Examples:"),
+    )
+}
+
+/// Help page for `rmod view mirror`.
+pub fn view_mirror_help() -> String {
+    format!(
+        "rmod view mirror
+Clone all displays: same position (0,0), same resolution (lowest common denominator)
+
+{usage}
+  rmod view mirror [OPTIONS]
+
+{options}
+{option_rows}
+
+{examples}
+  rmod view mirror
+  rmod view mirror -y",
+        usage = section("Usage:"),
+        options = section("Options:"),
+        option_rows = options(VIEW_FLAGS),
+        examples = section("Examples:"),
+    )
+}
+
+/// Help page for `rmod view extend`.
+pub fn view_extend_help() -> String {
+    format!(
+        "rmod view extend
+Restore extended desktop: side-by-side positions (auto-arrange left-to-right by monitor number)
+
+{usage}
+  rmod view extend [OPTIONS]
+
+{options}
+{option_rows}
+
+{examples}
+  rmod view extend
+  rmod view extend -y",
+        usage = section("Usage:"),
+        options = section("Options:"),
+        option_rows = options(VIEW_FLAGS),
+        examples = section("Examples:"),
+    )
+}
+
+/// Help page for `rmod view project`.
+pub fn view_project_help() -> String {
+    format!(
+        "rmod view project
+Second screen only: disable primary (laptop), keep external monitor(s) enabled
+
+{usage}
+  rmod view project [OPTIONS]
+
+{options}
+{option_rows}
+
+{examples}
+  rmod view project
+  rmod view project -y",
+        usage = section("Usage:"),
+        options = section("Options:"),
+        option_rows = options(VIEW_FLAGS),
+        examples = section("Examples:"),
+    )
+}
+
+/// Help page for `rmod view single`.
+pub fn view_single_help() -> String {
+    format!(
+        "rmod view single
+PC screen only: enable only one monitor, disable all others
+
+{usage}
+  rmod view single -m <MONITOR> [OPTIONS]
+
+{options}
+{option_rows}
+
+{examples}
+  rmod view single -m 2
+  rmod view single -m a1b2c3d4 -y",
+        usage = section("Usage:"),
+        options = section("Options:"),
+        option_rows = options(VIEW_FLAGS),
+        examples = section("Examples:"),
+    )
+}
+
+/// Help page for the `completions` command.
+pub fn completions() -> String {
+    format!(
+        "rmod completions
+Output PowerShell tab-completion script
+
+{usage}
+  rmod completions [OPTIONS]
+
+{options}
+{option_rows}
+
+{examples}
+  rmod completions
+  rmod completions >> $PROFILE
+  rmod completions | Out-String | Invoke-Expression",
+        usage = section("Usage:"),
+        options = section("Options:"),
+        option_rows = options(COMPLETIONS_FLAGS),
         examples = section("Examples:"),
     )
 }
@@ -367,11 +510,13 @@ Usage:
   rmod [COMMAND] [OPTIONS]
 
 Commands:
-  list     List displays and their current settings
-  set      Apply resolution, refresh rate, and orientation
-  layout   Show the monitor arrangement or move monitors
-  monitor  Attach, detach, sleep, or wake monitors
-  temp     Set or show the display color temperature
+  list         List displays and their current settings
+  set          Apply resolution, refresh rate, and orientation
+  layout       Show the monitor arrangement or move monitors
+  monitor      Attach, detach, sleep, or wake monitors
+  temp         Set or show the display color temperature
+  view         Switch between mirror, extend, project, and single display modes
+  completions  Output PowerShell tab-completion script
 
 Options:
   --help     Print help
@@ -416,7 +561,8 @@ Usage:
 Alias: ls
 
 Options:
-  --help  Print help
+  --short  Compact one-line output
+  --help   Print help
 
 Examples:
   rmod list";

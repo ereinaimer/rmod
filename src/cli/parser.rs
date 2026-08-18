@@ -18,6 +18,12 @@ pub enum HelpTopic {
     Set,
     Layout,
     Temp,
+    View {
+        /// The action whose page to show; `None` is the top-level page.
+        action: Option<ViewAction>,
+    },
+    #[allow(dead_code)]
+    Completions,
     Monitor {
         /// The action whose page to show; `None` is the top-level page.
         action: Option<MonitorAction>,
@@ -68,6 +74,15 @@ pub enum MonitorAction {
     ContrastReset,
 }
 
+/// What the `view` command should do.
+#[derive(Debug, PartialEq, Clone)]
+pub enum ViewAction {
+    Mirror,
+    Extend,
+    Project,
+    Single { monitor: MonitorTarget },
+}
+
 /// What the `temp` command should do.
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum TempAction {
@@ -82,7 +97,9 @@ pub enum TempAction {
 /// Every top-level command rmod accepts.
 #[derive(Debug, PartialEq)]
 pub enum Command {
-    List,
+    List {
+        short: bool,
+    },
     Layout {
         action: LayoutAction,
         yes: bool,
@@ -101,6 +118,13 @@ pub enum Command {
     Temp {
         action: TempAction,
         monitor: MonitorTarget,
+    },
+    View {
+        action: ViewAction,
+        yes: bool,
+    },
+    Completions {
+        help: bool,
     },
     Help {
         topic: Option<HelpTopic>,
@@ -183,6 +207,8 @@ pub fn parse_from<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
         "set" => crate::cli::commands::set::parse_set(args),
         "monitor" => crate::cli::commands::monitor::parse_monitor(args),
         "temp" => crate::cli::commands::temp::parse_temp(args),
+        "view" => crate::cli::commands::view::parse_view(cmd_str, args),
+        "completions" => crate::cli::commands::completions::parse_completions("completions", args),
         _ => Err(format!(
             "unknown command {}. run rmod --help to list commands",
             cmd_str
@@ -238,12 +264,12 @@ mod tests {
 
     #[test]
     fn ls_command() {
-        assert_eq!(parse(&["ls"]), Ok(Command::List));
+        assert_eq!(parse(&["ls"]), Ok(Command::List { short: false }));
     }
 
     #[test]
     fn list_command() {
-        assert_eq!(parse(&["list"]), Ok(Command::List));
+        assert_eq!(parse(&["list"]), Ok(Command::List { short: false }));
     }
 
     #[test]
@@ -397,10 +423,7 @@ mod tests {
             (&["temp", "bogus"], "parse_temp invalid value"),
             (&["temp", "9000"], "parse_temp out-of-range value"),
             (&["temp", "-m"], "parse_temp -m missing value"),
-            (
-                &["temp", "3000", "4000"],
-                "parse_temp second positional",
-            ),
+            (&["temp", "3000", "4000"], "parse_temp second positional"),
             (
                 &["monitor", "brightness", "min", "-v", "ddc"],
                 "parse_monitor_brightness keyword plus backend",
