@@ -82,7 +82,14 @@ fn mode_line(width: u32, height: u32, rates: &str, res_width: usize) -> String {
 pub(super) fn run_list() -> i32 {
     match windows::list_detailed() {
         Ok(mut monitors) => {
-            monitors.sort_by(|a, b| a.fingerprint.cmp(&b.fingerprint));
+            monitors.sort_by(|a, b| {
+                // Primary first, then by fingerprint
+                match (a.is_primary, b.is_primary) {
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    _ => a.fingerprint.cmp(&b.fingerprint),
+                }
+            });
             for (i, m) in monitors.iter().enumerate() {
                 if i > 0 {
                     println!(); // blank line between monitors
