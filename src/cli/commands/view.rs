@@ -164,11 +164,11 @@ fn run_extend(_yes: bool) -> i32 {
     }
 }
 
-/// Project: disable primary (laptop), keep external monitor(s) enabled.
+/// Project: move desktop to external monitor (Second screen only).
 fn run_project(yes: bool) -> i32 {
     match windows::list_detailed() {
         Ok(monitors) => {
-            // Find primary monitor (at 0,0)
+            // Find primary monitor (laptop)
             let primary = monitors.iter().find(|m| m.is_primary);
             let primary = match primary {
                 Some(p) => p,
@@ -178,20 +178,38 @@ fn run_project(yes: bool) -> i32 {
                 }
             };
 
-            // Check if there are external monitors
+            // Find external monitor(s)
             let externals: Vec<_> = monitors.iter().filter(|m| !m.is_primary).collect();
             if externals.is_empty() {
                 eprintln!("error: no external monitor to enable");
                 return 2;
             }
 
-            // Disable primary
+            // Pick the best external monitor (highest resolution)
+            let external = externals.iter().max_by_key(|m| m.width * m.height).unwrap();
+
+            // Promote external to primary (move to 0,0)
+            let names = windows::enumerate_devices();
+            match windows::make_main(external.number, &names) {
+                Ok(windows::MainOutcome::Unchanged(_)) => {
+                    println!("{} is already the main display", external.name);
+                }
+                Ok(windows::MainOutcome::Applied(change)) => {
+                    println!("{} is now the main display", change.display);
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 2;
+                }
+            }
+
+            // Now disable the laptop (which is no longer primary)
             match disable(Some(primary.number)) {
-                Ok(AttachOutcome::Unchanged(change)) => {
+                Ok(windows::attach::AttachOutcome::Unchanged(change)) => {
                     println!("{} is already detached", change.display);
                     0
                 }
-                Ok(AttachOutcome::Applied(change)) => {
+                Ok(windows::attach::AttachOutcome::Applied(change)) => {
                     println!("detached {}", change.display);
                     confirm_or_revert_attach_all(vec![change], yes)
                 }
