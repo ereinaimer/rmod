@@ -1,4 +1,5 @@
 mod common;
+mod completions;
 mod errors;
 mod help;
 mod layout;
@@ -6,3 +7,4 @@ mod ls;
 mod monitor;
 mod set;
 mod temp;
+mod view;
