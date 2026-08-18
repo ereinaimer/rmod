@@ -213,12 +213,17 @@ fn scale(ramp: &Ramp, ratio: f64) -> Ramp {
 fn apply_ramp(name: &str, ramp: &Ramp) -> Result<(), String> {
     let device = encode_wide(name);
     let dc = unsafe {
-        CreateDCW(std::ptr::null(), device.as_ptr(), std::ptr::null(), std::ptr::null())
+        CreateDCW(
+            std::ptr::null(),
+            device.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+        )
     };
     if dc == 0 {
         return Err(format!("{name} does not support gamma ramp adjustment"));
     }
-let ok = unsafe { SetDeviceGammaRamp(dc, ramp.red.as_ptr() as *mut u16) };
+    let ok = unsafe { SetDeviceGammaRamp(dc, ramp.red.as_ptr() as *mut u16) };
     unsafe { DeleteDC(dc) };
     if ok == 0 {
         return Err(format!("{name} does not support gamma ramp adjustment"));
@@ -234,13 +239,18 @@ let ok = unsafe { SetDeviceGammaRamp(dc, ramp.red.as_ptr() as *mut u16) };
 fn read_ramp(name: &str) -> Result<Ramp, String> {
     let device = encode_wide(name);
     let dc = unsafe {
-        CreateDCW(std::ptr::null(), device.as_ptr(), std::ptr::null(), std::ptr::null())
+        CreateDCW(
+            std::ptr::null(),
+            device.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+        )
     };
     if dc == 0 {
         return Err(format!("{name} does not support gamma ramp adjustment"));
     }
     let mut ramp: Ramp = unsafe { std::mem::zeroed() };
-let ok = unsafe { GetDeviceGammaRamp(dc, ramp.red.as_mut_ptr()) };
+    let ok = unsafe { GetDeviceGammaRamp(dc, ramp.red.as_mut_ptr()) };
     unsafe { DeleteDC(dc) };
     if ok == 0 {
         return Err(format!("{name} does not support gamma ramp adjustment"));
@@ -348,9 +358,11 @@ mod tests {
         for k in PRESET_KELVINS {
             let (r, g, b) = kelvin_to_rgb(*k);
             let ramp = build_ramp(r, g, b);
-            for (label, channel) in
-                [("red", &ramp.red), ("green", &ramp.green), ("blue", &ramp.blue)]
-            {
+            for (label, channel) in [
+                ("red", &ramp.red),
+                ("green", &ramp.green),
+                ("blue", &ramp.blue),
+            ] {
                 assert!(channel[255] >= 255 * 256 / 2, "kelvin {k} {label}");
             }
         }
@@ -413,10 +425,7 @@ mod tests {
         let dimmed = scale(&build_ramp(1.0, 0.5, 0.5), 0.5);
         let again = scale(&build_ramp(1.0, 0.5, 0.5), dim_ratio(&dimmed));
         assert_eq!(b_est(&again), b_est(&dimmed));
-        assert_eq!(
-            scale(&build_ramp(1.0, 0.5, 0.5), dim_ratio(&again)),
-            again
-        );
+        assert_eq!(scale(&build_ramp(1.0, 0.5, 0.5), dim_ratio(&again)), again);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use super::common::{SERIAL_A, SERIAL_B, rmod, stderr, stdout};
+use super::common::{rmod, stderr, stdout};
 
 #[test]
 fn view_mirror_help() {

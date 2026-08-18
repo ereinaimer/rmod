@@ -10,10 +10,9 @@
 
 use super::bindings::{
     DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO, DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
-    ERROR_SUCCESS, DisplayConfigGetDeviceInfo, DisplayConfigSourceDeviceName,
-    GetDisplayConfigBufferSizes, QueryDisplayConfig, DisplayConfigDeviceInfoHeader,
-    DisplayConfigGetAdvancedColorInfo, DisplayConfigModeInfo, DisplayConfigPathInfo,
-    QDC_ONLY_ACTIVE_PATHS, wide_to_string,
+    DisplayConfigDeviceInfoHeader, DisplayConfigGetAdvancedColorInfo, DisplayConfigGetDeviceInfo,
+    DisplayConfigModeInfo, DisplayConfigPathInfo, DisplayConfigSourceDeviceName, ERROR_SUCCESS,
+    GetDisplayConfigBufferSizes, QDC_ONLY_ACTIVE_PATHS, QueryDisplayConfig, wide_to_string,
 };
 use super::edid;
 use std::mem;
@@ -107,8 +106,7 @@ pub(crate) fn match_path(device_name: &str) -> Option<DisplayConfigPathInfo> {
     if rc != ERROR_SUCCESS || num_paths == 0 {
         return None;
     }
-    let mut paths: Vec<DisplayConfigPathInfo> =
-        vec![unsafe { mem::zeroed() }; num_paths as usize];
+    let mut paths: Vec<DisplayConfigPathInfo> = vec![unsafe { mem::zeroed() }; num_paths as usize];
     let mut modes: Vec<DisplayConfigModeInfo> = vec![unsafe { mem::zeroed() }; num_modes as usize];
     let rc = unsafe {
         QueryDisplayConfig(
@@ -230,11 +228,7 @@ pub(crate) fn query_connector(device_name: &str) -> Option<&'static str> {
 /// trimming at the first NUL. `None` when the buffer holds no name.
 fn source_name_from_wide(w: &[u16]) -> Option<String> {
     let s = wide_to_string(w);
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.is_empty() { None } else { Some(s) }
 }
 
 /// Extracts `(advancedColorSupported, advancedColorEnabled)` from the
@@ -260,7 +254,9 @@ mod tests {
 
     #[test]
     fn source_name_short_name_trims_at_nul() {
-        let w = [0x0044, 0x0049, 0x0053, 0x0050, 0x004C, 0x0041, 0x0059, 0x0031, 0, 0, 0];
+        let w = [
+            0x0044, 0x0049, 0x0053, 0x0050, 0x004C, 0x0041, 0x0059, 0x0031, 0, 0, 0,
+        ];
         assert_eq!(source_name_from_wide(&w).as_deref(), Some("DISPLAY1"));
     }
 

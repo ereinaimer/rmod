@@ -95,7 +95,7 @@ pub fn set_contrast(
         None => {
             // For reset (value == 100), skip DDC and use gamma to ensure
             // the identity ramp is written (DDC VCP doesn't reflect gamma state).
-            if value <= 100 && value != 100 {
+            if value < 100 {
                 match set_via_ddc(name, value) {
                     Ok(Some(unchanged)) => return Ok(outcome(ContrastBackend::Ddc, unchanged)),
                     Ok(None) => {}
@@ -121,24 +121,16 @@ pub fn reset_contrast(monitor: Option<u32>) -> Result<ContrastOutcome, String> {
     let display = query::display_label(name, index as u32 + 1);
 
     // Force DDC to 100 if supported
-    let ddc_ok = match set_via_ddc(name, 100) {
-        Ok(_) => true,
-        Err(_) => false,
-    };
+    let ddc_ok = set_via_ddc(name, 100).is_ok();
 
     // Force gamma to identity
-    let gamma_ok = match reset_via_gamma(name, &display) {
-        Ok(_) => true,
-        Err(_) => false,
-    };
+    let gamma_ok = reset_via_gamma(name, &display).is_ok();
 
     if !ddc_ok && !gamma_ok {
         return Err(format!("{display} has no contrast control available"));
     }
 
-    let backend = if ddc_ok && gamma_ok {
-        ContrastBackend::Gamma
-    } else if gamma_ok {
+    let backend = if gamma_ok {
         ContrastBackend::Gamma
     } else {
         ContrastBackend::Ddc
@@ -281,6 +273,7 @@ pub(crate) fn c_est(ramp: &[u16; 768]) -> f64 {
 }
 
 // Pivot-stretch each channel around its own entry 128, per-channel.
+#[allow(dead_code)]
 pub(crate) fn stretch_ramp(ramp: &[u16; 768], ratio: f64) -> [u16; 768] {
     let mut out = [0u16; 768];
     for ch in 0..3 {
@@ -369,7 +362,7 @@ mod tests {
     fn stretch_ramp_keeps_each_channels_own_pivot() {
         let mut dimmed = identity();
         for (i, entry) in dimmed[256..512].iter_mut().enumerate() {
-            *entry = (i as u16 * 257 / 2) as u16;
+            *entry = i as u16 * 257 / 2;
         }
         let stretched = stretch_ramp(&dimmed, 0.6);
         assert_eq!(stretched[128], 32896);

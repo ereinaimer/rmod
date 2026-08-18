@@ -43,10 +43,22 @@ pub(crate) fn chromaticity(bytes: &[u8]) -> Option<Chromaticity> {
     let low = bytes.get(27..35)?;
     let coord = |hi: u8, lo: u8| (((hi as u16) << 8) | lo as u16) as f32 / 1024.0;
     let c = Chromaticity {
-        red: (coord(high.0 >> 6, low[0]), coord((high.0 >> 4) & 0x03, low[1])),
-        green: (coord((high.0 >> 2) & 0x03, low[2]), coord(high.0 & 0x03, low[3])),
-        blue: (coord(high.1 >> 6, low[4]), coord((high.1 >> 4) & 0x03, low[5])),
-        white: (coord((high.1 >> 2) & 0x03, low[6]), coord(high.1 & 0x03, low[7])),
+        red: (
+            coord(high.0 >> 6, low[0]),
+            coord((high.0 >> 4) & 0x03, low[1]),
+        ),
+        green: (
+            coord((high.0 >> 2) & 0x03, low[2]),
+            coord(high.0 & 0x03, low[3]),
+        ),
+        blue: (
+            coord(high.1 >> 6, low[4]),
+            coord((high.1 >> 4) & 0x03, low[5]),
+        ),
+        white: (
+            coord((high.1 >> 2) & 0x03, low[6]),
+            coord(high.1 & 0x03, low[7]),
+        ),
     };
     let all_zero = c.red == (0.0, 0.0)
         && c.green == (0.0, 0.0)
@@ -55,11 +67,7 @@ pub(crate) fn chromaticity(bytes: &[u8]) -> Option<Chromaticity> {
     let in_range = [c.red, c.green, c.blue, c.white]
         .iter()
         .all(|(x, y)| (0.0..=1.0).contains(x) && (0.0..=1.0).contains(y));
-    if all_zero || !in_range {
-        None
-    } else {
-        Some(c)
-    }
+    if all_zero || !in_range { None } else { Some(c) }
 }
 
 /// HDR static metadata advertised by a CTA-861 extension block.
@@ -254,7 +262,12 @@ pub(crate) fn parse_edid(bytes: &[u8]) -> Result<EdidData, String> {
 
     let mut serial_descriptor = None;
     let mut product_name = None;
-    for slot in [&bytes[54..72], &bytes[72..90], &bytes[90..108], &bytes[108..126]] {
+    for slot in [
+        &bytes[54..72],
+        &bytes[72..90],
+        &bytes[90..108],
+        &bytes[108..126],
+    ] {
         if let Some((kind, text)) = display_descriptor(slot) {
             match kind {
                 DescriptorKind::Serial => serial_descriptor = Some(text),
@@ -426,17 +439,70 @@ fn edid_fingerprint(bytes: &[u8]) -> String {
 /// dependencies) following FIPS 180-4.
 fn sha256(data: &[u8]) -> [u8; 32] {
     const K: [u32; 64] = [
-        0x428a_2f98, 0x7137_4491, 0xb5c0_fbcf, 0xe9b5_dba5, 0x3956_c25b, 0x59f1_11f1,
-        0x923f_82a4, 0xab1c_5ed5, 0xd807_aa98, 0x1283_5b01, 0x2431_85be, 0x550c_7dc3,
-        0x72be_5d74, 0x80de_b1fe, 0x9bdc_06a7, 0xc19b_f174, 0xe49b_69c1, 0xefbe_4786,
-        0x0fc1_9dc6, 0x240c_a1cc, 0x2de9_2c6f, 0x4a74_84aa, 0x5cb0_a9dc, 0x76f9_88da,
-        0x983e_5152, 0xa831_c66d, 0xb003_27c8, 0xbf59_7fc7, 0xc6e0_0bf3, 0xd5a7_9147,
-        0x06ca_6351, 0x1429_2967, 0x27b7_0a85, 0x2e1b_2138, 0x4d2c_6dfc, 0x5338_0d13,
-        0x650a_7354, 0x766a_0abb, 0x81c2_c92e, 0x9272_2c85, 0xa2bf_e8a1, 0xa81a_664b,
-        0xc24b_8b70, 0xc76c_51a3, 0xd192_e819, 0xd699_0624, 0xf40e_3585, 0x106a_a070,
-        0x19a4_c116, 0x1e37_6c08, 0x2748_774c, 0x34b0_bcb5, 0x391c_0cb3, 0x4ed8_aa4a,
-        0x5b9c_ca4f, 0x682e_6ff3, 0x748f_82ee, 0x78a5_636f, 0x84c8_7814, 0x8cc7_0208,
-        0x90be_fffa, 0xa450_6ceb, 0xbef9_a3f7, 0xc671_78f2,
+        0x428a_2f98,
+        0x7137_4491,
+        0xb5c0_fbcf,
+        0xe9b5_dba5,
+        0x3956_c25b,
+        0x59f1_11f1,
+        0x923f_82a4,
+        0xab1c_5ed5,
+        0xd807_aa98,
+        0x1283_5b01,
+        0x2431_85be,
+        0x550c_7dc3,
+        0x72be_5d74,
+        0x80de_b1fe,
+        0x9bdc_06a7,
+        0xc19b_f174,
+        0xe49b_69c1,
+        0xefbe_4786,
+        0x0fc1_9dc6,
+        0x240c_a1cc,
+        0x2de9_2c6f,
+        0x4a74_84aa,
+        0x5cb0_a9dc,
+        0x76f9_88da,
+        0x983e_5152,
+        0xa831_c66d,
+        0xb003_27c8,
+        0xbf59_7fc7,
+        0xc6e0_0bf3,
+        0xd5a7_9147,
+        0x06ca_6351,
+        0x1429_2967,
+        0x27b7_0a85,
+        0x2e1b_2138,
+        0x4d2c_6dfc,
+        0x5338_0d13,
+        0x650a_7354,
+        0x766a_0abb,
+        0x81c2_c92e,
+        0x9272_2c85,
+        0xa2bf_e8a1,
+        0xa81a_664b,
+        0xc24b_8b70,
+        0xc76c_51a3,
+        0xd192_e819,
+        0xd699_0624,
+        0xf40e_3585,
+        0x106a_a070,
+        0x19a4_c116,
+        0x1e37_6c08,
+        0x2748_774c,
+        0x34b0_bcb5,
+        0x391c_0cb3,
+        0x4ed8_aa4a,
+        0x5b9c_ca4f,
+        0x682e_6ff3,
+        0x748f_82ee,
+        0x78a5_636f,
+        0x84c8_7814,
+        0x8cc7_0208,
+        0x90be_fffa,
+        0xa450_6ceb,
+        0xbef9_a3f7,
+        0xc671_78f2,
     ];
     let bit_len = (data.len() as u64) * 8;
     let mut msg = data.to_vec();
@@ -446,8 +512,14 @@ fn sha256(data: &[u8]) -> [u8; 32] {
     }
     msg.extend_from_slice(&bit_len.to_be_bytes());
     let mut h: [u32; 8] = [
-        0x6a09_e667, 0xbb67_ae85, 0x3c6e_f372, 0xa54f_f53a, 0x510e_527f, 0x9b05_688c,
-        0x1f83_d9ab, 0x5be0_cd19,
+        0x6a09_e667,
+        0xbb67_ae85,
+        0x3c6e_f372,
+        0xa54f_f53a,
+        0x510e_527f,
+        0x9b05_688c,
+        0x1f83_d9ab,
+        0x5be0_cd19,
     ];
     for chunk in msg.chunks(64) {
         let mut w = [0u32; 64];
@@ -591,8 +663,16 @@ mod tests {
         assert!((c.green.1 - 0.60).abs() < 0.001, "green y = {}", c.green.1);
         assert!((c.blue.0 - 0.15).abs() < 0.001, "blue x = {}", c.blue.0);
         assert!((c.blue.1 - 0.06).abs() < 0.001, "blue y = {}", c.blue.1);
-        assert!((c.white.0 - 0.3127).abs() < 0.001, "white x = {}", c.white.0);
-        assert!((c.white.1 - 0.3290).abs() < 0.001, "white y = {}", c.white.1);
+        assert!(
+            (c.white.0 - 0.3127).abs() < 0.001,
+            "white x = {}",
+            c.white.0
+        );
+        assert!(
+            (c.white.1 - 0.3290).abs() < 0.001,
+            "white y = {}",
+            c.white.1
+        );
     }
 
     #[test]
@@ -737,7 +817,10 @@ mod tests {
         let a = area(&tri);
         assert!((a - 0.11205).abs() < 0.0001, "area = {a}");
         let reversed = [(0.150, 0.060), (0.300, 0.600), (0.640, 0.330)];
-        assert!((area(&reversed) - a).abs() < 0.0001, "orientation must not matter");
+        assert!(
+            (area(&reversed) - a).abs() < 0.0001,
+            "orientation must not matter"
+        );
     }
 
     #[test]
@@ -862,9 +945,9 @@ mod tests {
         assert_eq!(
             sha256(b"abc"),
             [
-                0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d,
-                0xae, 0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10,
-                0xff, 0x61, 0xf2, 0x00, 0x15, 0xad,
+                0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae,
+                0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61,
+                0xf2, 0x00, 0x15, 0xad,
             ]
         );
     }

@@ -230,8 +230,7 @@ pub(crate) fn parse_set(args: &[impl AsRef<str>]) -> Result<Command, String> {
                 i += 1;
                 let Some(val) = args.get(i) else {
                     return Err(
-                        "-w, --width needs a value. a number of pixels\ne.g. -w 1920"
-                            .to_string(),
+                        "-w, --width needs a value. a number of pixels\ne.g. -w 1920".to_string(),
                     );
                 };
                 width = Some(val.as_ref().parse::<u32>().map_err(|_| {
@@ -246,8 +245,7 @@ pub(crate) fn parse_set(args: &[impl AsRef<str>]) -> Result<Command, String> {
                 i += 1;
                 let Some(val) = args.get(i) else {
                     return Err(
-                        "-h, --height needs a value. a number of pixels\ne.g. -h 1080"
-                            .to_string(),
+                        "-h, --height needs a value. a number of pixels\ne.g. -h 1080".to_string(),
                     );
                 };
                 height = Some(val.as_ref().parse::<u32>().map_err(|_| {
@@ -338,8 +336,7 @@ pub(crate) fn parse_set(args: &[impl AsRef<str>]) -> Result<Command, String> {
 
     if (width.is_some() && height.is_none()) || (width.is_none() && height.is_some()) {
         return Err(
-            "-w, --width and -h, --height must be used together\ne.g. -w 1920 -h 1080"
-                .to_string(),
+            "-w, --width and -h, --height must be used together\ne.g. -w 1920 -h 1080".to_string(),
         );
     }
 
@@ -384,12 +381,10 @@ pub(crate) fn parse_set(args: &[impl AsRef<str>]) -> Result<Command, String> {
 fn parse_refresh(arg: &str) -> Result<Refresh, String> {
     match arg.to_lowercase().as_str() {
         "max" => Ok(Refresh::Max),
-        _ => arg.parse::<u32>().map(Refresh::Fixed).map_err(|_| {
-            format!(
-                "invalid refresh rate {}. use a number in Hz or max",
-                arg
-            )
-        }),
+        _ => arg
+            .parse::<u32>()
+            .map(Refresh::Fixed)
+            .map_err(|_| format!("invalid refresh rate {}. use a number in Hz or max", arg)),
     }
 }
 
@@ -573,7 +568,10 @@ mod tests {
     fn set_missing_value_for_monitor_flag() {
         assert_eq!(
             parse(&["set", "-m", "--max"]),
-            Err("-m, --monitor needs a value. a monitor ID, 'primary', or 'all'\ne.g. -m a1b2c3d4".to_string())
+            Err(
+                "-m, --monitor needs a value. a monitor ID, 'primary', or 'all'\ne.g. -m a1b2c3d4"
+                    .to_string()
+            )
         );
     }
 
@@ -619,7 +617,9 @@ mod tests {
     #[test]
     fn set_with_orientation() {
         assert_eq!(
-            parse(&["set", "-w", "1920", "-h", "1080", "-m", SERIAL_A, "-o", "90"]),
+            parse(&[
+                "set", "-w", "1920", "-h", "1080", "-m", SERIAL_A, "-o", "90"
+            ]),
             Ok(Command::Set {
                 spec: SetSpec::Explicit {
                     width: 1920,

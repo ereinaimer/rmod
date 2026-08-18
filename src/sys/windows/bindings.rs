@@ -344,12 +344,7 @@ unsafe extern "system" {
     ) -> i32;
     pub(crate) fn TranslateMessage(lp_msg: *const Msg) -> i32;
     pub(crate) fn DispatchMessageW(lp_msg: *const Msg) -> isize;
-    pub(crate) fn SendMessageW(
-        h_wnd: usize,
-        msg: u32,
-        w_param: usize,
-        l_param: isize,
-    ) -> isize;
+    pub(crate) fn SendMessageW(h_wnd: usize, msg: u32, w_param: usize, l_param: isize) -> isize;
     pub(crate) fn EnumDisplayMonitors(
         h_dc: usize,
         lprc_clip: *const (),
@@ -637,23 +632,38 @@ mod tests {
         // DISPLAYCONFIG_SOURCE_DEVICE_NAME: header (20) + viewGdiDeviceName[32]
         // WCHARs (64), CCHDEVICENAME = 32.
         assert_eq!(std::mem::size_of::<DisplayConfigSourceDeviceName>(), 84);
-        assert_eq!(offset_of!(DisplayConfigSourceDeviceName, view_gdi_device_name), 20);
+        assert_eq!(
+            offset_of!(DisplayConfigSourceDeviceName, view_gdi_device_name),
+            20
+        );
     }
 
     #[test]
     fn display_config_field_offsets() {
         assert_eq!(offset_of!(DisplayConfigPathSourceInfo, id), 8);
         assert_eq!(offset_of!(DisplayConfigPathTargetInfo, id), 8);
-        assert_eq!(offset_of!(DisplayConfigPathTargetInfo, output_technology), 16);
+        assert_eq!(
+            offset_of!(DisplayConfigPathTargetInfo, output_technology),
+            16
+        );
         assert_eq!(offset_of!(DisplayConfigPathTargetInfo, refresh_rate), 28);
-        assert_eq!(offset_of!(DisplayConfigPathTargetInfo, target_available), 40);
+        assert_eq!(
+            offset_of!(DisplayConfigPathTargetInfo, target_available),
+            40
+        );
         assert_eq!(offset_of!(DisplayConfigPathInfo, target_info), 20);
         assert_eq!(offset_of!(DisplayConfigPathInfo, flags), 68);
         assert_eq!(offset_of!(DisplayConfigDeviceInfoHeader, adapter_id), 8);
         assert_eq!(offset_of!(DisplayConfigDeviceInfoHeader, id), 16);
         assert_eq!(offset_of!(DisplayConfigGetAdvancedColorInfo, value), 20);
-        assert_eq!(offset_of!(DisplayConfigGetAdvancedColorInfo, color_encoding), 24);
-        assert_eq!(offset_of!(DisplayConfigGetAdvancedColorInfo, bits_per_color_channel), 28);
+        assert_eq!(
+            offset_of!(DisplayConfigGetAdvancedColorInfo, color_encoding),
+            24
+        );
+        assert_eq!(
+            offset_of!(DisplayConfigGetAdvancedColorInfo, bits_per_color_channel),
+            28
+        );
     }
 
     #[test]
@@ -674,15 +684,25 @@ mod tests {
 
     #[test]
     fn brightness_externs_are_resolvable() {
-        let _: unsafe extern "system" fn(usize, *const (), Option<unsafe extern "system" fn(usize, usize, *mut Rect, isize) -> i32>, isize) -> i32 = EnumDisplayMonitors;
+        let _: unsafe extern "system" fn(
+            usize,
+            *const (),
+            Option<unsafe extern "system" fn(usize, usize, *mut Rect, isize) -> i32>,
+            isize,
+        ) -> i32 = EnumDisplayMonitors;
         let _: unsafe extern "system" fn(usize, *mut MonitorInfoExW) -> i32 = GetMonitorInfoW;
-        let _: unsafe extern "system" fn(usize, *mut u32, *mut PhysicalMonitor) -> i32 = GetPhysicalMonitorsFromHMONITOR;
-        let _: unsafe extern "system" fn(usize, u8, *mut u32, *mut u32, *mut u32) -> i32 = GetVCPFeatureAndVCPFeatureReply;
+        let _: unsafe extern "system" fn(usize, *mut u32, *mut PhysicalMonitor) -> i32 =
+            GetPhysicalMonitorsFromHMONITOR;
+        let _: unsafe extern "system" fn(usize, u8, *mut u32, *mut u32, *mut u32) -> i32 =
+            GetVCPFeatureAndVCPFeatureReply;
         let _: unsafe extern "system" fn(usize, u8, u32) -> i32 = SetVCPFeature;
-        let _: unsafe extern "system" fn(usize, *mut u32, *mut u32, *mut u32) -> i32 = GetMonitorBrightness;
+        let _: unsafe extern "system" fn(usize, *mut u32, *mut u32, *mut u32) -> i32 =
+            GetMonitorBrightness;
         let _: unsafe extern "system" fn(usize, u32) -> i32 = SetMonitorBrightness;
-        let _: unsafe extern "system" fn(u32, *mut PhysicalMonitor) -> i32 = DestroyPhysicalMonitors;
-        let _: unsafe extern "system" fn(*const u16, *const u16, *const u16, *const ()) -> usize = CreateDCW;
+        let _: unsafe extern "system" fn(u32, *mut PhysicalMonitor) -> i32 =
+            DestroyPhysicalMonitors;
+        let _: unsafe extern "system" fn(*const u16, *const u16, *const u16, *const ()) -> usize =
+            CreateDCW;
         let _: unsafe extern "system" fn(usize) -> i32 = DeleteDC;
         let _: unsafe extern "system" fn(usize, *mut u16) -> i32 = GetDeviceGammaRamp;
         let _: unsafe extern "system" fn(usize, *mut u16) -> i32 = SetDeviceGammaRamp;

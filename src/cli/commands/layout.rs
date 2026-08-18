@@ -443,7 +443,8 @@ pub(crate) fn parse_layout(args: &[impl AsRef<str>]) -> Result<Command, String> 
     if let Some((direction, reference)) = placement {
         let Some(monitor) = monitor else {
             return Err(
-                "missing monitor for layout\ne.g. rmod layout -m a1b2c3d4 --left-of b2c3d4e5".to_string(),
+                "missing monitor for layout\ne.g. rmod layout -m a1b2c3d4 --left-of b2c3d4e5"
+                    .to_string(),
             );
         };
         return Ok(Command::Layout {
@@ -873,8 +874,19 @@ mod tests {
     #[test]
     fn layout_second_direction_flag_is_error() {
         assert_eq!(
-            parse(&["layout", "-m", SERIAL_A, "--left-of", SERIAL_B, "--right-of", SERIAL_A]),
-            Err("use only one direction flag\ne.g. rmod layout -m a1b2c3d4 --left-of b2c3d4e5".to_string())
+            parse(&[
+                "layout",
+                "-m",
+                SERIAL_A,
+                "--left-of",
+                SERIAL_B,
+                "--right-of",
+                SERIAL_A
+            ]),
+            Err(
+                "use only one direction flag\ne.g. rmod layout -m a1b2c3d4 --left-of b2c3d4e5"
+                    .to_string()
+            )
         );
     }
 
@@ -926,7 +938,10 @@ mod tests {
     fn layout_direction_without_monitor_is_error() {
         assert_eq!(
             parse(&["layout", "--left-of", SERIAL_B]),
-            Err("missing monitor for layout\ne.g. rmod layout -m a1b2c3d4 --left-of b2c3d4e5".to_string())
+            Err(
+                "missing monitor for layout\ne.g. rmod layout -m a1b2c3d4 --left-of b2c3d4e5"
+                    .to_string()
+            )
         );
     }
 

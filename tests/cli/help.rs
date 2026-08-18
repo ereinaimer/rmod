@@ -7,11 +7,17 @@ fn no_args_prints_help() {
     let text = strip_ansi(&stdout(&out));
     assert!(text.contains("rmod [COMMAND] [OPTIONS]"));
     assert!(text.contains("Commands:"));
-    assert!(text.contains("list     List displays and their current settings"));
-    assert!(text.contains("set      Apply resolution, refresh rate, and orientation"));
-    assert!(text.contains("layout   Show the monitor arrangement or move monitors"));
-    assert!(text.contains("monitor  Attach, detach, sleep, or wake monitors"));
-    assert!(text.contains("temp     Set or show the display color temperature"));
+    assert!(text.contains("list         List displays and their current settings"));
+    assert!(text.contains("set          Apply resolution, refresh rate, and orientation"));
+    assert!(text.contains("layout       Show the monitor arrangement or move monitors"));
+    assert!(text.contains("monitor      Attach, detach, sleep, or wake monitors"));
+    assert!(text.contains("temp         Set or show the display color temperature"));
+    assert!(
+        text.contains(
+            "view         Switch between mirror, extend, project, and single display modes"
+        )
+    );
+    assert!(text.contains("completions  Output PowerShell tab-completion script"));
     assert!(text.contains("--help     Print help"));
     assert!(text.contains("--version  Print version"));
     assert!(

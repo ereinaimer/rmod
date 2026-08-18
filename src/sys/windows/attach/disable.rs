@@ -1,8 +1,8 @@
 //! Detaches a monitor from the desktop by applying a zero-sized mode.
 
+use super::super::fade;
 use super::super::query;
 use super::{AttachAction, AttachChange, AttachOutcome, apply_attach, build_disable_devmode};
-use super::super::fade;
 
 /// Detaches the monitor with the 1-based number `monitor` (the primary
 /// when `None`) from the desktop.

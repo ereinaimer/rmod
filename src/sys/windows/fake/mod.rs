@@ -11,8 +11,8 @@ use std::sync::{Mutex, OnceLock};
 pub(crate) mod brightness;
 pub(crate) use brightness::set_brightness;
 pub(crate) mod contrast;
-pub(crate) use contrast::set_contrast;
 pub(crate) use contrast::reset_contrast;
+pub(crate) use contrast::set_contrast;
 
 use super::apply::{ApplyOutcome, Change, MainChange, MainOutcome, Refresh};
 use super::attach::{AttachAction, AttachChange, AttachOutcome};

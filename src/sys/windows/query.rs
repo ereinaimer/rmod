@@ -4,17 +4,16 @@
 //! friendly names, current mode, and the primary-display designation.
 
 use super::bindings::{
-    DevmodeW, DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, DISPLAY_DEVICE_DISCONNECT,
-    DISPLAY_DEVICE_MIRRORING_DRIVER, DISPLAY_DEVICEW, ENUM_CURRENT_SETTINGS,
-    ENUM_REGISTRY_SETTINGS, EnumDisplayDevicesW, EnumDisplaySettingsW, HKEY_LOCAL_MACHINE,
-    encode_wide, wide_to_string,
+    DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, DISPLAY_DEVICE_DISCONNECT, DISPLAY_DEVICE_MIRRORING_DRIVER,
+    DISPLAY_DEVICEW, DevmodeW, ENUM_CURRENT_SETTINGS, ENUM_REGISTRY_SETTINGS, EnumDisplayDevicesW,
+    EnumDisplaySettingsW, HKEY_LOCAL_MACHINE, encode_wide, wide_to_string,
 };
 use super::capabilities::{enumerate_modes, normalize_modes};
 use super::edid::{
     self, EdidData, GamutCoverage, append_fingerprint, base_display_name, manufacturer_name,
     parse_edid,
 };
-use super::hdr::{connector_for_path, hdr_from_path, match_path, query_connector, HdrInfo};
+use super::hdr::{HdrInfo, connector_for_path, hdr_from_path, match_path, query_connector};
 use super::registry::{enum_subkeys, read_reg_binary};
 
 /// A display attached to the desktop and its current settings.
@@ -273,10 +272,7 @@ fn describe_with_edid(
 
 /// Resolves `:N` to a device; `None` selects the primary display. Numbers
 /// are 1-based; `0` or an out-of-range value is an error.
-pub fn resolve_device(
-    monitor: Option<u32>,
-    names: &[String],
-) -> Result<(usize, &str), String> {
+pub fn resolve_device(monitor: Option<u32>, names: &[String]) -> Result<(usize, &str), String> {
     match monitor {
         None => {
             for (i, name) in names.iter().enumerate() {
@@ -331,8 +327,7 @@ pub fn resolve_by_id(id: &str) -> Option<u32> {
     for (i, name) in names.iter().enumerate() {
         // Read EDID data to get the serial and fingerprint
         if let Ok(edid) = read_edid_registry(name)
-            && (edid.serial.eq_ignore_ascii_case(id)
-                || edid.fingerprint.eq_ignore_ascii_case(id))
+            && (edid.serial.eq_ignore_ascii_case(id) || edid.fingerprint.eq_ignore_ascii_case(id))
         {
             return Some(i as u32 + 1);
         }
@@ -357,7 +352,12 @@ pub fn connected_displays_list() -> String {
         };
         let current_mode_str = mode
             .as_ref()
-            .map(|m| format!("{}x{}@{}Hz", m.dm_pels_width, m.dm_pels_height, m.dm_display_frequency))
+            .map(|m| {
+                format!(
+                    "{}x{}@{}Hz",
+                    m.dm_pels_width, m.dm_pels_height, m.dm_display_frequency
+                )
+            })
             .unwrap_or_else(|| "unknown".to_string());
         parts.push(format!("{} ({}) {}", i + 1, current_mode_str, display_name));
     }
@@ -484,15 +484,16 @@ pub fn list_detailed() -> Result<Vec<Monitor>, String> {
         );
 
         let modes = normalize_modes(enumerate_modes(name));
-        let (native_width, native_height, native_refresh) = if edid.native_width > 0 && edid.native_height > 0 {
-            (edid.native_width, edid.native_height, edid.native_refresh)
-        } else if !modes.is_empty() {
-            // Fallback: use highest resolution as native
-            let best = modes.last().unwrap();
-            (best.width, best.height, best.refresh)
-        } else {
-            (0, 0, 0)
-        };
+        let (native_width, native_height, native_refresh) =
+            if edid.native_width > 0 && edid.native_height > 0 {
+                (edid.native_width, edid.native_height, edid.native_refresh)
+            } else if !modes.is_empty() {
+                // Fallback: use highest resolution as native
+                let best = modes.last().unwrap();
+                (best.width, best.height, best.refresh)
+            } else {
+                (0, 0, 0)
+            };
 
         let monitor = describe_with_edid(
             index,
@@ -537,15 +538,21 @@ mod tests {
             chromaticity: None,
             hdr: None,
         };
-        let monitor =
-            describe_with_edid(0, "\\\\.\\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0);
+        let monitor = describe_with_edid(0, "\\\\.\\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0);
         assert_eq!(monitor.manufacturer, "Lenovo");
         let edid_unknown = EdidData {
             manufacturer: "XYZ".to_string(),
             ..edid
         };
-        let monitor =
-            describe_with_edid(0, "\\\\.\\DISPLAY_UNUSED", String::new(), &edid_unknown, 0, 0, 0);
+        let monitor = describe_with_edid(
+            0,
+            "\\\\.\\DISPLAY_UNUSED",
+            String::new(),
+            &edid_unknown,
+            0,
+            0,
+            0,
+        );
         assert_eq!(monitor.manufacturer, "XYZ");
     }
 
@@ -602,8 +609,15 @@ mod tests {
         let mut b = base_edid();
         b[23] = 0xFF; // gamma undefined
         let edid = parse_edid(&b).unwrap();
-        let monitor =
-            describe_with_edid(0, r"\\.\DISPLAY_UNUSED", String::new(), &edid, 1920, 1080, 60);
+        let monitor = describe_with_edid(
+            0,
+            r"\\.\DISPLAY_UNUSED",
+            String::new(),
+            &edid,
+            1920,
+            1080,
+            60,
+        );
         assert_eq!(monitor.physical_size_cm, None);
         assert_eq!(monitor.dpi_physical, None);
         assert_eq!(monitor.gamma, None);
@@ -619,8 +633,7 @@ mod tests {
         b[26] = 0x05;
         b[27..35].copy_from_slice(&[0x8F, 0x52, 0x33, 0x66, 0x9A, 0x3D, 0x40, 0x51]);
         let edid = parse_edid(&b).unwrap();
-        let monitor =
-            describe_with_edid(0, r"\\.\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0);
+        let monitor = describe_with_edid(0, r"\\.\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0);
         let gamut = monitor.gamut.expect("gamut from EDID chromaticity");
         assert_eq!(gamut.srgb, 100);
         assert!((gamut.p3 as i32 - 74).abs() <= 1, "p3 = {}", gamut.p3);
@@ -636,8 +649,7 @@ mod tests {
         b[132] = 0x06;
         b[133] = 0x02; // HDR10 static metadata
         let edid = parse_edid(&b).unwrap();
-        let monitor =
-            describe_with_edid(0, r"\\.\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0);
+        let monitor = describe_with_edid(0, r"\\.\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0);
         let hdr = monitor.hdr.expect("hdr from EDID fallback");
         assert!(hdr.supported);
         assert!(!hdr.active);

@@ -90,7 +90,9 @@ fn choose_restore(
     }
     match best {
         Some(mode) => Ok(build_devmode(&mode, base, None)),
-        None => Err(format!("{display} has no saved settings and no supported modes")),
+        None => Err(format!(
+            "{display} has no saved settings and no supported modes"
+        )),
     }
 }
 
@@ -100,7 +102,13 @@ fn choose_restore(
 fn apply_attach(name: &str, devmode: &DevmodeW) -> Result<(), String> {
     let name_ptr = encode_wide(name);
     let applied = unsafe {
-        ChangeDisplaySettingsExW(name_ptr.as_ptr(), devmode, 0, CDS_UPDATEREGISTRY, std::ptr::null())
+        ChangeDisplaySettingsExW(
+            name_ptr.as_ptr(),
+            devmode,
+            0,
+            CDS_UPDATEREGISTRY,
+            std::ptr::null(),
+        )
     };
     if applied != DISP_CHANGE_SUCCESSFUL {
         return Err(describe_change_result(applied));
@@ -195,8 +203,13 @@ mod tests {
             refresh: 144,
         };
         let base: DevmodeW = unsafe { std::mem::zeroed() };
-        let devmode =
-            choose_restore(Some(registry), Some(best), &base, "Generic PnP Monitor [:1]").unwrap();
+        let devmode = choose_restore(
+            Some(registry),
+            Some(best),
+            &base,
+            "Generic PnP Monitor [:1]",
+        )
+        .unwrap();
         assert_eq!(devmode.dm_pels_width, 2560);
         assert_eq!(devmode.dm_pels_height, 1440);
         assert_eq!(devmode.dm_display_frequency, 144);
@@ -221,7 +234,9 @@ mod tests {
         let base: DevmodeW = unsafe { std::mem::zeroed() };
         assert_eq!(
             choose_restore(None, None, &base, "Generic PnP Monitor [:1]"),
-            Err("Generic PnP Monitor [:1] has no saved settings and no supported modes".to_string())
+            Err(
+                "Generic PnP Monitor [:1] has no saved settings and no supported modes".to_string()
+            )
         );
     }
 }

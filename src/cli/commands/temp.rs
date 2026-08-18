@@ -65,11 +65,7 @@ fn run_all(action: TempAction) -> i32 {
             }
         }
     }
-    if any_error {
-        2
-    } else {
-        0
-    }
+    if any_error { 2 } else { 0 }
 }
 
 /// Renders one line of output for a temperature action.
@@ -339,7 +335,10 @@ mod tests {
     fn temp_second_positional_is_error() {
         assert_eq!(
             parse(&["temp", "3000", "4000"]),
-            Err("unexpected argument 4000 for temp. use a Kelvin value, a preset, or reset".to_string())
+            Err(
+                "unexpected argument 4000 for temp. use a Kelvin value, a preset, or reset"
+                    .to_string()
+            )
         );
     }
 
@@ -347,7 +346,10 @@ mod tests {
     fn temp_missing_monitor_value_is_error() {
         assert_eq!(
             parse(&["temp", "-m"]),
-            Err("-m, --monitor needs a value. a monitor ID, 'primary', or 'all'\ne.g. -m a1b2c3d4".to_string())
+            Err(
+                "-m, --monitor needs a value. a monitor ID, 'primary', or 'all'\ne.g. -m a1b2c3d4"
+                    .to_string()
+            )
         );
     }
 }
