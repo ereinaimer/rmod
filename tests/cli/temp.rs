@@ -87,6 +87,28 @@ fn temp_with_monitor_targets_second_display() {
 }
 
 #[test]
+fn temp_monitor_flag_before_value() {
+    let out = rmod(&["temp", "-m", "2", "3400"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("set RMOD Fake Monitor 2 [:2] to 3400K"),
+        "got: {}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn temp_value_before_monitor_flag() {
+    let out = rmod(&["temp", "3400", "-m", "2"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("set RMOD Fake Monitor 2 [:2] to 3400K"),
+        "got: {}",
+        stdout(&out)
+    );
+}
+
+#[test]
 fn temp_all_sets_every_monitor() {
     let out = rmod(&["temp", "-m", "all", "3000"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
@@ -120,7 +142,7 @@ fn temp_invalid_value_is_error() {
 
 #[test]
 fn temp_help_flag() {
-    assert_eq!(rmod(&["temp", "-h"]).status.code(), Some(2));
+    assert!(rmod(&["temp", "-h"]).status.success());
     let out = rmod(&["temp", "--help"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let text = strip_ansi(&stdout(&out));

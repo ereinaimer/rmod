@@ -50,6 +50,7 @@ $scriptBlock = {
             [System.Management.Automation.CompletionResult]::new('temp', 'temp', [System.Management.Automation.CompletionResultType]::ParameterValue, 'Temperature control')
             [System.Management.Automation.CompletionResult]::new('view', 'view', [System.Management.Automation.CompletionResultType]::ParameterValue, 'View modes')
             [System.Management.Automation.CompletionResult]::new('completions', 'completions', [System.Management.Automation.CompletionResultType]::ParameterValue, 'Completions script')
+            [System.Management.Automation.CompletionResult]::new('-h', '-h', [System.Management.Automation.CompletionResultType]::ParameterName, 'Print help')
             [System.Management.Automation.CompletionResult]::new('--help', '--help', [System.Management.Automation.CompletionResultType]::ParameterName, 'Print help')
             [System.Management.Automation.CompletionResult]::new('--version', '--version', [System.Management.Automation.CompletionResultType]::ParameterName, 'Print version')
             break
@@ -63,6 +64,7 @@ $scriptBlock = {
             [System.Management.Automation.CompletionResult]::new('--monitor', '--monitor', [System.Management.Automation.CompletionResultType]::ParameterName, 'Monitor ID')
             [System.Management.Automation.CompletionResult]::new('-y', '-y', [System.Management.Automation.CompletionResultType]::ParameterName, 'Skip confirmation')
             [System.Management.Automation.CompletionResult]::new('--yes', '--yes', [System.Management.Automation.CompletionResultType]::ParameterName, 'Skip confirmation')
+            [System.Management.Automation.CompletionResult]::new('-h', '-h', [System.Management.Automation.CompletionResultType]::ParameterName, 'Print help')
             [System.Management.Automation.CompletionResult]::new('--help', '--help', [System.Management.Automation.CompletionResultType]::ParameterName, 'Print help')
             # Subcommands
             if ($wordToComplete -like 'm*' -or $wordToComplete -like 'e*' -or $wordToComplete -like 'p*' -or $wordToComplete -like 's*') {
@@ -102,10 +104,11 @@ pub(crate) fn parse_completions(_cmd: &str, args: &[impl AsRef<str>]) -> Result<
     while i < args.len() {
         let arg = args[i].as_ref();
         match arg {
-            "--help" => {
+            "-h" | "--help" => {
                 help = true;
                 i += 1;
             }
+            "--version" => return Ok(Command::Version),
             other => {
                 return Err(format!(
                     "unexpected argument {} for completions. use --help",
@@ -116,4 +119,32 @@ pub(crate) fn parse_completions(_cmd: &str, args: &[impl AsRef<str>]) -> Result<
     }
 
     Ok(Command::Completions { help })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Command, String> {
+        let mut full_args = vec!["rmod"];
+        full_args.extend_from_slice(args);
+        crate::cli::parser::parse_from(&full_args)
+    }
+
+    #[test]
+    fn completions_help_flags() {
+        assert_eq!(
+            parse(&["completions", "-h"]),
+            Ok(Command::Completions { help: true })
+        );
+        assert_eq!(
+            parse(&["completions", "--help"]),
+            Ok(Command::Completions { help: true })
+        );
+    }
+
+    #[test]
+    fn completions_version_flag() {
+        assert_eq!(parse(&["completions", "--version"]), Ok(Command::Version));
+    }
 }

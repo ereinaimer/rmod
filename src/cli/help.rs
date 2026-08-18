@@ -519,8 +519,8 @@ Commands:
   completions  Output PowerShell tab-completion script
 
 Options:
-  --help     Print help
-  --version  Print version
+  -h, --help  Print help
+  --version   Print version
 
 Examples:
   rmod list
@@ -561,8 +561,8 @@ Usage:
 Alias: ls
 
 Options:
-  --short  Compact one-line output
-  --help   Print help
+  --short     Compact one-line output
+  -h, --help  Print help
 
 Examples:
   rmod list";
@@ -635,7 +635,7 @@ Options:
   --below        Place the monitor below the reference
   --primary      Make the monitor the main display
   -y, --yes      Skip the confirmation prompt
-  --help         Print help
+  -h, --help     Print help
 
 Examples:
   rmod layout
@@ -664,7 +664,7 @@ Actions:
 Options:
   -m, --monitor  Monitor ID, 'primary', or 'all' (required)
   -y, --yes      Skip the confirmation prompt
-  --help         Print help
+  -h, --help     Print help
 
 Examples:
   rmod monitor detach -m 2
@@ -702,7 +702,7 @@ Aliases:
 Options:
   -m, --monitor  Monitor ID, 'primary', or 'all' (required)
   -y, --yes      Skip the confirmation prompt
-  --help         Print help
+  -h, --help     Print help
 
 Examples:
   rmod monitor detach -m a1b2c3d4
@@ -724,7 +724,7 @@ Aliases:
 Options:
   -m, --monitor  Monitor ID, 'primary', or 'all' (required)
   -y, --yes      Skip the confirmation prompt
-  --help         Print help
+  -h, --help     Print help
 
 Examples:
   rmod monitor attach -m a1b2c3d4
@@ -744,7 +744,7 @@ Options:
   -m, --monitor    Monitor number or all (default: primary)
   -v, --via        Backend: ddc, slider, or gamma (default: auto; not valid with min, max, boost)
   min, max, boost  Composite modes: min (barely lit), max (hardware 100 + gamma 100), boost (hardware 100 + overdriven gamma)
-  --help           Print help
+  -h, --help       Print help
 
 Examples:
   rmod monitor brightness 60
@@ -767,7 +767,7 @@ Usage:
 Options:
   -m, --monitor  Monitor number or all (default: primary)
   -v, --via      Backend: ddc or gamma (default: auto)
-  --help         Print help
+  -h, --help     Print help
 
 Examples:
   rmod monitor contrast 60
@@ -787,7 +787,7 @@ Usage:
 
 Options:
   -m, --monitor  Monitor ID, 'primary', or 'all' (default: primary)
-  --help         Print help
+  -h, --help     Print help
 
 Presets:
   candle   ember        1900K

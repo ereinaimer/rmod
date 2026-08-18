@@ -386,24 +386,52 @@ fn report_single(outcome: Result<AttachOutcome, String>, yes: bool) -> i32 {
     }
 }
 
+/// Parses the `monitor` command.
+///
+/// Two phases: first scan for the action (flags may precede it), then
+/// validate every remaining token against the action's own flag rules.
 pub(crate) fn parse_monitor(args: &[impl AsRef<str>]) -> Result<Command, String> {
-    if args.len() < 2 {
-        return Err("monitor needs an action. attach, detach, sleep, wake, brightness, or contrast\ne.g. rmod monitor detach -m 2".to_string());
-    }
-    let action_str = args[1].as_ref();
-    if action_str == "--help" {
-        return Ok(Command::Help {
-            topic: Some(HelpTopic::Monitor { action: None }),
-        });
-    }
-    if action_str == "brightness" {
-        return parse_monitor_brightness(args);
-    }
-    if action_str == "contrast" {
-        if args.len() > 2 && args[2].as_ref() == "reset" {
-            return parse_monitor_contrast_reset(args);
+    // Phase 1: find the action. Flags may appear before it.
+    let mut i = 1;
+    let action_idx = loop {
+        let Some(arg) = args.get(i) else {
+            return Err("monitor needs an action. attach, detach, sleep, wake, brightness, or contrast\ne.g. rmod monitor detach -m 2".to_string());
+        };
+        match arg.as_ref() {
+            "-y" | "--yes" => {
+                i += 1;
+            }
+            "-h" | "--help" => {
+                return Ok(Command::Help {
+                    topic: Some(HelpTopic::Monitor { action: None }),
+                });
+            }
+            "--version" => return Ok(Command::Version),
+            "-m" | "--monitor" => {
+                // Skip the value too; phase 2 re-validates the flag.
+                let Some(val) = args.get(i + 1) else {
+                    return Err(
+                        "-m, --monitor needs a value. a monitor ID or all\ne.g. -m a1b2c3d4"
+                            .to_string(),
+                    );
+                };
+                if val.as_ref().starts_with('-') {
+                    return Err(
+                        "-m, --monitor needs a value. a monitor ID or all\ne.g. -m a1b2c3d4"
+                            .to_string(),
+                    );
+                }
+                i += 2;
+            }
+            _ => break i,
         }
-        return parse_monitor_contrast(args);
+    };
+
+    let action_str = args[action_idx].as_ref();
+    match action_str {
+        "brightness" => return parse_monitor_brightness(args),
+        "contrast" => return parse_monitor_contrast(args),
+        _ => {}
     }
     let action = match action_str {
         "detach" | "disable" | "off" => MonitorAction::Disable,
@@ -417,21 +445,28 @@ pub(crate) fn parse_monitor(args: &[impl AsRef<str>]) -> Result<Command, String>
             ));
         }
     };
+
+    // Phase 2: validate every remaining token with the action's rules.
     let mut monitor = MonitorTarget::Primary;
     let mut monitor_explicit = false;
     let mut yes = false;
-    let mut i = 2;
+    let mut i = 1;
 
     while i < args.len() {
+        if i == action_idx {
+            i += 1;
+            continue;
+        }
         let arg = args[i].as_ref();
         match arg {
-            "--help" => {
+            "-h" | "--help" => {
                 return Ok(Command::Help {
                     topic: Some(HelpTopic::Monitor {
                         action: Some(action),
                     }),
                 });
             }
+            "--version" => return Ok(Command::Version),
             "-m" | "--monitor" => {
                 if !matches!(action, MonitorAction::Disable | MonitorAction::Enable) {
                     return Err(format!(
@@ -493,58 +528,29 @@ pub(crate) fn parse_monitor(args: &[impl AsRef<str>]) -> Result<Command, String>
 }
 
 /// Parses `rmod monitor brightness <VALUE> [OPTIONS]`.
+///
+/// The value is the first positional after the action: a token that does not
+/// start with `-` and is not consumed as a `-m` or `-v` value.
 pub(crate) fn parse_monitor_brightness(args: &[impl AsRef<str>]) -> Result<Command, String> {
-    let Some(value_arg) = args.get(2) else {
-        return Err(
-            "monitor brightness needs a value. a number between 0 and 100\ne.g. rmod monitor brightness 60"
-                .to_string(),
-        );
-    };
-    let value_arg = value_arg.as_ref();
-    if value_arg == "--help" {
-        return Ok(Command::Help {
-            topic: Some(HelpTopic::Monitor {
-                action: Some(MonitorAction::Brightness {
-                    value: BrightnessValue::Percent(0),
-                    via: None,
-                }),
-            }),
-        });
-    }
-    if value_arg.starts_with('-') {
-        return Err(
-            "monitor brightness needs a value. a number between 0 and 100\ne.g. rmod monitor brightness 60"
-                .to_string(),
-        );
-    }
-    let value = match value_arg.to_lowercase().as_str() {
-        "min" => BrightnessValue::Min,
-        "max" => BrightnessValue::Max,
-        "boost" => BrightnessValue::Boost,
-        _ => BrightnessValue::Percent(value_arg.parse::<u32>().map_err(|_| {
-            format!("invalid brightness {value_arg}. use a number between 0 and 100")
-        })?),
-    };
-    if let BrightnessValue::Percent(v) = value
-        && v > 100
-    {
-        return Err(format!(
-            "invalid brightness {value_arg}. use a number between 0 and 100"
-        ));
-    }
+    let mut value: Option<BrightnessValue> = None;
     let mut monitor = MonitorTarget::Primary;
     let mut via = None;
-    let mut i = 3;
+    let mut seen_action = false;
+    let mut i = 1;
     while i < args.len() {
         let arg = args[i].as_ref();
         match arg {
-            "--help" => {
+            "-h" | "--help" => {
                 return Ok(Command::Help {
                     topic: Some(HelpTopic::Monitor {
-                        action: Some(MonitorAction::Brightness { value, via }),
+                        action: Some(MonitorAction::Brightness {
+                            value: value.unwrap_or(BrightnessValue::Percent(0)),
+                            via,
+                        }),
                     }),
                 });
             }
+            "--version" => return Ok(Command::Version),
             "-m" | "--monitor" => {
                 i += 1;
                 let Some(val) = args.get(i) else {
@@ -566,7 +572,7 @@ pub(crate) fn parse_monitor_brightness(args: &[impl AsRef<str>]) -> Result<Comma
             "-v" | "--via" => {
                 if matches!(
                     value,
-                    BrightnessValue::Min | BrightnessValue::Max | BrightnessValue::Boost
+                    Some(BrightnessValue::Min | BrightnessValue::Max | BrightnessValue::Boost)
                 ) {
                     return Err("-v, --via is not valid with min, max, or boost. use a number to choose a backend".to_string());
                 }
@@ -591,13 +597,56 @@ pub(crate) fn parse_monitor_brightness(args: &[impl AsRef<str>]) -> Result<Comma
                         .to_string(),
                 );
             }
-            other => {
+            other if other.starts_with('-') => {
                 return Err(format!(
                     "unexpected argument {other} for monitor brightness. use -m/--monitor or -v/--via"
                 ));
             }
+            other => {
+                if !seen_action {
+                    seen_action = true;
+                    i += 1;
+                    continue;
+                }
+                if value.is_some() {
+                    return Err(format!(
+                        "unexpected argument {other} for monitor brightness. use -m/--monitor or -v/--via"
+                    ));
+                }
+                let new_value = match other.to_lowercase().as_str() {
+                    "min" => BrightnessValue::Min,
+                    "max" => BrightnessValue::Max,
+                    "boost" => BrightnessValue::Boost,
+                    _ => BrightnessValue::Percent(other.parse::<u32>().map_err(|_| {
+                        format!("invalid brightness {other}. use a number between 0 and 100")
+                    })?),
+                };
+                if let BrightnessValue::Percent(v) = new_value
+                    && v > 100
+                {
+                    return Err(format!(
+                        "invalid brightness {other}. use a number between 0 and 100"
+                    ));
+                }
+                if via.is_some()
+                    && matches!(
+                        new_value,
+                        BrightnessValue::Min | BrightnessValue::Max | BrightnessValue::Boost
+                    )
+                {
+                    return Err("-v, --via is not valid with min, max, or boost. use a number to choose a backend".to_string());
+                }
+                value = Some(new_value);
+                i += 1;
+            }
         }
     }
+    let Some(value) = value else {
+        return Err(
+            "monitor brightness needs a value. a number between 0 and 100\ne.g. rmod monitor brightness 60"
+                .to_string(),
+        );
+    };
     Ok(Command::Monitor {
         action: MonitorAction::Brightness { value, via },
         monitor,
@@ -616,45 +665,35 @@ fn parse_backend(arg: &str) -> Result<BrightnessBackend, String> {
 }
 
 /// Parses `rmod monitor contrast <VALUE> [OPTIONS]`.
+///
+/// The value is the first positional after the action: a token that does not
+/// start with `-` and is not consumed as a `-m` or `-v` value. A value of
+/// `reset` (in either position) selects reset semantics.
 pub(crate) fn parse_monitor_contrast(args: &[impl AsRef<str>]) -> Result<Command, String> {
-    let Some(value_arg) = args.get(2) else {
-        return Err(
-            "monitor contrast needs a value. a number between 0 and 130\ne.g. rmod monitor contrast 60"
-                .to_string(),
-        );
-    };
-    let value_arg = value_arg.as_ref();
-    if value_arg == "--help" {
-        return Ok(Command::Help {
-            topic: Some(HelpTopic::Monitor {
-                action: Some(MonitorAction::Contrast {
-                    value: 0,
-                    via: None,
-                }),
-            }),
-        });
-    }
-    let value = value_arg
-        .parse::<u32>()
-        .map_err(|_| format!("invalid contrast {value_arg}. use a number between 0 and 130"))?;
-    if value > 130 {
-        return Err(format!(
-            "invalid contrast {value_arg}. use a number between 0 and 130"
-        ));
-    }
+    let mut value: Option<u32> = None;
+    let mut reset = false;
     let mut monitor = MonitorTarget::Primary;
     let mut via = None;
-    let mut i = 3;
+    let mut seen_action = false;
+    let mut i = 1;
     while i < args.len() {
         let arg = args[i].as_ref();
         match arg {
-            "--help" => {
+            "-h" | "--help" => {
                 return Ok(Command::Help {
                     topic: Some(HelpTopic::Monitor {
-                        action: Some(MonitorAction::Contrast { value, via }),
+                        action: Some(if reset {
+                            MonitorAction::ContrastReset
+                        } else {
+                            MonitorAction::Contrast {
+                                value: value.unwrap_or(0),
+                                via,
+                            }
+                        }),
                     }),
                 });
             }
+            "--version" => return Ok(Command::Version),
             "-m" | "--monitor" => {
                 i += 1;
                 let Some(val) = args.get(i) else {
@@ -674,6 +713,11 @@ pub(crate) fn parse_monitor_contrast(args: &[impl AsRef<str>]) -> Result<Command
                 i += 1;
             }
             "-v" | "--via" => {
+                if reset {
+                    return Err(format!(
+                        "unexpected argument {arg} for monitor contrast reset. use -m/--monitor"
+                    ));
+                }
                 i += 1;
                 let Some(val) = args.get(i) else {
                     return Err("-v, --via needs a value. ddc or gamma\ne.g. -v ddc".to_string());
@@ -686,20 +730,74 @@ pub(crate) fn parse_monitor_contrast(args: &[impl AsRef<str>]) -> Result<Command
                 i += 1;
             }
             "-y" | "--yes" => {
-                return Err(
-                    "-y, --yes is not valid for monitor contrast. contrast does not prompt for confirmation"
-                        .to_string(),
-                );
+                return Err(if reset {
+                    "-y, --yes is not valid for monitor contrast reset. reset does not prompt for confirmation".to_string()
+                } else {
+                    "-y, --yes is not valid for monitor contrast. contrast does not prompt for confirmation".to_string()
+                });
+            }
+            other if other.starts_with('-') => {
+                return Err(if reset {
+                    format!(
+                        "unexpected argument {other} for monitor contrast reset. use -m/--monitor"
+                    )
+                } else {
+                    format!(
+                        "unexpected argument {other} for monitor contrast. use -m/--monitor or -v/--via"
+                    )
+                });
             }
             other => {
-                return Err(format!(
-                    "unexpected argument {other} for monitor contrast. use -m/--monitor or -v/--via"
-                ));
+                if !seen_action {
+                    seen_action = true;
+                    i += 1;
+                    continue;
+                }
+                if reset || value.is_some() {
+                    return Err(if reset {
+                        format!(
+                            "unexpected argument {other} for monitor contrast reset. use -m/--monitor"
+                        )
+                    } else {
+                        format!(
+                            "unexpected argument {other} for monitor contrast. use -m/--monitor or -v/--via"
+                        )
+                    });
+                }
+                if other == "reset" {
+                    if via.is_some() {
+                        return Err("-v, --via is not valid with reset. reset restores defaults"
+                            .to_string());
+                    }
+                    reset = true;
+                } else {
+                    let parsed = other.parse::<u32>().map_err(|_| {
+                        format!("invalid contrast {other}. use a number between 0 and 130")
+                    })?;
+                    if parsed > 130 {
+                        return Err(format!(
+                            "invalid contrast {other}. use a number between 0 and 130"
+                        ));
+                    }
+                    value = Some(parsed);
+                }
+                i += 1;
             }
         }
     }
+    let action = if reset {
+        MonitorAction::ContrastReset
+    } else {
+        let Some(value) = value else {
+            return Err(
+                "monitor contrast needs a value. a number between 0 and 130\ne.g. rmod monitor contrast 60"
+                    .to_string(),
+            );
+        };
+        MonitorAction::Contrast { value, via }
+    };
     Ok(Command::Monitor {
-        action: MonitorAction::Contrast { value, via },
+        action,
         monitor,
         yes: false,
     })
@@ -712,58 +810,6 @@ fn parse_contrast_backend(arg: &str) -> Result<ContrastBackend, String> {
         "gamma" => Ok(ContrastBackend::Gamma),
         _ => Err(format!("unknown backend {arg}. use ddc or gamma")),
     }
-}
-
-/// Parses `rmod monitor contrast reset [OPTIONS]`.
-fn parse_monitor_contrast_reset(args: &[impl AsRef<str>]) -> Result<Command, String> {
-    let mut monitor = MonitorTarget::Primary;
-    let mut i = 3;
-    while i < args.len() {
-        let arg = args[i].as_ref();
-        match arg {
-            "--help" => {
-                return Ok(Command::Help {
-                    topic: Some(HelpTopic::Monitor {
-                        action: Some(MonitorAction::ContrastReset),
-                    }),
-                });
-            }
-            "-m" | "--monitor" => {
-                i += 1;
-                let Some(val) = args.get(i) else {
-                    return Err(
-                        "-m, --monitor needs a value. a monitor number or all\ne.g. -m 2"
-                            .to_string(),
-                    );
-                };
-                let val = val.as_ref();
-                if val.starts_with('-') {
-                    return Err(
-                        "-m, --monitor needs a value. a monitor number or all\ne.g. -m 2"
-                            .to_string(),
-                    );
-                }
-                monitor = parse_monitor_target(val)?;
-                i += 1;
-            }
-            "-y" | "--yes" => {
-                return Err(
-                    "-y, --yes is not valid for monitor contrast reset. reset does not prompt for confirmation"
-                        .to_string(),
-                );
-            }
-            other => {
-                return Err(format!(
-                    "unexpected argument {other} for monitor contrast reset. use -m/--monitor"
-                ));
-            }
-        }
-    }
-    Ok(Command::Monitor {
-        action: MonitorAction::ContrastReset,
-        monitor,
-        yes: false,
-    })
 }
 
 #[cfg(test)]
@@ -1800,6 +1846,233 @@ mod tests {
         assert_eq!(
             parse(&["monitor", "contrast", "60", "--via", "-y"]),
             Err("-v, --via needs a value. ddc or gamma\ne.g. -v ddc".to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_flag_before_action() {
+        assert_eq!(
+            parse(&["monitor", "-m", "2", "detach"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Disable,
+                monitor: MonitorTarget::Index(2),
+                yes: false,
+            })
+        );
+        assert_eq!(
+            parse(&["monitor", "-m", SERIAL_A, "-y", "detach"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Disable,
+                monitor: MonitorTarget::Id(SERIAL_A.to_string()),
+                yes: true,
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_flag_before_sleep_is_rejected() {
+        assert_eq!(
+            parse(&["monitor", "-m", "2", "sleep"]),
+            Err(
+                "-m, --monitor is not valid for monitor sleep. sleep applies to all monitors"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn brightness_flags_before_value() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "-m", "2", "60"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Brightness {
+                    value: BrightnessValue::Percent(60),
+                    via: None
+                },
+                monitor: MonitorTarget::Index(2),
+                yes: false,
+            })
+        );
+        assert_eq!(
+            parse(&["monitor", "brightness", "-v", "ddc", "60"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Brightness {
+                    value: BrightnessValue::Percent(60),
+                    via: Some(BrightnessBackend::Ddc)
+                },
+                monitor: MonitorTarget::Primary,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn flags_before_brightness_action_rejected_for_yes() {
+        assert_eq!(
+            parse(&["monitor", "-m", "2", "brightness", "60", "-y"]),
+            Err("-y, --yes is not valid for monitor brightness. brightness does not prompt for confirmation".to_string())
+        );
+    }
+
+    #[test]
+    fn brightness_min_keyword_with_flag_before_value() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "-m", "2", "min"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Brightness {
+                    value: BrightnessValue::Min,
+                    via: None
+                },
+                monitor: MonitorTarget::Index(2),
+                yes: false,
+            })
+        );
+        assert_eq!(
+            parse(&["monitor", "brightness", "min", "-v", "ddc"]),
+            Err(
+                "-v, --via is not valid with min, max, or boost. use a number to choose a backend"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn contrast_flags_before_value() {
+        assert_eq!(
+            parse(&["monitor", "contrast", "-m", "2", "60"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::Contrast {
+                    value: 60,
+                    via: None
+                },
+                monitor: MonitorTarget::Index(2),
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn contrast_reset_with_monitor_flag() {
+        assert_eq!(
+            parse(&["monitor", "contrast", "-m", "2", "reset"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::ContrastReset,
+                monitor: MonitorTarget::Index(2),
+                yes: false,
+            })
+        );
+        assert_eq!(
+            parse(&["monitor", "contrast", "reset", "-m", "2"]),
+            Ok(Command::Monitor {
+                action: MonitorAction::ContrastReset,
+                monitor: MonitorTarget::Index(2),
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_flag_missing_value_before_action() {
+        assert_eq!(
+            parse(&["monitor", "-m"]),
+            Err("-m, --monitor needs a value. a monitor ID or all\ne.g. -m a1b2c3d4".to_string())
+        );
+    }
+
+    #[test]
+    fn brightness_missing_monitor_value_still_errors() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "60", "-m"]),
+            Err("-m, --monitor needs a value. a monitor number or all\ne.g. -m 2".to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_short_help_flag() {
+        assert_eq!(
+            parse(&["monitor", "-h"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::Monitor { action: None })
+            })
+        );
+        assert_eq!(
+            parse(&["monitor", "detach", "-h"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::Monitor {
+                    action: Some(MonitorAction::Disable)
+                })
+            })
+        );
+        assert_eq!(
+            parse(&["monitor", "brightness", "60", "-h"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::Monitor {
+                    action: Some(MonitorAction::Brightness {
+                        value: BrightnessValue::Percent(60),
+                        via: None
+                    })
+                })
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_version_flags() {
+        assert_eq!(parse(&["monitor", "--version"]), Ok(Command::Version));
+        assert_eq!(
+            parse(&["monitor", "detach", "--version"]),
+            Ok(Command::Version)
+        );
+        assert_eq!(
+            parse(&["monitor", "brightness", "60", "--version"]),
+            Ok(Command::Version)
+        );
+    }
+
+    #[test]
+    fn monitor_long_form_yes_matches_short_form() {
+        let expected = Ok(Command::Monitor {
+            action: MonitorAction::Disable,
+            monitor: MonitorTarget::Id(SERIAL_A.to_string()),
+            yes: true,
+        });
+        assert_eq!(
+            parse(&["monitor", "-y", "detach", "-m", SERIAL_A]),
+            expected
+        );
+        assert_eq!(
+            parse(&["monitor", "--yes", "detach", "-m", SERIAL_A]),
+            expected
+        );
+    }
+
+    #[test]
+    fn monitor_long_form_monitor_matches_short_form() {
+        let expected = Ok(Command::Monitor {
+            action: MonitorAction::Disable,
+            monitor: MonitorTarget::Index(2),
+            yes: false,
+        });
+        assert_eq!(parse(&["monitor", "-m", "2", "detach"]), expected);
+        assert_eq!(parse(&["monitor", "--monitor", "2", "detach"]), expected);
+    }
+
+    #[test]
+    fn monitor_brightness_via_before_keyword_rejects() {
+        assert_eq!(
+            parse(&["monitor", "brightness", "-v", "ddc", "min"]),
+            Err(
+                "-v, --via is not valid with min, max, or boost. use a number to choose a backend"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn monitor_contrast_via_before_reset_rejects() {
+        assert_eq!(
+            parse(&["monitor", "contrast", "-v", "ddc", "reset"]),
+            Err("-v, --via is not valid with reset. reset restores defaults".to_string())
         );
     }
 }

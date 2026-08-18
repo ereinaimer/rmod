@@ -85,11 +85,12 @@ pub(crate) fn parse_temp(args: &[impl AsRef<str>]) -> Result<Command, String> {
     while i < args.len() {
         let arg = args[i].as_ref();
         match arg {
-            "--help" => {
+            "-h" | "--help" => {
                 return Ok(Command::Help {
                     topic: Some(HelpTopic::Temp),
                 });
             }
+            "--version" => return Ok(Command::Version),
             "-m" | "--monitor" => {
                 i += 1;
                 let Some(val) = args.get(i) else {
@@ -260,6 +261,28 @@ mod tests {
     }
 
     #[test]
+    fn temp_with_monitor_long_form() {
+        assert_eq!(
+            parse(&["temp", "--monitor", "2", "3400"]),
+            Ok(Command::Temp {
+                action: TempAction::Set(3400),
+                monitor: MonitorTarget::Index(2)
+            })
+        );
+    }
+
+    #[test]
+    fn temp_value_before_monitor_flag() {
+        assert_eq!(
+            parse(&["temp", "3400", "--monitor", "2"]),
+            Ok(Command::Temp {
+                action: TempAction::Set(3400),
+                monitor: MonitorTarget::Index(2)
+            })
+        );
+    }
+
+    #[test]
     fn temp_with_all() {
         assert_eq!(
             parse(&["temp", "-m", "all", "3000"]),
@@ -283,13 +306,23 @@ mod tests {
 
     #[test]
     fn temp_help_flag() {
-        assert!(parse(&["temp", "-h"]).is_err());
+        assert_eq!(
+            parse(&["temp", "-h"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::Temp)
+            })
+        );
         assert_eq!(
             parse(&["temp", "--help"]),
             Ok(Command::Help {
                 topic: Some(HelpTopic::Temp)
             })
         );
+    }
+
+    #[test]
+    fn temp_version_flag() {
+        assert_eq!(parse(&["temp", "--version"]), Ok(Command::Version));
     }
 
     #[test]

@@ -36,13 +36,6 @@ fn overflow_monitor_exits_2() {
 }
 
 #[test]
-fn flag_with_trailing_argument_exits_2() {
-    let out = rmod(&["--help", "extra"]);
-    assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains("error:"));
-}
-
-#[test]
 fn caps_is_unknown_command() {
     let out = rmod(&["caps"]);
     assert_eq!(out.status.code(), Some(2));

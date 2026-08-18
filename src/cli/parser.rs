@@ -183,24 +183,8 @@ pub fn parse_from<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
     let cmd_str = cmd.as_ref();
 
     match cmd_str {
-        "--help" => {
-            if args.len() > 1 {
-                return Err(format!(
-                    "unexpected argument {}. --help takes no arguments\ne.g. rmod --help",
-                    args[1].as_ref()
-                ));
-            }
-            Ok(Command::Help { topic: None })
-        }
-        "--version" => {
-            if args.len() > 1 {
-                return Err(format!(
-                    "unexpected argument {}. --version takes no arguments\ne.g. rmod --version",
-                    args[1].as_ref()
-                ));
-            }
-            Ok(Command::Version)
-        }
+        "--help" | "-h" => Ok(Command::Help { topic: None }),
+        "--version" => Ok(Command::Version),
         "ls" | "list" => crate::cli::commands::ls::parse_ls(cmd_str, args),
         "layout" => crate::cli::commands::layout::parse_layout(args),
         "main" => Err("unknown command main. use rmod layout -m a1b2c3d4 --primary".to_string()),
@@ -252,14 +236,17 @@ mod tests {
 
     #[test]
     fn help_flags() {
-        assert!(parse(&["-h"]).is_err());
+        assert_eq!(parse(&["-h"]), Ok(Command::Help { topic: None }));
+        assert_eq!(parse(&["-h", "set"]), Ok(Command::Help { topic: None }));
         assert_eq!(parse(&["--help"]), Ok(Command::Help { topic: None }));
+        assert_eq!(parse(&["--help", "set"]), Ok(Command::Help { topic: None }));
     }
 
     #[test]
     fn version_flags() {
         assert!(parse(&["-V"]).is_err());
         assert_eq!(parse(&["--version"]), Ok(Command::Version));
+        assert_eq!(parse(&["--version", "x"]), Ok(Command::Version));
     }
 
     #[test]
@@ -355,11 +342,6 @@ mod tests {
     fn all_parser_errors_are_actionable() {
         // add a row when you add an error message
         let cases: &[(&[&str], &str)] = &[
-            (&["--help", "x"], "parse_from --help with trailing arg"),
-            (
-                &["--version", "x"],
-                "parse_from --version with trailing arg",
-            ),
             (&["frobnicate"], "parse_from unknown command"),
             (&["main"], "parse_from legacy 'main' command"),
             (&["list", "-m"], "parse_ls -m missing value"),

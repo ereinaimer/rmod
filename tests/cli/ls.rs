@@ -167,6 +167,13 @@ fn ls_shows_fake_environment() {
 }
 
 #[test]
+fn ls_version_flag_prints_version() {
+    let out = rmod(&["ls", "--version"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("rmod"));
+}
+
+#[test]
 fn list_short_compact_output() {
     let out = rmod(&["list", "--short"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));

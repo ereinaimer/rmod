@@ -37,7 +37,7 @@ pub(crate) const TOP_COMMANDS: &[(&str, &str)] = &[
 
 pub(crate) const TOP_FLAGS: &[Flag] = &[
     Flag {
-        flag: "--help",
+        flag: "-h, --help",
         doc: "Print help",
         example: &["--help"],
     },
@@ -55,7 +55,7 @@ pub(crate) const LS_FLAGS: &[Flag] = &[
         example: &["list", "--short"],
     },
     Flag {
-        flag: "--help",
+        flag: "-h, --help",
         doc: "Print help",
         example: &["list", "--help"],
     },
@@ -146,7 +146,7 @@ pub(crate) const LAYOUT_FLAGS: &[Flag] = &[
         example: &["layout", "-m", "a1b2c3d4", "--primary", "-y"],
     },
     Flag {
-        flag: "--help",
+        flag: "-h, --help",
         doc: "Print help",
         example: &["layout", "--help"],
     },
@@ -164,14 +164,14 @@ pub(crate) const VIEW_FLAGS: &[Flag] = &[
         example: &["view", "mirror", "-y"],
     },
     Flag {
-        flag: "--help",
+        flag: "-h, --help",
         doc: "Print help",
         example: &["view", "--help"],
     },
 ];
 
 pub(crate) const COMPLETIONS_FLAGS: &[Flag] = &[Flag {
-    flag: "--help",
+    flag: "-h, --help",
     doc: "Print help",
     example: &["completions", "--help"],
 }];
@@ -188,7 +188,7 @@ pub(crate) const MONITOR_FLAGS: &[Flag] = &[
         example: &["monitor", "detach", "-m", "a1b2c3d4", "-y"],
     },
     Flag {
-        flag: "--help",
+        flag: "-h, --help",
         doc: "Print help",
         example: &["monitor", "--help"],
     },
@@ -211,7 +211,7 @@ pub(crate) const BRIGHTNESS_FLAGS: &[Flag] = &[
         example: &["monitor", "brightness", "min", "-m", "2"],
     },
     Flag {
-        flag: "--help",
+        flag: "-h, --help",
         doc: "Print help",
         example: &["monitor", "brightness", "--help"],
     },
@@ -229,7 +229,7 @@ pub(crate) const CONTRAST_FLAGS: &[Flag] = &[
         example: &["monitor", "contrast", "60", "-v", "ddc"],
     },
     Flag {
-        flag: "--help",
+        flag: "-h, --help",
         doc: "Print help",
         example: &["monitor", "contrast", "--help"],
     },
@@ -242,7 +242,7 @@ pub(crate) const TEMP_FLAGS: &[Flag] = &[
         example: &["temp", "-m", "a1b2c3d4", "4000"],
     },
     Flag {
-        flag: "--help",
+        flag: "-h, --help",
         doc: "Print help",
         example: &["temp", "--help"],
     },

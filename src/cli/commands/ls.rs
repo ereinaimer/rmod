@@ -200,11 +200,12 @@ pub(crate) fn parse_ls(_cmd: &str, args: &[impl AsRef<str>]) -> Result<Command, 
 
     while let Some(arg) = args.get(i) {
         match arg.as_ref() {
-            "--help" => {
+            "-h" | "--help" => {
                 return Ok(Command::Help {
                     topic: Some(HelpTopic::List),
                 });
             }
+            "--version" => return Ok(Command::Version),
             "--short" => {
                 short = true;
                 i += 1;
@@ -313,13 +314,23 @@ mod tests {
 
     #[test]
     fn ls_help_flags() {
-        assert!(parse(&["ls", "-h"]).is_err());
+        assert_eq!(
+            parse(&["ls", "-h"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::List)
+            })
+        );
         assert_eq!(
             parse(&["ls", "--help"]),
             Ok(Command::Help {
                 topic: Some(HelpTopic::List)
             })
         );
+    }
+
+    #[test]
+    fn ls_version_flag() {
+        assert_eq!(parse(&["ls", "--version"]), Ok(Command::Version));
     }
 
     #[test]

@@ -358,73 +358,47 @@ fn find_common_mode(monitors: &[Monitor]) -> Option<crate::sys::windows::Mode> {
 }
 
 /// Parses the `view` command.
+///
+/// Two phases: first scan for the subcommand (flags may precede it), then
+/// validate every remaining token against the subcommand's own flag rules.
 pub(crate) fn parse_view(_cmd: &str, args: &[impl AsRef<str>]) -> Result<Command, String> {
-    if args.len() < 2 {
-        return Err(
-            "view needs a subcommand: mirror, extend, project, or single\ne.g. rmod view mirror"
-                .to_string(),
-        );
-    }
-
-    let subcmd = args[1].as_ref();
-    let mut i = 2;
-    let mut monitor = MonitorTarget::Primary;
+    // Phase 1: find the subcommand. Flags may appear before it.
+    let mut i = 1;
     let mut yes = false;
+    let subcmd_idx = loop {
+        let Some(arg) = args.get(i) else {
+            return Err(
+                "view needs a subcommand: mirror, extend, project, or single\ne.g. rmod view mirror"
+                    .to_string(),
+            );
+        };
+        match arg.as_ref() {
+            "-y" | "--yes" => {
+                yes = true;
+                i += 1;
+            }
+            "-h" | "--help" => {
+                return Ok(Command::Help {
+                    topic: Some(HelpTopic::View { action: None }),
+                });
+            }
+            "--version" => return Ok(Command::Version),
+            "-m" | "--monitor" => {
+                // Skip the value too; phase 2 re-validates the flag.
+                i += 2;
+            }
+            _ => break i,
+        }
+    };
 
+    let subcmd = args[subcmd_idx].as_ref();
     let action = match subcmd {
         "mirror" => ViewAction::Mirror,
         "extend" => ViewAction::Extend,
         "project" => ViewAction::Project,
-        "single" => {
-            while i < args.len() {
-                let arg = args[i].as_ref();
-                match arg {
-                    "--help" => {
-                        return Ok(Command::Help {
-                            topic: Some(HelpTopic::View {
-                                action: Some(ViewAction::Single {
-                                    monitor: MonitorTarget::Primary,
-                                }),
-                            }),
-                        });
-                    }
-                    "-m" | "--monitor" => {
-                        i += 1;
-                        let Some(val) = args.get(i) else {
-                            return Err(
-                                "-m, --monitor needs a value. a monitor ID or number\ne.g. -m 2"
-                                    .to_string(),
-                            );
-                        };
-                        let val = val.as_ref();
-                        if val.starts_with('-') {
-                            return Err(
-                                "-m, --monitor needs a value. a monitor ID or number\ne.g. -m 2"
-                                    .to_string(),
-                            );
-                        }
-                        monitor = crate::cli::parser::parse_monitor_target(val)?;
-                        i += 1;
-                    }
-                    "-y" | "--yes" => {
-                        yes = true;
-                        i += 1;
-                    }
-                    other => {
-                        return Err(format!(
-                            "unexpected argument {} for view single. use -m, --monitor, -y, or --help",
-                            other
-                        ));
-                    }
-                }
-            }
-            ViewAction::Single { monitor }
-        }
-        "--help" => {
-            return Ok(Command::Help {
-                topic: Some(HelpTopic::View { action: None }),
-            });
-        }
+        "single" => ViewAction::Single {
+            monitor: MonitorTarget::Primary,
+        },
         other => {
             return Err(format!(
                 "unknown view subcommand {}. use mirror, extend, project, or single",
@@ -432,30 +406,274 @@ pub(crate) fn parse_view(_cmd: &str, args: &[impl AsRef<str>]) -> Result<Command
             ));
         }
     };
+    let is_single = matches!(subcmd, "single");
 
-    // Check for remaining flags
+    // Phase 2: validate every remaining token with the subcommand's rules.
+    let mut monitor = MonitorTarget::Primary;
+    let mut i = 1;
     while i < args.len() {
+        if i == subcmd_idx {
+            i += 1;
+            continue;
+        }
         let arg = args[i].as_ref();
         match arg {
             "-y" | "--yes" => {
                 yes = true;
                 i += 1;
             }
-            "--help" => {
+            "--version" => return Ok(Command::Version),
+            "-h" | "--help" => {
                 return Ok(Command::Help {
                     topic: Some(HelpTopic::View {
                         action: Some(action.clone()),
                     }),
                 });
             }
+            "-m" | "--monitor" if is_single => {
+                i += 1;
+                let Some(val) = args.get(i) else {
+                    return Err(
+                        "-m, --monitor needs a value. a monitor ID or number\ne.g. -m 2"
+                            .to_string(),
+                    );
+                };
+                let val = val.as_ref();
+                if val.starts_with('-') {
+                    return Err(
+                        "-m, --monitor needs a value. a monitor ID or number\ne.g. -m 2"
+                            .to_string(),
+                    );
+                }
+                monitor = crate::cli::parser::parse_monitor_target(val)?;
+                i += 1;
+            }
             other => {
-                return Err(format!(
-                    "unexpected argument {} for view. use -y or --help",
-                    other
-                ));
+                return Err(if is_single {
+                    format!(
+                        "unexpected argument {} for view single. use -m, --monitor, -y, or --help",
+                        other
+                    )
+                } else {
+                    format!("unexpected argument {} for view. use -y or --help", other)
+                });
             }
         }
     }
 
+    let action = match action {
+        ViewAction::Single { .. } => ViewAction::Single { monitor },
+        other => other,
+    };
     Ok(Command::View { action, yes })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Command, String> {
+        let mut full_args = vec!["rmod"];
+        full_args.extend_from_slice(args);
+        crate::cli::parser::parse_from(&full_args)
+    }
+
+    #[test]
+    fn flags_before_subcommand() {
+        assert_eq!(
+            parse(&["view", "-y", "mirror"]),
+            Ok(Command::View {
+                action: ViewAction::Mirror,
+                yes: true
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_flag_before_subcommand() {
+        assert_eq!(
+            parse(&["view", "-m", "2", "single"]),
+            Ok(Command::View {
+                action: ViewAction::Single {
+                    monitor: MonitorTarget::Index(2)
+                },
+                yes: false
+            })
+        );
+    }
+
+    #[test]
+    fn flags_before_and_after_subcommand() {
+        assert_eq!(
+            parse(&["view", "-y", "single", "-m", "2"]),
+            Ok(Command::View {
+                action: ViewAction::Single {
+                    monitor: MonitorTarget::Index(2)
+                },
+                yes: true
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_flag_before_subcommand_rejected_by_mirror() {
+        assert_eq!(
+            parse(&["view", "-m", "2", "mirror"]),
+            Err("unexpected argument -m for view. use -y or --help".to_string())
+        );
+    }
+
+    #[test]
+    fn monitor_flag_after_subcommand_rejected_by_mirror() {
+        assert_eq!(
+            parse(&["view", "mirror", "-m", "2"]),
+            Err("unexpected argument -m for view. use -y or --help".to_string())
+        );
+    }
+
+    #[test]
+    fn help_flags() {
+        assert_eq!(
+            parse(&["view", "-h"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::View { action: None })
+            })
+        );
+        assert_eq!(
+            parse(&["view", "mirror", "-h"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::View {
+                    action: Some(ViewAction::Mirror)
+                })
+            })
+        );
+        assert_eq!(
+            parse(&["view", "single", "-h"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::View {
+                    action: Some(ViewAction::Single {
+                        monitor: MonitorTarget::Primary
+                    })
+                })
+            })
+        );
+    }
+
+    #[test]
+    fn version_flags() {
+        assert_eq!(parse(&["view", "--version"]), Ok(Command::Version));
+        assert_eq!(
+            parse(&["view", "mirror", "--version"]),
+            Ok(Command::Version)
+        );
+        assert_eq!(
+            parse(&["view", "single", "-m", "2", "--version"]),
+            Ok(Command::Version)
+        );
+    }
+
+    #[test]
+    fn no_subcommand_is_error() {
+        assert_eq!(
+            parse(&["view"]),
+            Err(
+                "view needs a subcommand: mirror, extend, project, or single\ne.g. rmod view mirror"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn unknown_subcommand_is_error() {
+        assert_eq!(
+            parse(&["view", "foo"]),
+            Err("unknown view subcommand foo. use mirror, extend, project, or single".to_string())
+        );
+    }
+
+    #[test]
+    fn unexpected_argument_is_error() {
+        assert_eq!(
+            parse(&["view", "mirror", "extra"]),
+            Err("unexpected argument extra for view. use -y or --help".to_string())
+        );
+        assert_eq!(
+            parse(&["view", "single", "extra"]),
+            Err(
+                "unexpected argument extra for view single. use -m, --monitor, -y, or --help"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn long_form_yes_matches_short_form() {
+        let expected = Ok(Command::View {
+            action: ViewAction::Mirror,
+            yes: true,
+        });
+        assert_eq!(parse(&["view", "-y", "mirror"]), expected);
+        assert_eq!(parse(&["view", "--yes", "mirror"]), expected);
+    }
+
+    #[test]
+    fn long_form_monitor_matches_short_form() {
+        let expected = Ok(Command::View {
+            action: ViewAction::Single {
+                monitor: MonitorTarget::Index(2),
+            },
+            yes: false,
+        });
+        assert_eq!(parse(&["view", "-m", "2", "single"]), expected);
+        assert_eq!(parse(&["view", "--monitor", "2", "single"]), expected);
+    }
+
+    #[test]
+    fn single_with_monitor_and_help_pins_topic() {
+        assert_eq!(
+            parse(&["view", "single", "-m", "2", "--help"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::View {
+                    action: Some(ViewAction::Single {
+                        monitor: MonitorTarget::Primary
+                    })
+                })
+            })
+        );
+    }
+
+    #[test]
+    fn monitor_flag_without_subcommand_is_error() {
+        assert_eq!(
+            parse(&["view", "-m", "2"]),
+            Err(
+                "view needs a subcommand: mirror, extend, project, or single\ne.g. rmod view mirror"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn yes_flag_without_subcommand_is_error() {
+        assert_eq!(
+            parse(&["view", "-y"]),
+            Err(
+                "view needs a subcommand: mirror, extend, project, or single\ne.g. rmod view mirror"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn duplicate_monitor_flag_last_wins() {
+        assert_eq!(
+            parse(&["view", "-m", "2", "-m", "3", "single"]),
+            Ok(Command::View {
+                action: ViewAction::Single {
+                    monitor: MonitorTarget::Index(3)
+                },
+                yes: false
+            })
+        );
+    }
 }

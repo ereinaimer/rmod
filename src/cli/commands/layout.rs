@@ -339,11 +339,12 @@ pub(crate) fn parse_layout(args: &[impl AsRef<str>]) -> Result<Command, String> 
     while i < args.len() {
         let arg = args[i].as_ref();
         match arg {
-            "--help" => {
+            "-h" | "--help" => {
                 return Ok(Command::Help {
                     topic: Some(HelpTopic::Layout),
                 });
             }
+            "--version" => return Ok(Command::Version),
             "-m" | "--monitor" => {
                 i += 1;
                 let Some(val) = args.get(i) else {
@@ -983,13 +984,23 @@ mod tests {
 
     #[test]
     fn layout_help_flag() {
-        assert!(parse(&["layout", "-h"]).is_err());
+        assert_eq!(
+            parse(&["layout", "-h"]),
+            Ok(Command::Help {
+                topic: Some(HelpTopic::Layout)
+            })
+        );
         assert_eq!(
             parse(&["layout", "--help"]),
             Ok(Command::Help {
                 topic: Some(HelpTopic::Layout)
             })
         );
+    }
+
+    #[test]
+    fn layout_version_flag() {
+        assert_eq!(parse(&["layout", "--version"]), Ok(Command::Version));
     }
 
     #[test]

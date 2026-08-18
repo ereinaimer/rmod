@@ -90,6 +90,28 @@ fn view_single_enables_only_specified() {
 }
 
 #[test]
+fn view_yes_flag_before_subcommand_mirror() {
+    let out = rmod(&["view", "-y", "mirror"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains("applied") || text.contains("already"),
+        "expected applied or already: {text}"
+    );
+}
+
+#[test]
+fn view_monitor_flag_before_subcommand_single() {
+    let out = rmod(&["view", "-m", "2", "single", "-y"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains("detached") || text.contains("attached") || text.contains("already"),
+        "expected attach/detach: {text}"
+    );
+}
+
+#[test]
 fn view_single_invalid_monitor_errors() {
     let out = rmod(&["view", "single", "-m", "99", "-y"]);
     assert_eq!(out.status.code(), Some(2));
@@ -112,4 +134,15 @@ fn view_missing_subcommand_errors() {
     let out = rmod(&["view"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(stderr(&out).contains("error"), "stderr: {}", stderr(&out));
+}
+
+#[test]
+fn view_monitor_flag_without_subcommand_errors() {
+    let out = rmod(&["view", "-m", "2"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        stderr(&out).contains("needs a subcommand"),
+        "stderr: {}",
+        stderr(&out)
+    );
 }

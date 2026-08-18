@@ -308,6 +308,17 @@ fn monitor_keywords_are_case_insensitive() {
 }
 
 #[test]
+fn set_flags_in_any_order_target_monitor() {
+    let out = rmod(&["set", "-y", "-m", "2", "-p", "1080"]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("RMOD Fake Monitor 2 [:2]"),
+        "monitor 2 must be targeted: {}",
+        stdout(&out)
+    );
+}
+
+#[test]
 fn set_with_yes() {
     let out = rmod(&["set", "-p", "1440", "-y"]);
     if !out.status.success() {

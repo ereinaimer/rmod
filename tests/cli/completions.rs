@@ -27,6 +27,7 @@ fn completions_outputs_powershell_script() {
 
 #[test]
 fn completions_help() {
+    assert!(rmod(&["completions", "-h"]).status.success());
     let out = rmod(&["completions", "--help"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let text = stdout(&out);

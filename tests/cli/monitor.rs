@@ -2,10 +2,10 @@ use super::common::{SERIAL_A, SERIAL_B, rmod, stderr, stdout, strip_ansi};
 
 #[test]
 fn monitor_help_exits_zero() {
-    assert_eq!(rmod(&["monitor", "-h"]).status.code(), Some(2));
+    assert!(rmod(&["monitor", "-h"]).status.success());
     assert!(rmod(&["monitor", "--help"]).status.success());
     assert!(rmod(&["monitor", "detach", "--help"]).status.success());
-    let text = strip_ansi(&stdout(&rmod(&["monitor", "--help"])));
+    let text = strip_ansi(&stdout(&rmod(&["monitor", "-h"])));
     assert!(text.contains("Attach, detach, sleep, or wake monitors"));
     assert!(text.contains("-m, --monitor"));
     assert!(text.contains("-y, --yes"));
@@ -30,6 +30,24 @@ fn monitor_off_is_alias_for_detach() {
     let out = rmod(&["monitor", "off", "-m", SERIAL_B, "-y"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert!(stdout(&out).contains("detached RMOD Fake Monitor 2 [:2]"));
+}
+
+#[test]
+fn monitor_flags_before_action_detach() {
+    let out = rmod(&["monitor", "-m", "2", "detach", "-y"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("detached RMOD Fake Monitor 2 [:2]"));
+}
+
+#[test]
+fn monitor_flags_before_action_sleep_rejected() {
+    let out = rmod(&["monitor", "-m", "2", "sleep"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        stderr(&out).contains("not valid for monitor sleep"),
+        "stderr: {}",
+        stderr(&out)
+    );
 }
 
 #[test]
@@ -182,6 +200,17 @@ fn monitor_brightness_sets_primary_via_ddc() {
     let out = rmod(&["monitor", "brightness", "30"]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert!(stdout(&out).contains("set RMOD Fake Monitor 1 [:1] brightness to 30% via ddc"));
+}
+
+#[test]
+fn monitor_brightness_monitor_flag_before_value() {
+    let out = rmod(&["monitor", "brightness", "-m", "2", "60"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("set RMOD Fake Monitor 2 [:2] brightness to 60% via gamma"),
+        "got: {}",
+        stdout(&out)
+    );
 }
 
 #[test]
@@ -377,6 +406,17 @@ fn monitor_help_lists_brightness() {
     let text = strip_ansi(&stdout(&out));
     assert!(
         text.contains("brightness Set the display backlight level (0-100, or min, max, boost)")
+    );
+}
+
+#[test]
+fn monitor_contrast_monitor_flag_before_value_reset() {
+    let out = rmod(&["monitor", "contrast", "-m", "2", "reset"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("set RMOD Fake Monitor 2 [:2] contrast to 100% via gamma"),
+        "got: {}",
+        stdout(&out)
     );
 }
 

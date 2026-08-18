@@ -226,6 +226,7 @@ pub(crate) fn parse_set(args: &[impl AsRef<str>]) -> Result<Command, String> {
                     topic: Some(HelpTopic::Set),
                 });
             }
+            "--version" => return Ok(Command::Version),
             "-w" | "--width" => {
                 i += 1;
                 let Some(val) = args.get(i) else {
@@ -558,6 +559,19 @@ mod tests {
     }
 
     #[test]
+    fn set_duplicate_monitor_last_wins() {
+        assert_eq!(
+            parse(&["set", "-m", "2", "-m", "3", "-y"]),
+            Ok(Command::Set {
+                spec: SetSpec::Keep,
+                monitor: MonitorTarget::Index(3),
+                orientation: None,
+                yes: true
+            })
+        );
+    }
+
+    #[test]
     fn set_max_conflicting_spec_is_error() {
         assert!(parse(&["set", "-p", "1080", "--max"]).is_err());
         assert!(parse(&["set", "--max", "-p", "1080"]).is_err());
@@ -659,6 +673,49 @@ mod tests {
                 monitor: MonitorTarget::Primary,
                 orientation: None,
                 yes: false
+            })
+        );
+    }
+
+    #[test]
+    fn set_long_form_full_invocation() {
+        assert_eq!(
+            parse(&[
+                "set",
+                "--width",
+                "1920",
+                "--height",
+                "1080",
+                "--refresh",
+                "60",
+                "--orientation",
+                "landscape",
+                "--monitor",
+                "2",
+                "--yes"
+            ]),
+            Ok(Command::Set {
+                spec: SetSpec::Explicit {
+                    width: 1920,
+                    height: 1080,
+                    refresh: Refresh::Fixed(60)
+                },
+                monitor: MonitorTarget::Index(2),
+                orientation: Some(0),
+                yes: true
+            })
+        );
+    }
+
+    #[test]
+    fn set_long_form_profile() {
+        assert_eq!(
+            parse(&["set", "--profile", "1080", "--monitor", SERIAL_A, "--yes"]),
+            Ok(Command::Set {
+                spec: SetSpec::Profile("1080".to_string()),
+                monitor: MonitorTarget::Id(SERIAL_A.to_string()),
+                orientation: None,
+                yes: true
             })
         );
     }
@@ -911,6 +968,15 @@ mod tests {
             Ok(Command::Help {
                 topic: Some(HelpTopic::Set)
             })
+        );
+    }
+
+    #[test]
+    fn set_version_flag() {
+        assert_eq!(parse(&["set", "--version"]), Ok(Command::Version));
+        assert_eq!(
+            parse(&["set", "-w", "1920", "-h", "1080", "--version"]),
+            Ok(Command::Version)
         );
     }
 

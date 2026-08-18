@@ -189,8 +189,16 @@ fn layout_unknown_argument_is_error() {
 }
 
 #[test]
+fn layout_flags_in_any_order_promote_primary() {
+    let out = rmod(&["layout", "-y", "-m", "2", "--primary"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("is now the main display"));
+    assert!(!stdout(&out).contains("keep changes"));
+}
+
+#[test]
 fn layout_help_flag() {
-    assert_eq!(rmod(&["layout", "-h"]).status.code(), Some(2));
+    assert!(rmod(&["layout", "-h"]).status.success());
     let out = rmod(&["layout", "--help"]);
     assert!(out.status.success());
     let text = strip_ansi(&stdout(&out));
@@ -200,9 +208,6 @@ fn layout_help_flag() {
         text.contains("--primary"),
         "layout page must advertise --primary"
     );
-    assert_eq!(
-        rmod(&["layout", "-m", SERIAL_B, "-h"]).status.code(),
-        Some(2)
-    );
+    assert!(rmod(&["layout", "-m", SERIAL_B, "-h"]).status.success());
     assert!(rmod(&["layout", "-m", SERIAL_B, "--help"]).status.success());
 }
