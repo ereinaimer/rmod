@@ -5,28 +5,34 @@
 //! [`crate::sys::windows`], report the outcome, and run the shared
 //! keep-or-revert confirmation flow.
 
+pub(crate) mod completions;
 pub(crate) mod flow;
 pub(crate) mod layout;
 pub(crate) mod ls;
 pub(crate) mod monitor;
 pub(crate) mod set;
 pub(crate) mod temp;
+pub(crate) mod view;
 
 use crate::cli::{
-    Command, HelpTopic, MonitorAction, MonitorTarget, help, layout as layout_help, ls,
-    monitor as monitor_help, monitor_attach, monitor_brightness, monitor_contrast, monitor_detach, set as set_help,
-    temp as temp_help, version,
+    Command, HelpTopic, MonitorAction, MonitorTarget, ViewAction, completions, help,
+    layout as layout_help, ls, monitor as monitor_help, monitor_attach, monitor_brightness,
+    monitor_contrast, monitor_detach, set as set_help, temp as temp_help, version, view,
+    view_extend_help, view_mirror_help, view_project_help, view_single_help,
 };
 use crate::sys::windows::{AttachAction, AttachChange, Change, Mode};
 
+use completions::run_completions;
 use flow::{
-    confirm_or_revert, confirm_or_revert_all, confirm_or_revert_attach, confirm_or_revert_attach_all,
+    confirm_or_revert, confirm_or_revert_all, confirm_or_revert_attach,
+    confirm_or_revert_attach_all,
 };
 use layout::run_layout;
-use ls::run_list;
+use ls::{run_list, run_list_short};
 use monitor::run_monitor;
 use set::run_set;
 use temp::run_temp;
+use view::run_view;
 
 const CONFIRM_TIMEOUT_SECS: u64 = 5;
 
@@ -75,11 +81,36 @@ pub fn run(command: Command) -> i32 {
             println!("{}", temp_help());
             0
         }
+        Command::Help {
+            topic: Some(HelpTopic::View { action }),
+        } => {
+            let page = match action {
+                Some(ViewAction::Mirror) => view_mirror_help(),
+                Some(ViewAction::Extend) => view_extend_help(),
+                Some(ViewAction::Project) => view_project_help(),
+                Some(ViewAction::Single { .. }) => view_single_help(),
+                _ => view(),
+            };
+            println!("{page}");
+            0
+        }
+        Command::Help {
+            topic: Some(HelpTopic::Completions),
+        } => {
+            println!("{}", completions());
+            0
+        }
         Command::Version => {
             println!("{}", version());
             0
         }
-        Command::List => run_list(),
+        Command::List { short } => {
+            if short {
+                run_list_short()
+            } else {
+                run_list()
+            }
+        }
         Command::Layout { action, yes } => run_layout(action, yes),
         Command::Set {
             spec,
@@ -93,6 +124,8 @@ pub fn run(command: Command) -> i32 {
             yes,
         } => run_monitor(action, monitor, yes),
         Command::Temp { action, monitor } => run_temp(action, monitor),
+        Command::View { action, yes } => run_view(action, yes),
+        Command::Completions { help } => run_completions(help),
     }
 }
 
@@ -110,12 +143,14 @@ fn resolve_target(target: &MonitorTarget) -> Result<Option<u32>, String> {
                 .map(|(index, _)| Some(index as u32 + 1))
         }
         MonitorTarget::Id(id) => {
-            crate::sys::windows::resolve_by_id(id).map(Some).ok_or_else(|| {
-                format!(
-                    "monitor with id '{id}' not found. connected: {}",
-                    crate::sys::windows::connected_displays_list()
-                )
-            })
+            crate::sys::windows::resolve_by_id(id)
+                .map(Some)
+                .ok_or_else(|| {
+                    format!(
+                        "monitor with id '{id}' not found. connected: {}",
+                        crate::sys::windows::connected_displays_list()
+                    )
+                })
         }
     }
 }

@@ -6,7 +6,6 @@
 //! active is reported as unchanged and never re-applied. `make_main`
 //! swaps desktop positions so a display becomes the primary (origin 0,0).
 
-use super::plan::{Planned, has_applied, plan_max, plan_set};
 use super::bindings::{
     CDS_TEST, CDS_UPDATEREGISTRY, ChangeDisplaySettingsExW, DISP_CHANGE_BADDUALVIEW,
     DISP_CHANGE_BADFLAGS, DISP_CHANGE_BADMODE, DISP_CHANGE_BADPARAM, DISP_CHANGE_FAILED,
@@ -17,6 +16,7 @@ use super::bindings::{
 use super::capabilities::{self, Mode};
 use super::fade;
 use super::layout::apply_with_rollback;
+use super::plan::{Planned, has_applied, plan_max, plan_set};
 use super::query;
 
 /// Refresh rate handling for the set command.
@@ -506,8 +506,11 @@ pub(crate) fn resolve_refresh(
     match policy {
         Refresh::Keep => Ok(current_refresh),
         Refresh::Fixed(r) => Ok(r),
-        Refresh::Max => best_refresh(modes, width, height)
-            .ok_or_else(|| format!("{display} does not support {width}x{height}. run rmod list to see supported modes")),
+        Refresh::Max => best_refresh(modes, width, height).ok_or_else(|| {
+            format!(
+                "{display} does not support {width}x{height}. run rmod list to see supported modes"
+            )
+        }),
     }
 }
 
