@@ -1,3 +1,11 @@
+// The cli integration tests drive the fake backend through RMOD_SYS_FAKE;
+// the fake backend is compiled only with the `fake` feature (or cfg(test)),
+// so these tests require `--features fake` (CI uses --all-features).
+#[cfg(not(feature = "fake"))]
+compile_error!(
+    "cli integration tests need the fake backend: run with --features fake (CI uses --all-features)"
+);
+
 use std::process::Command;
 
 pub const SERIAL_A: &str = "ABC12345678"; // RMOD Fake Monitor 1 (primary)
