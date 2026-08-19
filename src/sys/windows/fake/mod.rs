@@ -42,14 +42,42 @@ fn temperatures() -> &'static Mutex<Vec<u32>> {
     TEMPERATURES.get_or_init(|| Mutex::new(vec![6500, 6500]))
 }
 
+/// The 1-based number of the fake monitor currently at desktop origin (0,0),
+/// i.e. the main/primary display. Defaults to monitor 1. `make_main` swaps
+/// this and `revert_main` restores the previous value.
+static MAIN: OnceLock<Mutex<u32>> = OnceLock::new();
+
+fn current_main() -> u32 {
+    *MAIN.get_or_init(|| Mutex::new(1)).lock().unwrap()
+}
+
+/// Stack of previous main-monitor numbers so `revert_main` can restore the
+/// display that was primary before the latest `make_main`.
+static MAIN_PREVIOUS: OnceLock<Mutex<Vec<u32>>> = OnceLock::new();
+
+fn main_previous() -> &'static Mutex<Vec<u32>> {
+    MAIN_PREVIOUS.get_or_init(|| Mutex::new(vec![]))
+}
+
+/// Resets all mutable fake state (primary display, temperatures) to defaults.
+/// Intended for test isolation; the fake process state is per-test binary
+/// run, so this lets unit tests start from a known baseline.
+#[cfg(test)]
+pub(crate) fn reset_state() {
+    *MAIN.get_or_init(|| Mutex::new(1)).lock().unwrap() = 1;
+    main_previous().lock().unwrap().clear();
+    *temperatures().lock().unwrap() = vec![6500, 6500];
+}
+
 /// The monitor with the given 1-based number, or `None` when unknown.
 fn monitor(number: u32) -> Option<Monitor> {
+    let is_primary = number == current_main();
     match number {
         1 => Some(Monitor {
             number: 1,
             name: MONITOR_1_NAME.to_string(),
             device_name: MONITOR_1_NAME.to_string(),
-            is_primary: true,
+            is_primary,
             width: 1920,
             height: 1080,
             refresh: 60,
@@ -82,7 +110,7 @@ fn monitor(number: u32) -> Option<Monitor> {
             number: 2,
             name: MONITOR_2_NAME.to_string(),
             device_name: MONITOR_2_NAME.to_string(),
-            is_primary: false,
+            is_primary,
             width: 1920,
             height: 1080,
             refresh: 60,
@@ -118,7 +146,7 @@ fn monitor(number: u32) -> Option<Monitor> {
 /// Resolves a monitor target; `None` selects the primary fake monitor.
 fn resolve(target: Option<u32>) -> Result<Monitor, String> {
     match target {
-        None => Ok(monitor(1).expect("fake monitor 1 exists")),
+        None => monitor(current_main()).ok_or_else(|| "no primary monitor".to_string()),
         Some(n) => monitor(n).ok_or_else(|| {
             format!("monitor {n} not found. run rmod list to see connected displays")
         }),
@@ -312,24 +340,35 @@ pub(crate) fn revert(
     Ok(previous)
 }
 
-/// Promotes a fake monitor to the main display.
-pub(crate) fn make_main(monitor: u32, _names: &[String]) -> Result<MainOutcome<'_>, String> {
-    match monitor {
-        1 => Ok(MainOutcome::Unchanged(MONITOR_1_NAME.to_string())),
-        2 => Ok(MainOutcome::Applied(MainChange {
-            monitor: 2,
-            display: MONITOR_2_NAME.to_string(),
-            applied: vec![],
-            previous: vec![],
-        })),
-        n => Err(format!(
-            "monitor {n} not found. run rmod list to see connected displays"
-        )),
+/// Promotes a fake monitor to the main display, updating the fake primary
+/// state. Reverts via [`revert_main`], which restores the previous main.
+pub(crate) fn make_main(number: u32, _names: &[String]) -> Result<MainOutcome<'_>, String> {
+    let prev = current_main();
+    if number == prev {
+        return Ok(MainOutcome::Unchanged(display_label(
+            &monitor(number).expect("fake monitor exists"),
+        )));
     }
+    if monitor(number).is_none() {
+        return Err(format!(
+            "monitor {number} not found. run rmod list to see connected displays"
+        ));
+    }
+    *MAIN.get_or_init(|| Mutex::new(1)).lock().unwrap() = number;
+    main_previous().lock().unwrap().push(prev);
+    Ok(MainOutcome::Applied(MainChange {
+        monitor: number,
+        display: display_label(&monitor(number).expect("fake monitor exists")),
+        applied: vec![],
+        previous: vec![],
+    }))
 }
 
-/// Undoes a promotion; the fake never persists anything.
+/// Undoes a fake promotion by restoring the previous main display number.
 pub(crate) fn revert_main(_change: &MainChange<'_>) -> Result<(), String> {
+    if let Some(prev) = main_previous().lock().unwrap().pop() {
+        *MAIN.get_or_init(|| Mutex::new(1)).lock().unwrap() = prev;
+    }
     Ok(())
 }
 
@@ -517,6 +556,7 @@ mod tests {
 
     #[test]
     fn list_returns_two_monitors() {
+        reset_state();
         let monitors = list().unwrap();
         assert_eq!(monitors.len(), 2);
         assert!(monitors[0].is_primary);
@@ -525,6 +565,7 @@ mod tests {
 
     #[test]
     fn monitor_1_carries_task3_fake_values() {
+        reset_state();
         let m = monitor(1).unwrap();
         assert_eq!(m.physical_size_cm, Some((59.8, 33.6)));
         assert_eq!(m.gamma, Some(2.2));
@@ -681,26 +722,61 @@ mod tests {
 
     #[test]
     fn make_main_primary_is_unchanged() {
+        reset_state();
         assert_eq!(
             make_main(1, &[]),
-            Ok(MainOutcome::Unchanged(MONITOR_1_NAME.to_string()))
+            Ok(MainOutcome::Unchanged("RMOD Fake Monitor 1 [:1]".to_string()))
         );
     }
 
     #[test]
     fn make_main_second_is_applied() {
+        reset_state();
         match make_main(2, &[]).unwrap() {
-            MainOutcome::Applied(change) => assert_eq!(change.display, MONITOR_2_NAME),
+            MainOutcome::Applied(change) => assert_eq!(change.display, "RMOD Fake Monitor 2 [:2]"),
             MainOutcome::Unchanged(_) => panic!("monitor 2 is not primary"),
         }
+        reset_state();
     }
 
     #[test]
     fn make_main_unknown_is_error() {
+        reset_state();
         assert_eq!(
             make_main(99, &[]),
             Err("monitor 99 not found. run rmod list to see connected displays".to_string())
         );
+    }
+
+    #[test]
+    fn make_main_then_disable_then_revert_restores_primary() {
+        reset_state();
+        // Promote monitor 2 to main...
+        assert!(matches!(make_main(2, &[]).unwrap(), MainOutcome::Applied(_)));
+        // ...so the old primary (monitor 1) is no longer primary and can be
+        // detached without the "cannot detach the primary display" error.
+        let outcome = disable(Some(1)).unwrap();
+        assert!(matches!(outcome, AttachOutcome::Applied(_)));
+        // Reverting the promotion returns main to monitor 1.
+        let main_change = MainChange {
+            monitor: 2,
+            display: "x".to_string(),
+            applied: vec![],
+            previous: vec![],
+        };
+        revert_main(&main_change).unwrap();
+        assert_eq!(current_main(), 1);
+        reset_state();
+    }
+
+    #[test]
+    fn project_mode_flow_succeeds_in_fake() {
+        reset_state();
+        // Mirror of run_project: promote external, then detach the old primary.
+        assert!(matches!(make_main(2, &[]).unwrap(), MainOutcome::Applied(_)));
+        let detached = disable(Some(1)).unwrap();
+        assert!(matches!(detached, AttachOutcome::Applied(_)));
+        reset_state();
     }
 
     #[test]
@@ -801,6 +877,7 @@ mod tests {
 
     #[test]
     fn disable_primary_is_error() {
+        reset_state();
         assert_eq!(
             disable(None),
             Err("cannot detach the primary display".to_string())
@@ -813,6 +890,7 @@ mod tests {
 
     #[test]
     fn disable_second_monitor_is_applied() {
+        reset_state();
         match disable(Some(2)).unwrap() {
             AttachOutcome::Applied(change) => {
                 assert_eq!(change.monitor, 2);
@@ -827,6 +905,7 @@ mod tests {
 
     #[test]
     fn disable_unknown_monitor_is_error() {
+        reset_state();
         assert_eq!(
             disable(Some(99)),
             Err("monitor 99 not found. run rmod list to see connected displays".to_string())
@@ -835,6 +914,7 @@ mod tests {
 
     #[test]
     fn enable_always_unchanged_because_fake_monitors_are_attached() {
+        reset_state();
         match enable(Some(2)).unwrap() {
             AttachOutcome::Unchanged(change) => {
                 assert_eq!(change.monitor, 2);
@@ -847,6 +927,7 @@ mod tests {
 
     #[test]
     fn enable_unknown_monitor_is_error() {
+        reset_state();
         assert_eq!(
             enable(Some(99)),
             Err("monitor 99 not found. run rmod list to see connected displays".to_string())
@@ -855,6 +936,7 @@ mod tests {
 
     #[test]
     fn revert_attach_restores_fake_state() {
+        reset_state();
         let outcome = disable(Some(2)).unwrap();
         let AttachOutcome::Applied(change) = outcome else {
             panic!("disable must be applied");

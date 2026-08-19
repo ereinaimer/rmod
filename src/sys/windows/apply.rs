@@ -159,6 +159,8 @@ pub fn set(
 ) -> Result<ApplyOutcome, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
+    // Display label uses the EDID-derived monitor name (same as `list`),
+    // read for just this device rather than re-enumerating every display.
     let display = query::display_label_for(name, index as u32 + 1);
 
     let base = query::current_mode(name).unwrap_or_else(|| unsafe { std::mem::zeroed() });

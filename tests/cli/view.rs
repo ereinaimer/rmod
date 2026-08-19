@@ -61,21 +61,18 @@ fn view_extend_auto_arranges() {
 }
 
 #[test]
-fn view_project_disables_primary() {
+fn view_project_disables_primary_after_promotion() {
     let out = rmod(&["view", "project", "-y"]);
-    // Should succeed if there's an external monitor
-    assert!(
-        out.status.success() || out.status.code() == Some(2),
-        "stderr: {}",
-        stderr(&out)
-    );
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
     let text = stdout(&out);
-    if out.status.success() {
-        assert!(
-            text.contains("detached") || text.contains("already"),
-            "expected detached: {text}"
-        );
-    }
+    assert!(
+        text.contains("is now the main display"),
+        "expected external promoted to main: {text}"
+    );
+    assert!(
+        text.contains("detached"),
+        "expected the old primary to be detached: {text}"
+    );
 }
 
 #[test]

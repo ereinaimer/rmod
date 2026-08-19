@@ -195,6 +195,7 @@ pub(crate) fn display_label_for(name: &str, number: u32) -> String {
         Err(_) => display_label_with_edid(name, number, None),
     }
 }
+}
 
 /// Physical DPI from native pixel dimensions and the EDID panel size in
 /// centimeters, rounded to the nearest integer per axis. `None` when either
@@ -355,8 +356,21 @@ pub(crate) fn resolve_all(names: &[String]) -> Result<Vec<(usize, &str)>, String
 /// Finds a monitor by its EDID identifier (case-insensitive): the serial
 /// when the panel ships one, otherwise the EDID fingerprint. Returns the
 /// 1-based monitor number, or None if not found.
+/// Finds a monitor by its EDID identifier (case-insensitive): the serial
+/// when present, otherwise the EDID fingerprint. Returns the 1-based monitor
+/// number, or None if not found. Searches attached displays only.
 pub fn resolve_by_id(id: &str) -> Option<u32> {
-    let names = enumerate_devices();
+    resolve_by_id_in(&enumerate_devices(), id)
+}
+
+/// Like [`resolve_by_id`], but searches every display, attached or
+/// detached. Used for re-attaching a monitor that is currently detached
+/// from the desktop.
+pub fn resolve_by_id_all(id: &str) -> Option<u32> {
+    resolve_by_id_in(&enumerate_all_devices(), id)
+}
+
+fn resolve_by_id_in(names: &[String], id: &str) -> Option<u32> {
     for (i, name) in names.iter().enumerate() {
         // Read EDID data to get the serial and fingerprint
         if let Ok(edid) = read_edid_registry(name)

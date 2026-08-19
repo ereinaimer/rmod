@@ -462,11 +462,7 @@ pub(crate) fn options(rows: &[Flag]) -> String {
 pub(crate) fn commands(rows: &[(&'static str, &'static str)]) -> String {
     let flags: Vec<Flag> = rows
         .iter()
-        .map(|(name, doc)| Flag {
-            flag: name,
-            doc,
-            example: &[],
-        })
+        .map(|(name, doc)| Flag { flag: name, doc })
         .collect();
     options(&flags)
 }
@@ -493,6 +489,7 @@ pub(crate) fn temp_presets_table() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::flags::EXAMPLES;
     use crate::cli::parser::parse_from;
 
     /// Strip ANSI escape sequences used by the pages (`\x1b[4m`, `\x1b[0m`).
@@ -913,27 +910,13 @@ Examples:
     #[test]
     fn registry_flags_parse_successfully() {
         // parse_from skips argv[0], so each example is prefixed with the program name.
-        let registries = [
-            TOP_FLAGS,
-            LS_FLAGS,
-            SET_FLAGS,
-            LAYOUT_FLAGS,
-            MONITOR_FLAGS,
-            BRIGHTNESS_FLAGS,
-            CONTRAST_FLAGS,
-            TEMP_FLAGS,
-        ];
-        for flags in registries {
-            for f in flags {
-                let mut argv = vec!["rmod"];
-                argv.extend_from_slice(f.example);
-                assert!(
-                    parse_from(&argv).is_ok(),
-                    "flag {} should parse: {:?}",
-                    f.flag,
-                    f.example
-                );
-            }
+        for (flag, example) in EXAMPLES {
+            let mut argv = vec!["rmod"];
+            argv.extend_from_slice(example);
+            assert!(
+                parse_from(&argv).is_ok(),
+                "flag {flag} should parse: {example:?}"
+            );
         }
     }
 
@@ -973,12 +956,10 @@ Examples:
             Flag {
                 flag: "--caps",
                 doc: "List supported modes",
-                example: &[],
             },
             Flag {
                 flag: "-m, --monitor <MONITOR>",
                 doc: "Monitor number",
-                example: &[],
             },
         ];
         assert_eq!(
@@ -993,7 +974,6 @@ Examples:
             options(&[Flag {
                 flag: "--max",
                 doc: "Use the highest supported mode",
-                example: &[]
             }]),
             "  --max  Use the highest supported mode"
         );

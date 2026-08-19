@@ -2,13 +2,15 @@
 
 use crate::cli::parser::{Command, HelpTopic, MonitorTarget, ViewAction};
 use crate::sys::windows;
+use crate::sys::windows::attach::AttachOutcome;
 use crate::sys::windows::Monitor;
-use crate::sys::windows::attach::{AttachOutcome, disable::disable, enable::enable};
 use crate::sys::windows::{
     Direction, PlacementOutcome, apply_placement, caps_all_modes_for_device,
 };
 
-use super::{confirm_or_revert_all, confirm_or_revert_attach_all};
+use super::{
+    confirm_or_revert_all, confirm_or_revert_attach_all, confirm_or_revert_project,
+};
 
 /// Runs a parsed view action and returns the process exit code.
 pub(super) fn run_view(action: ViewAction, yes: bool) -> i32 {
@@ -166,64 +168,74 @@ fn run_extend(_yes: bool) -> i32 {
 
 /// Project: move desktop to external monitor (Second screen only).
 fn run_project(yes: bool) -> i32 {
-    match windows::list_detailed() {
-        Ok(monitors) => {
-            // Find primary monitor (laptop)
-            let primary = monitors.iter().find(|m| m.is_primary);
-            let primary = match primary {
-                Some(p) => p,
-                None => {
-                    eprintln!("error: no primary monitor found");
-                    return 2;
-                }
-            };
+    let monitors = match windows::list_detailed() {
+        Ok(monitors) => monitors,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    // Find primary monitor (laptop)
+    let primary = match monitors.iter().find(|m| m.is_primary) {
+        Some(p) => p,
+        None => {
+            eprintln!("error: no primary monitor found");
+            return 2;
+        }
+    };
 
-            // Find external monitor(s)
-            let externals: Vec<_> = monitors.iter().filter(|m| !m.is_primary).collect();
-            if externals.is_empty() {
-                eprintln!("error: no external monitor to enable");
-                return 2;
-            }
+    // Find external monitor(s)
+    let externals: Vec<_> = monitors.iter().filter(|m| !m.is_primary).collect();
+    if externals.is_empty() {
+        eprintln!("error: no external monitor to enable");
+        return 2;
+    }
 
-            // Pick the best external monitor (highest resolution)
-            let external = externals.iter().max_by_key(|m| m.width * m.height).unwrap();
+    // Pick the best external monitor (highest resolution)
+    let external = externals.iter().max_by_key(|m| m.width * m.height).unwrap();
 
-            // Promote external to primary (move to 0,0)
-            let names = windows::enumerate_devices();
-            match windows::make_main(external.number, &names) {
-                Ok(windows::MainOutcome::Unchanged(_)) => {
-                    println!("{} is already the main display", external.name);
-                }
-                Ok(windows::MainOutcome::Applied(change)) => {
-                    println!("{} is now the main display", change.display);
-                }
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    return 2;
-                }
-            }
-
-            // Now disable the laptop (which is no longer primary)
-            match disable(Some(primary.number)) {
-                Ok(windows::attach::AttachOutcome::Unchanged(change)) => {
-                    println!("{} is already detached", change.display);
-                    0
-                }
-                Ok(windows::attach::AttachOutcome::Applied(change)) => {
-                    println!("detached {}", change.display);
-                    confirm_or_revert_attach_all(vec![change], yes)
-                }
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    2
-                }
-            }
+    // Promote external to primary (move to 0,0)
+    let names = windows::enumerate_devices();
+    let mut main_change = None;
+    match windows::make_main(external.number, &names) {
+        Ok(windows::MainOutcome::Unchanged(_)) => {
+            println!("{} is already the main display", external.name);
+        }
+        Ok(windows::MainOutcome::Applied(change)) => {
+            println!("{} is now the main display", change.display);
+            main_change = Some(change);
         }
         Err(e) => {
             eprintln!("error: {e}");
-            2
+            return 2;
         }
     }
+
+    // Now disable the laptop (which is no longer primary)
+    let attach_change = match windows::disable(Some(primary.number)) {
+        Ok(windows::attach::AttachOutcome::Unchanged(change)) => {
+            println!("{} is already detached", change.display);
+            // Nothing to revert: the promotion (if any) stays. If the user
+            // later wants to undo, they can re-run `view extend`.
+            return 0;
+        }
+        Ok(windows::attach::AttachOutcome::Applied(change)) => {
+            println!("detached {}", change.display);
+            change
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            // The promotion was applied but the detach failed: roll back the
+            // promotion so the desktop isn't left half-migrated.
+            if let Some(change) = main_change.take()
+                && let Err(er) = windows::revert_main(&change)
+            {
+                eprintln!("error: {er}");
+            }
+            return 2;
+        }
+    };
+    confirm_or_revert_project(vec![attach_change], main_change, yes)
 }
 
 /// Single: enable only monitor N, disable all others.
@@ -249,7 +261,7 @@ fn run_single(monitor_target: MonitorTarget, yes: bool) -> i32 {
                 if monitor.number == monitor_num {
                     // Enable target
                     if monitor.width == 0 {
-                        match enable(Some(monitor.number)) {
+                        match windows::enable(Some(monitor.number)) {
                             Ok(AttachOutcome::Unchanged(change)) => {
                                 println!("{} is already attached", change.display);
                             }
@@ -266,7 +278,7 @@ fn run_single(monitor_target: MonitorTarget, yes: bool) -> i32 {
                 } else if !monitor.is_primary {
                     // Disable others (but not primary)
                     if monitor.width > 0 {
-                        match disable(Some(monitor.number)) {
+                        match windows::disable(Some(monitor.number)) {
                             Ok(AttachOutcome::Unchanged(change)) => {
                                 println!("{} is already detached", change.display);
                             }

@@ -218,6 +218,69 @@ pub(crate) fn confirm_or_revert_attach_all(applied: Vec<AttachChange>, yes: bool
     )
 }
 
+/// Runs the keep-or-revert confirmation for a project-mode change set: an
+/// attach/detach batch plus an optional primary promotion captured by
+/// [`windows::make_main`]. On revert the promotion is undone first (so the
+/// desktop returns to the original primary), then each attach change is
+/// reverted. An empty batch and no promotion (or `yes`) skips the prompt.
+pub(crate) fn confirm_or_revert_project(
+    applied: Vec<AttachChange>,
+    main_change: Option<windows::MainChange<'_>>,
+    yes: bool,
+) -> i32 {
+    confirm_or_revert_project_with(
+        applied,
+        main_change,
+        yes,
+        || confirm_keep(std::time::Duration::from_secs(CONFIRM_TIMEOUT_SECS)),
+    )
+}
+
+/// Injectable variant of [`confirm_or_revert_project`].
+fn confirm_or_revert_project_with<C>(
+    applied: Vec<AttachChange>,
+    main_change: Option<windows::MainChange<'_>>,
+    yes: bool,
+    confirm: C,
+) -> i32
+where
+    C: FnOnce() -> Confirm,
+{
+    if (applied.is_empty() && main_change.is_none()) || yes {
+        return 0;
+    }
+    match confirm() {
+        Confirm::Keep => 0,
+        Confirm::Revert => {
+            let mut failed = false;
+            if let Some(change) = main_change {
+                match windows::revert_main(&change) {
+                    Ok(()) => println!("{}", describe_main_revert(&change)),
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        failed = true;
+                    }
+                }
+            }
+            for change in &applied {
+                match windows::revert_attach(change) {
+                    Ok(()) => println!("{}", describe_attach_revert(change)),
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        failed = true;
+                    }
+                }
+            }
+            if failed { 2 } else { 0 }
+        }
+    }
+}
+
+/// Human-readable revert line for a primary promotion.
+fn describe_main_revert(change: &windows::MainChange<'_>) -> String {
+    format!("{} reverted to primary display", change.display)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

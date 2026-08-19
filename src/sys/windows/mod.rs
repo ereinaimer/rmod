@@ -470,13 +470,23 @@ pub fn get_temp(monitor: Option<u32>) -> Result<TempChange, String> {
 
 /// Finds a monitor by its EDID identifier (case-insensitive): the serial
 /// when present, otherwise the EDID fingerprint. Returns the 1-based monitor
-/// number, or None if not found.
+/// number, or None if not found. Searches attached displays only.
 pub fn resolve_by_id(id: &str) -> Option<u32> {
     #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
         return fake::resolve_by_id(id);
     }
     query::resolve_by_id(id)
+}
+
+/// Like [`resolve_by_id`], but matches a currently-detached monitor as well as
+/// attached ones, so a detached display can be targeted by id for re-attach.
+pub fn resolve_by_id_all(id: &str) -> Option<u32> {
+    if fake::enabled() {
+        fake::resolve_by_id(id)
+    } else {
+        query::resolve_by_id_all(id)
+    }
 }
 
 /// Resolves a 1-based monitor number to its device pair, validating that the

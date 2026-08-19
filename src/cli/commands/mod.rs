@@ -25,7 +25,7 @@ use crate::sys::windows::{AttachAction, AttachChange, Change, Mode};
 use completions::run_completions;
 use flow::{
     confirm_or_revert, confirm_or_revert_all, confirm_or_revert_attach,
-    confirm_or_revert_attach_all,
+    confirm_or_revert_attach_all, confirm_or_revert_project,
 };
 use layout::run_layout;
 use ls::{run_list, run_list_short};
@@ -145,7 +145,7 @@ pub fn resolve_target_all(target: &MonitorTarget) -> Result<Option<u32>, String>
         )
         .map(|(index, _)| Some(index as u32 + 1)),
         MonitorTarget::Id(id) => {
-            crate::sys::windows::resolve_by_id(id)
+            crate::sys::windows::resolve_by_id_all(id)
                 .map(Some)
                 .ok_or_else(|| {
                     format!(
