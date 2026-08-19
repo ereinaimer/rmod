@@ -824,8 +824,9 @@ mod tests {
             "path1".to_string(),
         );
         let key2 = ("C".to_string(), vec!["d2".to_string()]);
-        let object =
-            cache.get(&key2, |_| panic!("fetch must not run for a different device list"));
+        let object = cache.get(&key2, |_| {
+            panic!("fetch must not run for a different device list")
+        });
         assert_eq!(object, None);
     }
 }

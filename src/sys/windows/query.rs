@@ -5,10 +5,11 @@
 
 use super::bindings::{
     DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, DISPLAY_DEVICE_DISCONNECT, DISPLAY_DEVICE_MIRRORING_DRIVER,
-    DISPLAY_DEVICEW, DevmodeW, DisplayConfigPathInfo, ENUM_CURRENT_SETTINGS, ENUM_REGISTRY_SETTINGS,
-    EnumDisplayDevicesW, EnumDisplaySettingsW, HKEY_LOCAL_MACHINE, encode_wide, wide_to_string,
+    DISPLAY_DEVICEW, DevmodeW, DisplayConfigPathInfo, ENUM_CURRENT_SETTINGS,
+    ENUM_REGISTRY_SETTINGS, EnumDisplayDevicesW, EnumDisplaySettingsW, HKEY_LOCAL_MACHINE,
+    encode_wide, wide_to_string,
 };
-use super::capabilities::{enumerate_modes, normalize_modes, Mode};
+use super::capabilities::{Mode, enumerate_modes, normalize_modes};
 use super::edid::{
     self, EdidData, GamutCoverage, append_fingerprint, base_display_name, manufacturer_name,
     parse_edid,
@@ -598,7 +599,17 @@ mod tests {
             chromaticity: None,
             hdr: None,
         };
-        let monitor = describe_with_edid(0, "\\\\.\\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0, Vec::new(), None);
+        let monitor = describe_with_edid(
+            0,
+            "\\\\.\\DISPLAY_UNUSED",
+            String::new(),
+            &edid,
+            0,
+            0,
+            0,
+            Vec::new(),
+            None,
+        );
         assert_eq!(monitor.manufacturer, "Lenovo");
         let edid_unknown = EdidData {
             manufacturer: "XYZ".to_string(),
@@ -771,7 +782,17 @@ mod tests {
         b[26] = 0x05;
         b[27..35].copy_from_slice(&[0x8F, 0x52, 0x33, 0x66, 0x9A, 0x3D, 0x40, 0x51]);
         let edid = parse_edid(&b).unwrap();
-        let monitor = describe_with_edid(0, r"\\.\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0, Vec::new(), None);
+        let monitor = describe_with_edid(
+            0,
+            r"\\.\DISPLAY_UNUSED",
+            String::new(),
+            &edid,
+            0,
+            0,
+            0,
+            Vec::new(),
+            None,
+        );
         let gamut = monitor.gamut.expect("gamut from EDID chromaticity");
         assert_eq!(gamut.srgb, 100);
         assert!((gamut.p3 as i32 - 74).abs() <= 1, "p3 = {}", gamut.p3);
@@ -787,7 +808,17 @@ mod tests {
         b[132] = 0x06;
         b[133] = 0x02; // HDR10 static metadata
         let edid = parse_edid(&b).unwrap();
-        let monitor = describe_with_edid(0, r"\\.\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0, Vec::new(), None);
+        let monitor = describe_with_edid(
+            0,
+            r"\\.\DISPLAY_UNUSED",
+            String::new(),
+            &edid,
+            0,
+            0,
+            0,
+            Vec::new(),
+            None,
+        );
         let hdr = monitor.hdr.expect("hdr from EDID fallback");
         assert!(hdr.supported);
         assert!(!hdr.active);
