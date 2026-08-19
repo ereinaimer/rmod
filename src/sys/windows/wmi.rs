@@ -35,9 +35,11 @@ use super::com::{
 use super::registry::{read_reg_string, registry_keys};
 
 /// The WMI class exposing `WmiSetBrightness`.
-const CLASS_METHODS: &str = "WmiMonitorBrightnessMethods";
+#[allow(clippy::redundant_static_lifetimes)]
+const CLASS_METHODS: &'static str = "WmiMonitorBrightnessMethods";
 /// The WMI class exposing the current brightness.
-const CLASS_STATE: &str = "WmiMonitorBrightness";
+#[allow(clippy::redundant_static_lifetimes)]
+const CLASS_STATE: &'static str = "WmiMonitorBrightness";
 /// The method that writes a brightness level (0-100).
 const METHOD_SET: &str = "WmiSetBrightness";
 /// The key property common to every `root\wmi` monitor instance.
@@ -134,6 +136,45 @@ fn instance_path(class: &str, instance_name: &str) -> String {
         "{class}.{KEY_INSTANCE_NAME}=\"{}\"",
         instance_name.replace('\\', "\\\\")
     )
+}
+
+/// Last-known-good WMI instance paths, keyed by (class, device list).
+#[derive(Default)]
+struct InstancePathCache {
+    map: std::sync::Mutex<std::collections::HashMap<(String, Vec<String>), String>>,
+}
+
+impl InstancePathCache {
+    /// Returns the object for a cached path, evicting the entry when the
+    /// path no longer resolves. `None` on miss or eviction.
+    fn get(
+        &self,
+        key: &(String, Vec<String>),
+        fetch: impl Fn(&str) -> Option<*mut c_void>,
+    ) -> Option<*mut c_void> {
+        let mut map = self.map.lock().unwrap();
+        let path = map.get(key)?.clone();
+        match fetch(&path) {
+            Some(object) => Some(object),
+            None => {
+                map.remove(key);
+                None
+            }
+        }
+    }
+
+    /// Records the instance path that resolved for `key`.
+    fn store(&self, key: (String, Vec<String>), path: String) {
+        self.map.lock().unwrap().insert(key, path);
+    }
+}
+
+/// The process-wide last-known-good instance paths, so a resolved probe is
+/// reused across commands and `set`'s double resolve costs one `Get`.
+static INSTANCE_CACHE: std::sync::OnceLock<InstancePathCache> = std::sync::OnceLock::new();
+
+fn instance_cache() -> &'static InstancePathCache {
+    INSTANCE_CACHE.get_or_init(InstancePathCache::default)
 }
 
 /// A live connection to `root\wmi` through the scripting locator.
@@ -310,14 +351,31 @@ impl Session {
     ///
     /// The `InstanceName` is the PnP device instance from the registry plus
     /// the monitor ordinal; the correct ordinal is not known up front, so
-    /// each candidate path is tried until one resolves.
-    fn resolve_instance(&self, class: &str) -> Result<Option<*mut c_void>, String> {
+    /// each candidate path is tried until one resolves. The found path is
+    /// cached per (class, device list): a later call in this command or a
+    /// later command pays at most one `Get` instead of the full probe.
+    fn resolve_instance(&self, class: &'static str) -> Result<Option<*mut c_void>, String> {
+        let key = (class.to_string(), self.devices.clone());
+        if let Some(object) = instance_cache().get(&key, |p| self.connection.get_object(p).ok()) {
+            return Ok(Some(object));
+        }
+        let Some((object, path)) = self.probe_instance(class)? else {
+            return Ok(None);
+        };
+        instance_cache().store(key, path);
+        Ok(Some(object))
+    }
+
+    /// Probes every device × ordinal 0..4 until a candidate instance path
+    /// resolves, returning the object and the path that worked. `Ok(None)`
+    /// when no candidate resolves.
+    fn probe_instance(&self, class: &str) -> Result<Option<(*mut c_void, String)>, String> {
         for device in &self.devices {
             for ordinal in 0..4 {
                 let instance_name = format!("{device}_{ordinal}");
                 let path = instance_path(class, &instance_name);
                 if let Ok(object) = self.connection.get_object(&path) {
-                    return Ok(Some(object));
+                    return Ok(Some((object, path)));
                 }
             }
         }
@@ -721,5 +779,53 @@ mod tests {
             path,
             "WmiMonitorBrightnessMethods.InstanceName=\"DISPLAY\\\\LEN9059\\\\4&201f0991&1&UID8388688_0\""
         );
+    }
+
+    #[test]
+    fn cache_get_returns_object_for_valid_cached_path() {
+        let cache = InstancePathCache::default();
+        let key = ("C".to_string(), vec!["d1".to_string()]);
+        let dummy = std::ptr::dangling_mut::<c_void>();
+        cache.store(key.clone(), "path1".to_string());
+        let fetches = std::cell::Cell::new(0);
+        let object = cache.get(&key, |p| {
+            fetches.set(fetches.get() + 1);
+            (p == "path1").then_some(dummy)
+        });
+        assert_eq!(object, Some(dummy));
+        assert_eq!(fetches.get(), 1);
+        let object = cache.get(&key, |p| (p == "path1").then_some(dummy));
+        assert_eq!(object, Some(dummy));
+    }
+
+    #[test]
+    fn cache_get_evicts_stale_path() {
+        let cache = InstancePathCache::default();
+        let key = ("C".to_string(), vec!["d1".to_string()]);
+        cache.store(key.clone(), "path1".to_string());
+        assert_eq!(cache.get(&key, |_| None), None);
+        let object = cache.get(&key, |_| panic!("fetch must not run after eviction"));
+        assert_eq!(object, None);
+    }
+
+    #[test]
+    fn cache_get_miss_returns_none_without_calling_fetch() {
+        let cache = InstancePathCache::default();
+        let key = ("C".to_string(), vec!["d1".to_string()]);
+        let object = cache.get(&key, |_| panic!("fetch must not run on a miss"));
+        assert_eq!(object, None);
+    }
+
+    #[test]
+    fn cache_is_scoped_per_device_list() {
+        let cache = InstancePathCache::default();
+        cache.store(
+            ("C".to_string(), vec!["d1".to_string()]),
+            "path1".to_string(),
+        );
+        let key2 = ("C".to_string(), vec!["d2".to_string()]);
+        let object =
+            cache.get(&key2, |_| panic!("fetch must not run for a different device list"));
+        assert_eq!(object, None);
     }
 }
