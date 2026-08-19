@@ -656,6 +656,7 @@ mod tests {
             width: 1920,
             height: 1080,
             refresh: 60,
+            modes: Vec::new(),
             is_primary,
             manufacturer: "TEST".to_string(),
             serial: format!("SERIAL{number}"),

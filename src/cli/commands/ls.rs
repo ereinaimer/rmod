@@ -179,7 +179,7 @@ fn print_monitor_with_detached(m: &crate::sys::windows::Monitor, show_detached: 
     // Group modes by resolution
     let mut modes_by_res: std::collections::HashMap<(u32, u32), Vec<u32>> =
         std::collections::HashMap::new();
-    for mode in windows::caps_all_modes_for_device(&m.device_name) {
+    for mode in &m.modes {
         modes_by_res
             .entry((mode.width, mode.height))
             .or_default()

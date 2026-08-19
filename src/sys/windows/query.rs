@@ -8,7 +8,7 @@ use super::bindings::{
     DISPLAY_DEVICEW, DevmodeW, ENUM_CURRENT_SETTINGS, ENUM_REGISTRY_SETTINGS, EnumDisplayDevicesW,
     EnumDisplaySettingsW, HKEY_LOCAL_MACHINE, encode_wide, wide_to_string,
 };
-use super::capabilities::{enumerate_modes, normalize_modes};
+use super::capabilities::{enumerate_modes, normalize_modes, Mode};
 use super::edid::{
     self, EdidData, GamutCoverage, append_fingerprint, base_display_name, manufacturer_name,
     parse_edid,
@@ -33,6 +33,9 @@ pub struct Monitor {
     pub height: u32,
     /// Current refresh rate in Hz.
     pub refresh: u32,
+    /// Every supported mode of the display, sorted ascending by
+    /// resolution then refresh rate.
+    pub modes: Vec<Mode>,
     /// Desktop x coordinate from the current mode.
     #[allow(dead_code)]
     pub x: i32,
@@ -219,6 +222,7 @@ pub(crate) fn describe(index: usize, name: &str) -> Monitor {
         width: mode.as_ref().map_or(0, |m| m.dm_pels_width),
         height: mode.as_ref().map_or(0, |m| m.dm_pels_height),
         refresh: mode.as_ref().map_or(0, |m| m.dm_display_frequency),
+        modes: Vec::new(),
         x: mode.as_ref().map_or(0, |m| m.dm_position.x),
         y: mode.as_ref().map_or(0, |m| m.dm_position.y),
         manufacturer: String::new(),
@@ -245,6 +249,7 @@ pub(crate) fn describe(index: usize, name: &str) -> Monitor {
 ///
 /// `name` is the Win32 device name; `display_name` is the name shown in
 /// output (EDID-derived when available).
+#[allow(clippy::too_many_arguments)]
 fn describe_with_edid(
     index: usize,
     name: &str,
@@ -253,6 +258,7 @@ fn describe_with_edid(
     native_width: u32,
     native_height: u32,
     native_refresh: u32,
+    modes: Vec<Mode>,
 ) -> Monitor {
     let mode = current_mode(name);
     let path = match_path(name);
@@ -266,6 +272,7 @@ fn describe_with_edid(
         width: mode.as_ref().map_or(0, |m| m.dm_pels_width),
         height: mode.as_ref().map_or(0, |m| m.dm_pels_height),
         refresh: mode.as_ref().map_or(0, |m| m.dm_display_frequency),
+        modes,
         x: mode.as_ref().map_or(0, |m| m.dm_position.x),
         y: mode.as_ref().map_or(0, |m| m.dm_position.y),
         manufacturer: manufacturer_name(&edid.manufacturer)
@@ -546,6 +553,7 @@ fn list_detailed_from_names(names: Vec<String>) -> Result<Vec<Monitor>, String> 
             native_width,
             native_height,
             native_refresh,
+            modes,
         );
         monitors.push(monitor);
     }
@@ -581,7 +589,7 @@ mod tests {
             chromaticity: None,
             hdr: None,
         };
-        let monitor = describe_with_edid(0, "\\\\.\\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0);
+        let monitor = describe_with_edid(0, "\\\\.\\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0, Vec::new());
         assert_eq!(monitor.manufacturer, "Lenovo");
         let edid_unknown = EdidData {
             manufacturer: "XYZ".to_string(),
@@ -595,6 +603,7 @@ mod tests {
             0,
             0,
             0,
+            Vec::new(),
         );
         assert_eq!(monitor.manufacturer, "XYZ");
     }
@@ -709,6 +718,7 @@ mod tests {
             edid.native_width,
             edid.native_height,
             edid.native_refresh,
+            Vec::new(),
         );
         assert_eq!(monitor.physical_size_cm, Some((60.0, 34.0)));
         // 1920*2.54/60 = 81.28 -> 81; 1080*2.54/34 = 80.72 -> 81
@@ -732,6 +742,7 @@ mod tests {
             1920,
             1080,
             60,
+            Vec::new(),
         );
         assert_eq!(monitor.physical_size_cm, None);
         assert_eq!(monitor.dpi_physical, None);
@@ -748,7 +759,7 @@ mod tests {
         b[26] = 0x05;
         b[27..35].copy_from_slice(&[0x8F, 0x52, 0x33, 0x66, 0x9A, 0x3D, 0x40, 0x51]);
         let edid = parse_edid(&b).unwrap();
-        let monitor = describe_with_edid(0, r"\\.\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0);
+        let monitor = describe_with_edid(0, r"\\.\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0, Vec::new());
         let gamut = monitor.gamut.expect("gamut from EDID chromaticity");
         assert_eq!(gamut.srgb, 100);
         assert!((gamut.p3 as i32 - 74).abs() <= 1, "p3 = {}", gamut.p3);
@@ -764,11 +775,66 @@ mod tests {
         b[132] = 0x06;
         b[133] = 0x02; // HDR10 static metadata
         let edid = parse_edid(&b).unwrap();
-        let monitor = describe_with_edid(0, r"\\.\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0);
+        let monitor = describe_with_edid(0, r"\\.\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0, Vec::new());
         let hdr = monitor.hdr.expect("hdr from EDID fallback");
         assert!(hdr.supported);
         assert!(!hdr.active);
         assert_eq!(hdr.formats, vec!["HDR10"]);
+    }
+
+    #[test]
+    fn describe_with_edid_carries_modes() {
+        let edid = EdidData {
+            name: None,
+            manufacturer: String::new(),
+            product_code: 0,
+            serial: String::new(),
+            fingerprint: String::new(),
+            manufactured_week: 0,
+            manufactured_year: 0,
+            native_width: 0,
+            native_height: 0,
+            native_refresh: 0,
+            physical_size_cm: None,
+            gamma: None,
+            chromaticity: None,
+            hdr: None,
+        };
+        let modes = vec![
+            crate::sys::windows::capabilities::Mode {
+                width: 1920,
+                height: 1080,
+                refresh: 60,
+            },
+            crate::sys::windows::capabilities::Mode {
+                width: 2560,
+                height: 1440,
+                refresh: 144,
+            },
+        ];
+        let expected = vec![
+            crate::sys::windows::capabilities::Mode {
+                width: 1920,
+                height: 1080,
+                refresh: 60,
+            },
+            crate::sys::windows::capabilities::Mode {
+                width: 2560,
+                height: 1440,
+                refresh: 144,
+            },
+        ];
+        let monitor = describe_with_edid(
+            0,
+            r"\\.\DISPLAY_UNUSED",
+            String::new(),
+            &edid,
+            0,
+            0,
+            0,
+            modes,
+        );
+        assert_eq!(monitor.modes, expected);
     }
 
     #[test]
