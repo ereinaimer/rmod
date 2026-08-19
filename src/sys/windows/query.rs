@@ -179,6 +179,17 @@ pub(crate) fn display_label_with_edid(
     format!("{friendly} [:{number}]")
 }
 
+/// Human-readable display label for a single device from its cached EDID:
+/// the EDID display name (see [`display_name_for`]) plus the 1-based monitor
+/// number. Falls back to the friendly-name label when the EDID cannot be
+/// read.
+pub(crate) fn display_label_for(name: &str, number: u32) -> String {
+    match read_edid_registry(name) {
+        Ok(edid) => format!("{} [:{number}]", display_name_for(&edid, name)),
+        Err(_) => display_label_with_edid(name, number, None),
+    }
+}
+
 /// Physical DPI from native pixel dimensions and the EDID panel size in
 /// centimeters, rounded to the nearest integer per axis. `None` when either
 /// native dimension is zero or either size is not positive.
@@ -472,6 +483,22 @@ pub fn list_all_detailed() -> Result<Vec<Monitor>, String> {
     list_detailed_from_names(names)
 }
 
+/// Builds the display name shown in output from a device's cached EDID:
+/// the EDID product name when present, otherwise the manufacturer brand
+/// plus the hex product code, otherwise the Windows friendly name — with
+/// the EDID fingerprint suffix appended when available.
+fn display_name_for(edid: &EdidData, name: &str) -> String {
+    append_fingerprint(
+        base_display_name(
+            edid.name.clone(),
+            &edid.manufacturer,
+            edid.product_code,
+            friendly_name(&encode_wide(name)).unwrap_or_else(|| name.to_string()),
+        ),
+        &edid.fingerprint,
+    )
+}
+
 fn list_detailed_from_names(names: Vec<String>) -> Result<Vec<Monitor>, String> {
     if names.is_empty() {
         return Err("no displays found, connect a display and try again".to_string());
@@ -497,15 +524,7 @@ fn list_detailed_from_names(names: Vec<String>) -> Result<Vec<Monitor>, String> 
             hdr: None,
         });
 
-        let display_name = append_fingerprint(
-            base_display_name(
-                edid.name.clone(),
-                &edid.manufacturer,
-                edid.product_code,
-                friendly_name(&encode_wide(name)).unwrap_or_else(|| name.to_string()),
-            ),
-            &edid.fingerprint,
-        );
+        let display_name = display_name_for(&edid, name);
 
         let modes = normalize_modes(enumerate_modes(name));
         let (native_width, native_height, native_refresh) =
@@ -578,6 +597,78 @@ mod tests {
             0,
         );
         assert_eq!(monitor.manufacturer, "XYZ");
+    }
+
+    #[test]
+    fn display_name_for_composes_edid_label() {
+        let edid = EdidData {
+            name: Some("Dell U2723QE".to_string()),
+            manufacturer: "DEL".to_string(),
+            product_code: 0x41C7,
+            serial: String::new(),
+            fingerprint: "a1b2c3d4".to_string(),
+            manufactured_week: 0,
+            manufactured_year: 0,
+            native_width: 0,
+            native_height: 0,
+            native_refresh: 0,
+            physical_size_cm: None,
+            gamma: None,
+            chromaticity: None,
+            hdr: None,
+        };
+        assert_eq!(
+            display_name_for(&edid, r"\\.\DISPLAY_UNUSED"),
+            "Dell U2723QE [a1b2c3d4]"
+        );
+    }
+
+    #[test]
+    fn display_name_for_uses_brand_and_product_code_without_product_name() {
+        let edid = EdidData {
+            name: None,
+            manufacturer: "DEL".to_string(),
+            product_code: 0x41C7,
+            serial: String::new(),
+            fingerprint: "a1b2c3d4".to_string(),
+            manufactured_week: 0,
+            manufactured_year: 0,
+            native_width: 0,
+            native_height: 0,
+            native_refresh: 0,
+            physical_size_cm: None,
+            gamma: None,
+            chromaticity: None,
+            hdr: None,
+        };
+        assert_eq!(
+            display_name_for(&edid, r"\\.\DISPLAY_UNUSED"),
+            "Dell 41C7 [a1b2c3d4]"
+        );
+    }
+
+    #[test]
+    fn display_name_for_omits_empty_fingerprint() {
+        let edid = EdidData {
+            name: Some("Dell U2723QE".to_string()),
+            manufacturer: "DEL".to_string(),
+            product_code: 0x41C7,
+            serial: String::new(),
+            fingerprint: String::new(),
+            manufactured_week: 0,
+            manufactured_year: 0,
+            native_width: 0,
+            native_height: 0,
+            native_refresh: 0,
+            physical_size_cm: None,
+            gamma: None,
+            chromaticity: None,
+            hdr: None,
+        };
+        assert_eq!(
+            display_name_for(&edid, r"\\.\DISPLAY_UNUSED"),
+            "Dell U2723QE"
+        );
     }
 
     #[test]
