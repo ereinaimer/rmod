@@ -195,7 +195,6 @@ pub(crate) fn display_label_for(name: &str, number: u32) -> String {
         Err(_) => display_label_with_edid(name, number, None),
     }
 }
-}
 
 /// Physical DPI from native pixel dimensions and the EDID panel size in
 /// centimeters, rounded to the nearest integer per axis. `None` when either
