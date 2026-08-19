@@ -90,21 +90,19 @@ pub(crate) fn from_edid(edid_hdr: Option<&edid::HdrEdid>) -> Option<HdrInfo> {
     }
 }
 
-/// The display-config API query: enumerates active paths, matches the one
-/// whose GDI source device name equals `device_name` (reported by the OS
-/// itself via `DisplayConfigGetDeviceInfo`, so no adapter-LUID
-/// assumptions). `None` on every FFI failure.
-///
-/// The matched path also carries the connector type (`output_technology`),
-/// so HDR and the `Connector:` value share a single enumeration.
-pub(crate) fn match_path(device_name: &str) -> Option<DisplayConfigPathInfo> {
+/// Enumerates every active display-config path with the GDI source device
+/// name the OS reports for it (via `DisplayConfigGetDeviceInfo`): one
+/// `GetDisplayConfigBufferSizes` + `QueryDisplayConfig` + one
+/// `DisplayConfigGetDeviceInfo` per path. Paths whose source name cannot be
+/// read are skipped. Empty on every FFI failure.
+pub(crate) fn match_paths() -> Vec<(String, DisplayConfigPathInfo)> {
     let mut num_paths: u32 = 0;
     let mut num_modes: u32 = 0;
     let rc = unsafe {
         GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut num_paths, &mut num_modes)
     };
     if rc != ERROR_SUCCESS || num_paths == 0 {
-        return None;
+        return Vec::new();
     }
     let mut paths: Vec<DisplayConfigPathInfo> = vec![unsafe { mem::zeroed() }; num_paths as usize];
     let mut modes: Vec<DisplayConfigModeInfo> = vec![unsafe { mem::zeroed() }; num_modes as usize];
@@ -119,11 +117,12 @@ pub(crate) fn match_path(device_name: &str) -> Option<DisplayConfigPathInfo> {
         )
     };
     if rc != ERROR_SUCCESS {
-        return None;
+        return Vec::new();
     }
     paths.truncate(num_paths as usize);
 
-    for path in paths.iter() {
+    let mut named = Vec::new();
+    for path in paths.into_iter() {
         let mut name: DisplayConfigSourceDeviceName = unsafe { mem::zeroed() };
         name.header = DisplayConfigDeviceInfoHeader {
             device_info_type: DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
@@ -135,13 +134,34 @@ pub(crate) fn match_path(device_name: &str) -> Option<DisplayConfigPathInfo> {
         if rc != ERROR_SUCCESS {
             continue;
         }
-        let matches = source_name_from_wide(&name.view_gdi_device_name)
-            .is_some_and(|n| n.eq_ignore_ascii_case(device_name));
-        if matches {
-            return Some(*path);
+        if let Some(source_name) = source_name_from_wide(&name.view_gdi_device_name) {
+            named.push((source_name, path));
         }
     }
-    None
+    named
+}
+
+/// Finds the path whose GDI source device name equals `name` in the table
+/// returned by [`match_paths`], case-insensitively; the first match wins.
+pub(crate) fn find_path<'a>(
+    paths: &'a [(String, DisplayConfigPathInfo)],
+    name: &str,
+) -> Option<&'a DisplayConfigPathInfo> {
+    paths
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(name))
+        .map(|(_, path)| path)
+}
+
+/// The display-config API query: enumerates active paths, matches the one
+/// whose GDI source device name equals `device_name` (reported by the OS
+/// itself via `DisplayConfigGetDeviceInfo`, so no adapter-LUID
+/// assumptions). `None` on every FFI failure.
+///
+/// The matched path also carries the connector type (`output_technology`),
+/// so HDR and the `Connector:` value share a single enumeration.
+pub(crate) fn match_path(device_name: &str) -> Option<DisplayConfigPathInfo> {
+    find_path(&match_paths(), device_name).copied()
 }
 
 /// Reads the advanced-color capability of the display addressed by
@@ -422,5 +442,32 @@ mod tests {
         let mut path: DisplayConfigPathInfo = unsafe { mem::zeroed() };
         path.target_info.output_technology = 5;
         assert_eq!(connector_for_path(&path), "HDMI");
+    }
+
+    #[test]
+    fn find_path_matches_source_name_case_insensitively() {
+        let path: DisplayConfigPathInfo = unsafe { mem::zeroed() };
+        let paths = vec![(r"\\.\DISPLAY1".to_string(), path)];
+        assert!(find_path(&paths, r"\\.\display1").is_some());
+    }
+
+    #[test]
+    fn find_path_returns_first_match() {
+        let first: DisplayConfigPathInfo = unsafe { mem::zeroed() };
+        let mut second: DisplayConfigPathInfo = unsafe { mem::zeroed() };
+        second.target_info.output_technology = 5;
+        let paths = vec![
+            (r"\\.\DISPLAY1".to_string(), first),
+            (r"\\.\DISPLAY1".to_string(), second),
+        ];
+        let found = find_path(&paths, r"\\.\DISPLAY1").unwrap();
+        assert_eq!(found.target_info.output_technology, 0);
+    }
+
+    #[test]
+    fn find_path_missing_returns_none() {
+        let path: DisplayConfigPathInfo = unsafe { mem::zeroed() };
+        let paths = vec![(r"\\.\DISPLAY1".to_string(), path)];
+        assert_eq!(find_path(&paths, r"\\.\DISPLAY2"), None);
     }
 }

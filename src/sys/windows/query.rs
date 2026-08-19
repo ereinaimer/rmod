@@ -5,16 +5,17 @@
 
 use super::bindings::{
     DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, DISPLAY_DEVICE_DISCONNECT, DISPLAY_DEVICE_MIRRORING_DRIVER,
-    DISPLAY_DEVICEW, DevmodeW, ENUM_CURRENT_SETTINGS, ENUM_REGISTRY_SETTINGS, EnumDisplayDevicesW,
-    EnumDisplaySettingsW, HKEY_LOCAL_MACHINE, encode_wide, wide_to_string,
+    DISPLAY_DEVICEW, DevmodeW, DisplayConfigPathInfo, ENUM_CURRENT_SETTINGS, ENUM_REGISTRY_SETTINGS,
+    EnumDisplayDevicesW, EnumDisplaySettingsW, HKEY_LOCAL_MACHINE, encode_wide, wide_to_string,
 };
 use super::capabilities::{enumerate_modes, normalize_modes, Mode};
 use super::edid::{
     self, EdidData, GamutCoverage, append_fingerprint, base_display_name, manufacturer_name,
     parse_edid,
 };
-use super::hdr::{HdrInfo, connector_for_path, hdr_from_path, match_path, query_connector};
+use super::hdr::{HdrInfo, connector_for_path, hdr_from_path, match_paths, query_connector};
 use super::registry::{enum_subkeys, read_reg_binary};
+use std::collections::HashMap;
 
 /// A display attached to the desktop and its current settings.
 pub struct Monitor {
@@ -248,7 +249,8 @@ pub(crate) fn describe(index: usize, name: &str) -> Monitor {
 /// Builds a [`Monitor`] with full EDID data.
 ///
 /// `name` is the Win32 device name; `display_name` is the name shown in
-/// output (EDID-derived when available).
+/// output (EDID-derived when available). `path` is the monitor's
+/// display-config path from the batched [`match_paths`] table.
 #[allow(clippy::too_many_arguments)]
 fn describe_with_edid(
     index: usize,
@@ -259,9 +261,9 @@ fn describe_with_edid(
     native_height: u32,
     native_refresh: u32,
     modes: Vec<Mode>,
+    path: Option<&DisplayConfigPathInfo>,
 ) -> Monitor {
     let mode = current_mode(name);
-    let path = match_path(name);
     Monitor {
         number: index as u32 + 1,
         name: display_name,
@@ -291,8 +293,8 @@ fn describe_with_edid(
             .physical_size_cm
             .and_then(|size| physical_dpi(native_width, native_height, size)),
         gamut: edid.chromaticity.map(|c| edid::gamut_coverage(&c)),
-        hdr: hdr_from_path(path.as_ref(), edid.hdr.as_ref()),
-        connector: path.as_ref().map(connector_for_path),
+        hdr: hdr_from_path(path, edid.hdr.as_ref()),
+        connector: path.map(connector_for_path),
         bits_per_pel: mode.as_ref().map_or(0, |m| m.dm_bits_per_pel),
         log_pixels: mode.as_ref().map_or(0, |m| m.dm_log_pixels as u32),
         orientation: mode.as_ref().map_or(0, |m| m.dm_display_orientation),
@@ -511,6 +513,11 @@ fn list_detailed_from_names(names: Vec<String>) -> Result<Vec<Monitor>, String> 
         return Err("no displays found, connect a display and try again".to_string());
     }
 
+    let path_by_name: HashMap<String, DisplayConfigPathInfo> = match_paths()
+        .into_iter()
+        .map(|(source_name, path)| (source_name.to_ascii_lowercase(), path))
+        .collect();
+
     let mut monitors = Vec::new();
 
     for (index, name) in names.iter().enumerate() {
@@ -554,6 +561,7 @@ fn list_detailed_from_names(names: Vec<String>) -> Result<Vec<Monitor>, String> 
             native_height,
             native_refresh,
             modes,
+            path_by_name.get(&name.to_ascii_lowercase()),
         );
         monitors.push(monitor);
     }
@@ -589,7 +597,7 @@ mod tests {
             chromaticity: None,
             hdr: None,
         };
-        let monitor = describe_with_edid(0, "\\\\.\\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0, Vec::new());
+        let monitor = describe_with_edid(0, "\\\\.\\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0, Vec::new(), None);
         assert_eq!(monitor.manufacturer, "Lenovo");
         let edid_unknown = EdidData {
             manufacturer: "XYZ".to_string(),
@@ -604,6 +612,7 @@ mod tests {
             0,
             0,
             Vec::new(),
+            None,
         );
         assert_eq!(monitor.manufacturer, "XYZ");
     }
@@ -719,6 +728,7 @@ mod tests {
             edid.native_height,
             edid.native_refresh,
             Vec::new(),
+            None,
         );
         assert_eq!(monitor.physical_size_cm, Some((60.0, 34.0)));
         // 1920*2.54/60 = 81.28 -> 81; 1080*2.54/34 = 80.72 -> 81
@@ -743,6 +753,7 @@ mod tests {
             1080,
             60,
             Vec::new(),
+            None,
         );
         assert_eq!(monitor.physical_size_cm, None);
         assert_eq!(monitor.dpi_physical, None);
@@ -759,7 +770,7 @@ mod tests {
         b[26] = 0x05;
         b[27..35].copy_from_slice(&[0x8F, 0x52, 0x33, 0x66, 0x9A, 0x3D, 0x40, 0x51]);
         let edid = parse_edid(&b).unwrap();
-        let monitor = describe_with_edid(0, r"\\.\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0, Vec::new());
+        let monitor = describe_with_edid(0, r"\\.\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0, Vec::new(), None);
         let gamut = monitor.gamut.expect("gamut from EDID chromaticity");
         assert_eq!(gamut.srgb, 100);
         assert!((gamut.p3 as i32 - 74).abs() <= 1, "p3 = {}", gamut.p3);
@@ -775,7 +786,7 @@ mod tests {
         b[132] = 0x06;
         b[133] = 0x02; // HDR10 static metadata
         let edid = parse_edid(&b).unwrap();
-        let monitor = describe_with_edid(0, r"\\.\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0, Vec::new());
+        let monitor = describe_with_edid(0, r"\\.\DISPLAY_UNUSED", String::new(), &edid, 0, 0, 0, Vec::new(), None);
         let hdr = monitor.hdr.expect("hdr from EDID fallback");
         assert!(hdr.supported);
         assert!(!hdr.active);
@@ -833,6 +844,7 @@ mod tests {
             0,
             0,
             modes,
+            None,
         );
         assert_eq!(monitor.modes, expected);
     }
