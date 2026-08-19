@@ -1,10 +1,12 @@
 //! Fake Windows backend used by the integration test suite.
 //!
-//! When the `RMOD_SYS_FAKE` environment variable is `1`, every public entry
-//! point in [`super`] delegates here instead of calling Win32, so running
-//! the tests never changes the host display. The fake presents a fixed
-//! world: two monitors with a known set of supported modes and error
-//! strings matching the real backend.
+//! This module is compiled only with `feature = "fake"` or in tests; the
+//! integration tests run with `--features fake`. When the `RMOD_SYS_FAKE`
+//! environment variable is `1`, every public entry point in [`super`]
+//! delegates here instead of calling Win32, so running the tests never
+//! changes the host display. The fake presents a fixed world: two monitors
+//! with a known set of supported modes and error strings matching the real
+//! backend.
 
 use std::sync::{Mutex, OnceLock};
 

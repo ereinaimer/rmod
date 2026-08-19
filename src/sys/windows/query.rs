@@ -46,6 +46,7 @@ pub struct Monitor {
     /// EDID manufacturer code (3-char, e.g., "DEL").
     pub manufacturer: String,
     /// EDID serial number, kept for targeting when a panel ships one.
+    #[allow(dead_code)]
     pub serial: String,
     /// EDID fingerprint: the first 8 hex chars of the SHA-256 of the raw
     /// EDID blob. Every panel has one (serials are often absent), so this is

@@ -17,6 +17,9 @@ path = "src/main.rs"
 
 [dependencies]
 
+[features]
+fake = []
+
 [profile.release]
 opt-level = "z"
 lto = "fat"

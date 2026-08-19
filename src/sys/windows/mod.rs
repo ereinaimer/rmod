@@ -7,6 +7,8 @@
 //! [`capabilities`]; mode application in [`apply`]. When the `RMOD_SYS_FAKE`
 //! environment variable is `1`, every entry point delegates to [`fake`]
 //! instead, so the integration tests never touch the real display.
+//! `RMOD_SYS_FAKE` is honored only in builds with the `fake` feature (or in
+//! tests); release builds exclude the fake backend entirely.
 
 pub(crate) mod apply;
 pub(crate) mod attach;
@@ -17,6 +19,7 @@ pub(crate) mod com;
 pub(crate) mod contrast;
 pub(crate) mod edid;
 mod fade;
+#[cfg(any(test, feature = "fake"))]
 mod fake;
 pub(crate) mod hdr;
 mod layout;
@@ -43,6 +46,7 @@ pub use temp::TempChange;
 /// # Errors
 /// Returns `Err` when no displays are attached.
 pub fn list() -> Result<Vec<Monitor>, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
         return fake::list();
     }
@@ -63,6 +67,7 @@ pub fn list() -> Result<Vec<Monitor>, String> {
 /// # Errors
 /// Returns `Err` when no displays are attached or EDID reading fails.
 pub fn list_detailed() -> Result<Vec<Monitor>, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
         return fake::list_detailed();
     }
@@ -74,6 +79,7 @@ pub fn list_detailed() -> Result<Vec<Monitor>, String> {
 /// # Errors
 /// Returns `Err` when no displays are found or EDID reading fails.
 pub fn list_all_detailed() -> Result<Vec<Monitor>, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
         return fake::list_detailed();
     }
@@ -83,11 +89,11 @@ pub fn list_all_detailed() -> Result<Vec<Monitor>, String> {
 /// Returns every supported mode for a device by name, sorted ascending by
 /// resolution then refresh rate.
 pub fn caps_all_modes_for_device(name: &str) -> Vec<Mode> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::caps_all_modes_for_device(name)
-    } else {
-        capabilities::caps_all_modes_for_device(name)
+        return fake::caps_all_modes_for_device(name);
     }
+    capabilities::caps_all_modes_for_device(name)
 }
 
 /// Applies a resolution, refresh and rotation policy to a display.
@@ -103,11 +109,11 @@ pub fn set(
     refresh: Refresh,
     orientation: Option<u32>,
 ) -> Result<ApplyOutcome, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::set(monitor, width, height, refresh, orientation)
-    } else {
-        apply::set(monitor, width, height, refresh, orientation)
+        return fake::set(monitor, width, height, refresh, orientation);
     }
+    apply::set(monitor, width, height, refresh, orientation)
 }
 
 /// Applies the best supported mode to a display.
@@ -117,11 +123,11 @@ pub fn set(
 /// # Errors
 /// Unknown monitor, no supported modes, or a rejected display change.
 pub fn max(monitor: Option<u32>, orientation: Option<u32>) -> Result<ApplyOutcome, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::max(monitor, orientation)
-    } else {
-        apply::max(monitor, orientation)
+        return fake::max(monitor, orientation);
     }
+    apply::max(monitor, orientation)
 }
 
 /// Applies the best supported mode to every attached display.
@@ -132,11 +138,11 @@ pub fn max(monitor: Option<u32>, orientation: Option<u32>) -> Result<ApplyOutcom
 /// No displays found, a display with no supported modes, or preflight
 /// failures.
 pub fn max_all(orientation: Option<u32>) -> Result<Vec<ApplyOutcome>, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::max_all(orientation)
-    } else {
-        apply::max_all(orientation)
+        return fake::max_all(orientation);
     }
+    apply::max_all(orientation)
 }
 
 /// Re-applies a previously captured mode to undo a display change.
@@ -150,11 +156,11 @@ pub fn revert(
     previous: Mode,
     previous_orientation: Option<u32>,
 ) -> Result<Mode, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::revert(monitor, previous, previous_orientation)
-    } else {
-        apply::revert(monitor, previous, previous_orientation)
+        return fake::revert(monitor, previous, previous_orientation);
     }
+    apply::revert(monitor, previous, previous_orientation)
 }
 
 /// Promotes a display to the main display by swapping desktop positions.
@@ -164,11 +170,11 @@ pub fn revert(
 /// # Errors
 /// Unknown monitor or a rejected position change.
 pub fn make_main(monitor: u32, names: &[String]) -> Result<MainOutcome<'_>, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::make_main(monitor, names)
-    } else {
-        apply::make_main(monitor, names)
+        return fake::make_main(monitor, names);
     }
+    apply::make_main(monitor, names)
 }
 
 /// Undoes a promotion by re-applying the original positions.
@@ -178,11 +184,11 @@ pub fn make_main(monitor: u32, names: &[String]) -> Result<MainOutcome<'_>, Stri
 /// # Errors
 /// A rejected position change.
 pub fn revert_main(change: &MainChange<'_>) -> Result<(), String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::revert_main(change)
-    } else {
-        apply::revert_main(change)
+        return fake::revert_main(change);
     }
+    apply::revert_main(change)
 }
 
 /// Places a monitor on a side of another monitor, swapping positions when
@@ -200,12 +206,12 @@ pub fn apply_placement(
     direction: Direction,
     reference: u32,
 ) -> Result<PlacementOutcome, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::apply_placement(monitor, direction, reference)
-    } else {
-        let names = query::enumerate_devices();
-        layout::apply_placement(monitor, direction, reference, &names)
+        return fake::apply_placement(monitor, direction, reference);
     }
+    let names = query::enumerate_devices();
+    layout::apply_placement(monitor, direction, reference, &names)
 }
 
 /// Undoes a placement by re-applying the original positions.
@@ -216,11 +222,11 @@ pub fn apply_placement(
 /// A rejected position change.
 #[allow(dead_code)]
 pub fn revert_placement(change: &PlacementChange) -> Result<(), String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::revert_placement(change)
-    } else {
-        layout::revert_placement(change)
+        return fake::revert_placement(change);
     }
+    layout::revert_placement(change)
 }
 
 /// Applies a resolution, refresh and rotation policy to every attached
@@ -237,31 +243,31 @@ pub fn set_all(
     refresh: Refresh,
     orientation: Option<u32>,
 ) -> Result<Vec<ApplyOutcome>, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::set_all(width, height, refresh, orientation)
-    } else {
-        apply::set_all(width, height, refresh, orientation)
+        return fake::set_all(width, height, refresh, orientation);
     }
+    apply::set_all(width, height, refresh, orientation)
 }
 
 /// Enumerates the device names of every display attached to the desktop.
 pub(crate) fn enumerate_devices() -> Vec<String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::enumerate_devices()
-    } else {
-        query::enumerate_devices()
+        return fake::enumerate_devices();
     }
+    query::enumerate_devices()
 }
 
 /// Enumerates the device names of every display, attached or detached,
 /// skipping mirroring drivers and disconnected virtual devices.
 #[allow(dead_code)]
 pub(crate) fn enumerate_all_devices() -> Vec<String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::enumerate_all_devices()
-    } else {
-        query::enumerate_all_devices()
+        return fake::enumerate_all_devices();
     }
+    query::enumerate_all_devices()
 }
 
 /// Detaches the monitor with the 1-based number `monitor` (the primary
@@ -274,11 +280,11 @@ pub(crate) fn enumerate_all_devices() -> Vec<String> {
 /// rejected display change.
 #[allow(dead_code)]
 pub fn disable(monitor: Option<u32>) -> Result<AttachOutcome, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::disable(monitor)
-    } else {
-        attach::disable::disable(monitor)
+        return fake::disable(monitor);
     }
+    attach::disable::disable(monitor)
 }
 
 /// Re-attaches the monitor with the 1-based number `monitor` (the primary
@@ -291,11 +297,11 @@ pub fn disable(monitor: Option<u32>) -> Result<AttachOutcome, String> {
 /// modes, or a rejected display change.
 #[allow(dead_code)]
 pub fn enable(monitor: Option<u32>) -> Result<AttachOutcome, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::enable(monitor)
-    } else {
-        attach::enable::enable(monitor)
+        return fake::enable(monitor);
     }
+    attach::enable::enable(monitor)
 }
 
 /// Undoes an attach/detach change by re-applying the previous device mode.
@@ -306,11 +312,11 @@ pub fn enable(monitor: Option<u32>) -> Result<AttachOutcome, String> {
 /// Unknown monitor or a rejected display change.
 #[allow(dead_code)]
 pub fn revert_attach(change: &AttachChange) -> Result<(), String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::revert_attach(change)
-    } else {
-        attach::revert_attach(change)
+        return fake::revert_attach(change);
     }
+    attach::revert_attach(change)
 }
 
 /// Puts every monitor to sleep (backlight off). Returns the label of every
@@ -322,11 +328,11 @@ pub fn revert_attach(change: &AttachChange) -> Result<(), String> {
 /// No displays attached.
 #[allow(dead_code)]
 pub fn sleep_monitor() -> Result<Vec<String>, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::sleep_monitor()
-    } else {
-        power::sleep_monitor()
+        return fake::sleep_monitor();
     }
+    power::sleep_monitor()
 }
 
 /// Wakes every monitor (backlight on). Returns the label of every affected
@@ -338,11 +344,11 @@ pub fn sleep_monitor() -> Result<Vec<String>, String> {
 /// No displays attached.
 #[allow(dead_code)]
 pub fn wake_monitor() -> Result<Vec<String>, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::wake_monitor()
-    } else {
-        power::wake_monitor()
+        return fake::wake_monitor();
     }
+    power::wake_monitor()
 }
 
 /// Returns the current mode for a specific monitor number (1-based).
@@ -350,11 +356,11 @@ pub fn wake_monitor() -> Result<Vec<String>, String> {
 /// # Errors
 /// Unknown monitor.
 pub fn get_current_mode(monitor: u32) -> Result<Monitor, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::get_current_mode(monitor)
-    } else {
-        query::get_current_mode(monitor)
+        return fake::get_current_mode(monitor);
     }
+    query::get_current_mode(monitor)
 }
 
 /// Returns the current mode for the primary monitor.
@@ -362,11 +368,11 @@ pub fn get_current_mode(monitor: u32) -> Result<Monitor, String> {
 /// # Errors
 /// No displays found.
 pub fn get_primary_mode() -> Result<Monitor, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::get_primary_mode()
-    } else {
-        query::get_primary_mode()
+        return fake::get_primary_mode();
     }
+    query::get_primary_mode()
 }
 
 /// Sets a display's brightness, auto-detecting the backend chain
@@ -388,11 +394,11 @@ pub fn set_brightness(
     value: BrightnessValue,
     via: Option<BrightnessBackend>,
 ) -> Result<BrightnessOutcome, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::set_brightness(monitor, value, via)
-    } else {
-        brightness::set_brightness(monitor, value, via)
+        return fake::set_brightness(monitor, value, via);
     }
+    brightness::set_brightness(monitor, value, via)
 }
 
 /// Sets a display's contrast, auto-detecting the backend chain
@@ -407,22 +413,22 @@ pub fn set_contrast(
     value: u32,
     via: Option<ContrastBackend>,
 ) -> Result<ContrastOutcome, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::set_contrast(monitor, value, via)
-    } else {
-        contrast::set_contrast(monitor, value, via)
+        return fake::set_contrast(monitor, value, via);
     }
+    contrast::set_contrast(monitor, value, via)
 }
 
 /// Resets contrast to defaults (DDC VCP 100 + gamma identity) for a display.
 /// # Errors
 /// Unknown monitor or no contrast-control path available.
 pub fn reset_contrast(monitor: Option<u32>) -> Result<ContrastOutcome, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::reset_contrast(monitor)
-    } else {
-        contrast::reset_contrast(monitor)
+        return fake::reset_contrast(monitor);
     }
+    contrast::reset_contrast(monitor)
 }
 
 /// Sets the color temperature of a display (see [`temp::set_temp`]).
@@ -430,11 +436,11 @@ pub fn reset_contrast(monitor: Option<u32>) -> Result<ContrastOutcome, String> {
 /// # Errors
 /// Unknown monitor or a display that rejects the gamma ramp change.
 pub fn set_temp(monitor: Option<u32>, kelvin: u32) -> Result<TempChange, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::set_temp(monitor, kelvin)
-    } else {
-        temp::set_temp(monitor, kelvin)
+        return fake::set_temp(monitor, kelvin);
     }
+    temp::set_temp(monitor, kelvin)
 }
 
 /// Restores the identity gamma ramp of a display (see [`temp::reset_temp`]).
@@ -442,11 +448,11 @@ pub fn set_temp(monitor: Option<u32>, kelvin: u32) -> Result<TempChange, String>
 /// # Errors
 /// Unknown monitor or a display that rejects the gamma ramp change.
 pub fn reset_temp(monitor: Option<u32>) -> Result<TempChange, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::reset_temp(monitor)
-    } else {
-        temp::reset_temp(monitor)
+        return fake::reset_temp(monitor);
     }
+    temp::reset_temp(monitor)
 }
 
 /// Reports the current approximate temperature of a display (see
@@ -455,22 +461,22 @@ pub fn reset_temp(monitor: Option<u32>) -> Result<TempChange, String> {
 /// # Errors
 /// Unknown monitor or a display that rejects the gamma ramp read.
 pub fn get_temp(monitor: Option<u32>) -> Result<TempChange, String> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::get_temp(monitor)
-    } else {
-        temp::get_temp(monitor)
+        return fake::get_temp(monitor);
     }
+    temp::get_temp(monitor)
 }
 
 /// Finds a monitor by its EDID identifier (case-insensitive): the serial
 /// when present, otherwise the EDID fingerprint. Returns the 1-based monitor
 /// number, or None if not found.
 pub fn resolve_by_id(id: &str) -> Option<u32> {
+    #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        fake::resolve_by_id(id)
-    } else {
-        query::resolve_by_id(id)
+        return fake::resolve_by_id(id);
     }
+    query::resolve_by_id(id)
 }
 
 /// Resolves a 1-based monitor number to its device pair, validating that the
