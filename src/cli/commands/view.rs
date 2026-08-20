@@ -2,15 +2,13 @@
 
 use crate::cli::parser::{Command, HelpTopic, MonitorTarget, ViewAction};
 use crate::sys::windows;
-use crate::sys::windows::attach::AttachOutcome;
 use crate::sys::windows::Monitor;
+use crate::sys::windows::attach::AttachOutcome;
 use crate::sys::windows::{
     Direction, PlacementOutcome, apply_placement, caps_all_modes_for_device,
 };
 
-use super::{
-    confirm_or_revert_all, confirm_or_revert_attach_all, confirm_or_revert_project,
-};
+use super::{confirm_or_revert_all, confirm_or_revert_attach_all, confirm_or_revert_project};
 
 /// Runs a parsed view action and returns the process exit code.
 pub(super) fn run_view(action: ViewAction, yes: bool) -> i32 {

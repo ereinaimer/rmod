@@ -228,12 +228,9 @@ pub(crate) fn confirm_or_revert_project(
     main_change: Option<windows::MainChange<'_>>,
     yes: bool,
 ) -> i32 {
-    confirm_or_revert_project_with(
-        applied,
-        main_change,
-        yes,
-        || confirm_keep(std::time::Duration::from_secs(CONFIRM_TIMEOUT_SECS)),
-    )
+    confirm_or_revert_project_with(applied, main_change, yes, || {
+        confirm_keep(std::time::Duration::from_secs(CONFIRM_TIMEOUT_SECS))
+    })
 }
 
 /// Injectable variant of [`confirm_or_revert_project`].

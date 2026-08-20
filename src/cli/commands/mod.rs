@@ -144,16 +144,14 @@ pub fn resolve_target_all(target: &MonitorTarget) -> Result<Option<u32>, String>
             &crate::sys::windows::enumerate_all_devices(),
         )
         .map(|(index, _)| Some(index as u32 + 1)),
-        MonitorTarget::Id(id) => {
-            crate::sys::windows::resolve_by_id_all(id)
-                .map(Some)
-                .ok_or_else(|| {
-                    format!(
-                        "monitor with id '{id}' not found. connected: {}",
-                        crate::sys::windows::connected_displays_list()
-                    )
-                })
-        }
+        MonitorTarget::Id(id) => crate::sys::windows::resolve_by_id_all(id)
+            .map(Some)
+            .ok_or_else(|| {
+                format!(
+                    "monitor with id '{id}' not found. connected: {}",
+                    crate::sys::windows::connected_displays_list()
+                )
+            }),
     }
 }
 

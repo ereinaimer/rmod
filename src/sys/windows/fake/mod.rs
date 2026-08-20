@@ -725,7 +725,9 @@ mod tests {
         reset_state();
         assert_eq!(
             make_main(1, &[]),
-            Ok(MainOutcome::Unchanged("RMOD Fake Monitor 1 [:1]".to_string()))
+            Ok(MainOutcome::Unchanged(
+                "RMOD Fake Monitor 1 [:1]".to_string()
+            ))
         );
     }
 
@@ -752,7 +754,10 @@ mod tests {
     fn make_main_then_disable_then_revert_restores_primary() {
         reset_state();
         // Promote monitor 2 to main...
-        assert!(matches!(make_main(2, &[]).unwrap(), MainOutcome::Applied(_)));
+        assert!(matches!(
+            make_main(2, &[]).unwrap(),
+            MainOutcome::Applied(_)
+        ));
         // ...so the old primary (monitor 1) is no longer primary and can be
         // detached without the "cannot detach the primary display" error.
         let outcome = disable(Some(1)).unwrap();
@@ -773,7 +778,10 @@ mod tests {
     fn project_mode_flow_succeeds_in_fake() {
         reset_state();
         // Mirror of run_project: promote external, then detach the old primary.
-        assert!(matches!(make_main(2, &[]).unwrap(), MainOutcome::Applied(_)));
+        assert!(matches!(
+            make_main(2, &[]).unwrap(),
+            MainOutcome::Applied(_)
+        ));
         let detached = disable(Some(1)).unwrap();
         assert!(matches!(detached, AttachOutcome::Applied(_)));
         reset_state();
