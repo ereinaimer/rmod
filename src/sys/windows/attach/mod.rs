@@ -70,7 +70,7 @@ fn build_disable_devmode(current: &DevmodeW) -> DevmodeW {
 /// modes.
 fn restore_devmode(name: &str, display: &str, base: &DevmodeW) -> Result<DevmodeW, String> {
     let registry = query::registry_mode(name);
-    let best = capabilities::normalize_modes(capabilities::enumerate_modes(name)).pop();
+    let best = capabilities::best_mode_unsorted(capabilities::enumerate_modes(name));
     choose_restore(registry, best, base, display)
 }
 

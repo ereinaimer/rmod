@@ -49,6 +49,14 @@ pub fn caps_all_modes_for_device(name: &str) -> Vec<Mode> {
     normalize_modes(enumerate_modes(name))
 }
 
+/// Returns the best mode (highest resolution, then highest refresh) in a single
+/// pass without sorting. Equivalent to `normalize_modes(modes).pop()` but O(n).
+pub fn best_mode_unsorted(modes: Vec<Mode>) -> Option<Mode> {
+    modes
+        .into_iter()
+        .max_by_key(|m| (m.width, m.height, m.refresh))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
