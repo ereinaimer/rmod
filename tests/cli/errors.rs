@@ -120,10 +120,50 @@ fn old_syntax_orientation_only_is_error() {
 }
 
 #[test]
-fn main_command_removed_shows_hint() {
+fn main_command_removed_errors_generically() {
     let out = rmod(&["main", "2"]);
     assert_eq!(out.status.code(), Some(2));
     let err = stderr(&out);
-    assert!(err.contains("unknown command main"), "stderr: {err}");
-    assert!(err.contains("layout"), "missing migration hint: {err}");
+    assert!(
+        err.contains("unknown command main. run rmod --help to list commands"),
+        "stderr: {err}"
+    );
+    assert!(
+        !err.contains("layout"),
+        "no migration hint may remain: {err}"
+    );
+}
+
+#[test]
+fn legacy_root_commands_are_unknown() {
+    for cmd in ["monitor", "view", "main", "disable", "off", "enable", "on"] {
+        let out = rmod(&[cmd]);
+        assert_eq!(out.status.code(), Some(2), "command {cmd}");
+        let err = stderr(&out);
+        assert!(
+            err.contains(&format!(
+                "unknown command {cmd}. run rmod --help to list commands"
+            )),
+            "command {cmd}: stderr: {err}"
+        );
+    }
+}
+
+#[test]
+fn legacy_two_level_forms_are_unknown() {
+    for (args, word) in [
+        (&["monitor", "brightness", "60"][..], "monitor"),
+        (&["view", "mirror"][..], "view"),
+        (&["disable", "-m", "2"][..], "disable"),
+    ] {
+        let out = rmod(args);
+        assert_eq!(out.status.code(), Some(2), "args: {args:?}");
+        let err = stderr(&out);
+        assert!(
+            err.contains(&format!(
+                "unknown command {word}. run rmod --help to list commands"
+            )),
+            "args: {args:?}: stderr: {err}"
+        );
+    }
 }

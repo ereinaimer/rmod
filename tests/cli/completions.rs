@@ -9,19 +9,39 @@ fn completions_outputs_powershell_script() {
         text.contains("Register-ArgumentCompleter"),
         "missing Register-ArgumentCompleter: {text}"
     );
-    assert!(text.contains("rmod"), "missing rmod command name: {text}");
-    assert!(text.contains("list"), "missing list subcommand: {text}");
-    assert!(text.contains("set"), "missing set subcommand: {text}");
-    assert!(text.contains("layout"), "missing layout subcommand: {text}");
     assert!(
-        text.contains("monitor"),
-        "missing monitor subcommand: {text}"
+        text.contains("-CommandName 'rmod'"),
+        "missing -CommandName 'rmod': {text}"
     );
-    assert!(text.contains("temp"), "missing temp subcommand: {text}");
-    assert!(text.contains("view"), "missing view subcommand: {text}");
+    for verb in [
+        "list",
+        "set",
+        "layout",
+        "brightness",
+        "contrast",
+        "temp",
+        "attach",
+        "detach",
+        "sleep",
+        "wake",
+        "mirror",
+        "extend",
+        "project",
+        "single",
+        "completions",
+    ] {
+        assert!(
+            text.contains(&format!("'{verb}', '{verb}'")),
+            "missing root verb {verb}: {text}"
+        );
+    }
     assert!(
-        text.contains("completions"),
-        "missing completions subcommand: {text}"
+        !text.contains("rmod;view"),
+        "legacy rmod;view chain still present: {text}"
+    );
+    assert!(
+        !text.contains("rmod;monitor"),
+        "legacy rmod;monitor chain still present: {text}"
     );
 }
 

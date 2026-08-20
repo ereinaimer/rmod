@@ -2,12 +2,12 @@
 //!
 //! [`confirm_or_revert`] and [`confirm_or_revert_all`] ask whether to keep
 //! an applied display change (or batch), reverting to the previous mode
-//! when declined; the `attach` variants do the same for attach/detach
-//! changes. Each flow has an injectable `_with` variant so the Revert
-//! branch is testable without touching the display.
+//! when declined; the `attach` and `placements` variants do the same for
+//! attach/detach and layout changes. Each flow has an injectable `_with`
+//! variant so the Revert branch is testable without touching the display.
 
 use crate::cli::{Confirm, confirm_keep};
-use crate::sys::windows::{self, AttachChange, Change, Mode};
+use crate::sys::windows::{self, AttachChange, Change, Mode, PlacementChange};
 
 use super::{CONFIRM_TIMEOUT_SECS, describe_revert};
 
@@ -218,6 +218,56 @@ pub(crate) fn confirm_or_revert_attach_all(applied: Vec<AttachChange>, yes: bool
     )
 }
 
+/// Runs the keep-or-revert confirmation for a batch of placement changes;
+/// an empty batch or `yes` skips the prompt. Reverts every change to the
+/// previous layout, printing one revert line per change.
+///
+/// Injectable variant of [`confirm_or_revert_placements`]: the confirm
+/// prompt and the revert call are supplied as closures so tests can
+/// exercise the Revert branch without touching the display.
+fn confirm_or_revert_placements_with<C, R>(
+    applied: Vec<PlacementChange>,
+    yes: bool,
+    confirm: C,
+    revert: R,
+) -> i32
+where
+    C: FnOnce() -> Confirm,
+    R: Fn(&PlacementChange) -> Result<(), String>,
+{
+    if applied.is_empty() || yes {
+        return 0;
+    }
+    match confirm() {
+        Confirm::Keep => 0,
+        Confirm::Revert => {
+            let mut failed = false;
+            for change in &applied {
+                match revert(change) {
+                    Ok(()) => println!("reverted to the previous layout"),
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        failed = true;
+                    }
+                }
+            }
+            if failed { 2 } else { 0 }
+        }
+    }
+}
+
+/// Runs the keep-or-revert confirmation for a batch of placement changes;
+/// an empty batch or `yes` skips the prompt. Reverts every change to the
+/// previous layout, printing one revert line per change.
+pub(crate) fn confirm_or_revert_placements(applied: Vec<PlacementChange>, yes: bool) -> i32 {
+    confirm_or_revert_placements_with(
+        applied,
+        yes,
+        || confirm_keep(std::time::Duration::from_secs(CONFIRM_TIMEOUT_SECS)),
+        windows::revert_placement,
+    )
+}
+
 /// Runs the keep-or-revert confirmation for a project-mode change set: an
 /// attach/detach batch plus an optional primary promotion captured by
 /// [`windows::make_main`]. On revert the promotion is undone first (so the
@@ -282,7 +332,7 @@ fn describe_main_revert(change: &windows::MainChange<'_>) -> String {
 mod tests {
     use super::*;
     use crate::sys::windows::bindings::DevmodeW;
-    use crate::sys::windows::{AttachAction, AttachChange, Change, Mode};
+    use crate::sys::windows::{AttachAction, AttachChange, Change, Mode, PlacementChange};
 
     fn mode(width: u32, height: u32, refresh: u32) -> Mode {
         Mode {
@@ -316,6 +366,16 @@ mod tests {
             display: "Generic PnP Monitor [:2]".to_string(),
             action,
             previous,
+        }
+    }
+
+    fn placement_change(display: &str) -> PlacementChange {
+        PlacementChange {
+            display: display.to_string(),
+            reference_display: "Generic PnP Monitor [:1]".to_string(),
+            swap_display: None,
+            applied: vec![("\\\\.\\DISPLAY2".to_string(), unsafe { std::mem::zeroed() })],
+            previous: vec![("\\\\.\\DISPLAY2".to_string(), unsafe { std::mem::zeroed() })],
         }
     }
 
@@ -628,6 +688,97 @@ mod tests {
         ];
         let calls = std::cell::Cell::new(0);
         let result = confirm_or_revert_attach_all_with(
+            applied,
+            false,
+            || Confirm::Revert,
+            |_| {
+                let n = calls.get() + 1;
+                calls.set(n);
+                if n == 2 {
+                    Err("boom".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert_eq!(result, 2);
+    }
+
+    #[test]
+    fn confirm_or_revert_placements_empty_skips_confirm_and_revert() {
+        assert_eq!(
+            confirm_or_revert_placements_with(
+                Vec::new(),
+                false,
+                || panic!("confirm must be skipped for an empty batch"),
+                |_| panic!("revert must be skipped for an empty batch"),
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn confirm_or_revert_placements_yes_skips_confirm_and_revert() {
+        let applied = vec![
+            placement_change("Generic PnP Monitor [:2]"),
+            placement_change("Generic PnP Monitor [:3]"),
+        ];
+        assert_eq!(
+            confirm_or_revert_placements_with(
+                applied,
+                true,
+                || panic!("confirm must be skipped when yes is set"),
+                |_| panic!("revert must be skipped when yes is set"),
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn confirm_or_revert_placements_keep_skips_revert() {
+        let applied = vec![placement_change("Generic PnP Monitor [:2]")];
+        assert_eq!(
+            confirm_or_revert_placements_with(
+                applied,
+                false,
+                || Confirm::Keep,
+                |_| panic!("revert must be skipped on Keep"),
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn confirm_or_revert_placements_revert_reverts_every_change() {
+        let applied = vec![
+            placement_change("Generic PnP Monitor [:2]"),
+            placement_change("Generic PnP Monitor [:3]"),
+        ];
+        let calls = std::cell::RefCell::new(Vec::new());
+        let result = confirm_or_revert_placements_with(
+            applied,
+            false,
+            || Confirm::Revert,
+            |change| {
+                calls.borrow_mut().push(change.display.clone());
+                Ok(())
+            },
+        );
+        assert_eq!(result, 0);
+        let calls = calls.into_inner();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0], "Generic PnP Monitor [:2]");
+        assert_eq!(calls[1], "Generic PnP Monitor [:3]");
+    }
+
+    #[test]
+    fn confirm_or_revert_placements_second_revert_error_returns_2() {
+        let applied = vec![
+            placement_change("Generic PnP Monitor [:2]"),
+            placement_change("Generic PnP Monitor [:3]"),
+        ];
+        let calls = std::cell::Cell::new(0);
+        let result = confirm_or_revert_placements_with(
             applied,
             false,
             || Confirm::Revert,

@@ -18,26 +18,13 @@ pub(crate) struct Flag {
     pub(crate) doc: &'static str,  // e.g. "Resolution width (requires --height)"
 }
 
-pub(crate) const TOP_COMMANDS: &[(&str, &str)] = &[
-    ("list", "List displays and their current settings"),
-    ("set", "Apply resolution, refresh rate, and orientation"),
-    ("layout", "Show the monitor arrangement or move monitors"),
-    ("monitor", "Attach, detach, sleep, or wake monitors"),
-    ("temp", "Set or show the display color temperature"),
-    (
-        "view",
-        "Switch between mirror, extend, project, and single display modes",
-    ),
-    ("completions", "Output PowerShell tab-completion script"),
-];
-
 pub(crate) const TOP_FLAGS: &[Flag] = &[
     Flag {
         flag: "-h, --help",
         doc: "Print help",
     },
     Flag {
-        flag: "--version",
+        flag: "-V, --version",
         doc: "Print version",
     },
 ];
@@ -131,10 +118,68 @@ pub(crate) const LAYOUT_FLAGS: &[Flag] = &[
     },
 ];
 
-pub(crate) const VIEW_FLAGS: &[Flag] = &[
+pub(crate) const ATTACH_FLAGS: &[Flag] = &[
     Flag {
         flag: "-m, --monitor",
-        doc: "Monitor ID or number for single mode (default: primary)",
+        doc: "Monitor ID, 'primary', or 'all' (required)",
+    },
+    Flag {
+        flag: "-y, --yes",
+        doc: "Skip the confirmation prompt",
+    },
+    Flag {
+        flag: "-h, --help",
+        doc: "Print help",
+    },
+];
+
+pub(crate) const SLEEP_FLAGS: &[Flag] = &[Flag {
+    flag: "-h, --help",
+    doc: "Print help",
+}];
+
+pub(crate) const WAKE_FLAGS: &[Flag] = &[Flag {
+    flag: "-h, --help",
+    doc: "Print help",
+}];
+
+pub(crate) const MIRROR_FLAGS: &[Flag] = &[
+    Flag {
+        flag: "-y, --yes",
+        doc: "Skip the confirmation prompt",
+    },
+    Flag {
+        flag: "-h, --help",
+        doc: "Print help",
+    },
+];
+
+pub(crate) const EXTEND_FLAGS: &[Flag] = &[
+    Flag {
+        flag: "-y, --yes",
+        doc: "Skip the confirmation prompt",
+    },
+    Flag {
+        flag: "-h, --help",
+        doc: "Print help",
+    },
+];
+
+pub(crate) const PROJECT_FLAGS: &[Flag] = &[
+    Flag {
+        flag: "-y, --yes",
+        doc: "Skip the confirmation prompt",
+    },
+    Flag {
+        flag: "-h, --help",
+        doc: "Print help",
+    },
+];
+
+pub(crate) const SINGLE_FLAGS: &[Flag] = &[
+    Flag {
+        flag: "-m, --monitor",
+        doc: "Monitor ID or number (default: primary)",
     },
     Flag {
         flag: "-y, --yes",
@@ -150,21 +195,6 @@ pub(crate) const COMPLETIONS_FLAGS: &[Flag] = &[Flag {
     flag: "-h, --help",
     doc: "Print help",
 }];
-
-pub(crate) const MONITOR_FLAGS: &[Flag] = &[
-    Flag {
-        flag: "-m, --monitor",
-        doc: "Monitor ID, 'primary', or 'all' (required)",
-    },
-    Flag {
-        flag: "-y, --yes",
-        doc: "Skip the confirmation prompt",
-    },
-    Flag {
-        flag: "-h, --help",
-        doc: "Print help",
-    },
-];
 
 pub(crate) const BRIGHTNESS_FLAGS: &[Flag] = &[
     Flag {
@@ -277,23 +307,32 @@ pub(crate) const EXAMPLES: &[(&str, &[&str])] = &[
         &["layout", "-m", "a1b2c3d4", "--primary", "-y"],
     ),
     ("-h, --help", &["layout", "--help"]),
-    ("-m, --monitor", &["view", "single", "-m", "2"]),
-    ("-y, --yes", &["view", "mirror", "-y"]),
-    ("-h, --help", &["view", "--help"]),
     ("-h, --help", &["completions", "--help"]),
-    ("-m, --monitor", &["monitor", "detach", "-m", "a1b2c3d4"]),
-    ("-y, --yes", &["monitor", "detach", "-m", "a1b2c3d4", "-y"]),
-    ("-h, --help", &["monitor", "--help"]),
-    ("-m, --monitor", &["monitor", "brightness", "60", "-m", "2"]),
-    ("-v, --via", &["monitor", "brightness", "60", "-v", "ddc"]),
-    (
-        "min, max, boost",
-        &["monitor", "brightness", "min", "-m", "2"],
-    ),
-    ("-h, --help", &["monitor", "brightness", "--help"]),
-    ("-m, --monitor", &["monitor", "contrast", "60", "-m", "2"]),
-    ("-v, --via", &["monitor", "contrast", "60", "-v", "ddc"]),
-    ("-h, --help", &["monitor", "contrast", "--help"]),
     ("-m, --monitor", &["temp", "-m", "a1b2c3d4", "4000"]),
     ("-h, --help", &["temp", "--help"]),
+    ("-m, --monitor", &["brightness", "60", "-m", "2"]),
+    ("-v, --via", &["brightness", "60", "-v", "ddc"]),
+    ("min, max, boost", &["brightness", "min", "-m", "2"]),
+    ("-h, --help", &["brightness", "--help"]),
+    ("-m, --monitor", &["contrast", "60", "-m", "2"]),
+    ("-v, --via", &["contrast", "60", "-v", "ddc"]),
+    ("-h, --help", &["contrast", "--help"]),
+    ("-m, --monitor", &["attach", "-m", "a1b2c3d4"]),
+    ("-y, --yes", &["attach", "-m", "a1b2c3d4", "-y"]),
+    ("-h, --help", &["attach", "--help"]),
+    ("-m, --monitor", &["detach", "-m", "a1b2c3d4"]),
+    ("-y, --yes", &["detach", "-m", "a1b2c3d4", "-y"]),
+    ("-h, --help", &["detach", "--help"]),
+    ("-h, --help", &["sleep", "--help"]),
+    ("-h, --help", &["wake", "--help"]),
+    ("-y, --yes", &["mirror", "-y"]),
+    ("-h, --help", &["mirror", "--help"]),
+    ("-y, --yes", &["extend", "-y"]),
+    ("-h, --help", &["extend", "--help"]),
+    ("-y, --yes", &["project", "-y"]),
+    ("-h, --help", &["project", "--help"]),
+    ("-m, --monitor", &["single", "-m", "2"]),
+    ("-y, --yes", &["single", "-m", "a1b2c3d4", "-y"]),
+    ("-h, --help", &["single", "--help"]),
+    ("-V, --version", &["-V"]),
 ];

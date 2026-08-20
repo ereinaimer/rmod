@@ -191,3 +191,18 @@ fn list_short_compact_output() {
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(lines.len(), 2, "expected exactly 2 lines, got: {stdout}");
 }
+
+#[test]
+fn list_short_all_lists_both_monitors() {
+    let out = rmod(&["list", "--short", "--all"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let stdout = stdout(&out);
+    assert!(
+        stdout.contains("1: RMOD Fake Monitor 1 [a1b2c3d4]  1920x1080@60Hz  (primary)"),
+        "missing primary monitor line: {stdout}"
+    );
+    assert!(
+        stdout.contains("2: RMOD Fake Monitor 2 [b2c3d4e5]  1920x1080@60Hz"),
+        "missing second monitor line: {stdout}"
+    );
+}

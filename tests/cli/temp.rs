@@ -171,7 +171,7 @@ fn serial_targeting_works_across_all_commands() {
     assert!(set.status.success(), "set: {}", stderr(&set));
     let layout = rmod(&["layout", "-m", SERIAL_B, "--left-of", SERIAL_A, "-y"]);
     assert!(layout.status.success(), "layout: {}", stderr(&layout));
-    let detach = rmod(&["monitor", "detach", "-m", SERIAL_B, "-y"]);
+    let detach = rmod(&["detach", "-m", SERIAL_B, "-y"]);
     assert!(detach.status.success(), "detach: {}", stderr(&detach));
     let temp = rmod(&["temp", "-m", SERIAL_B, "3400"]);
     assert!(temp.status.success(), "temp: {}", stderr(&temp));
@@ -184,7 +184,7 @@ fn unknown_serial_errors_for_every_command() {
         &["set", "-w", "1920", "-h", "1080", "-m", "NOPE"][..],
         &["layout", "-m", "NOPE", "--primary"][..],
         &["layout", "-m", SERIAL_A, "--left-of", "NOPE"][..],
-        &["monitor", "detach", "-m", "NOPE"][..],
+        &["detach", "-m", "NOPE"][..],
         &["temp", "-m", "NOPE", "3400"][..],
     ] {
         let out = rmod(args);

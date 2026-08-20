@@ -110,9 +110,18 @@ pub(super) fn run_list(all: bool) -> i32 {
     }
 }
 
+/// The list backend for the short form: `--all` includes detached monitors.
+fn list_source(all: bool) -> fn() -> Result<Vec<windows::Monitor>, String> {
+    if all {
+        windows::list_all_detailed
+    } else {
+        windows::list_detailed
+    }
+}
+
 /// Lists every display in compact one-line format.
-pub(super) fn run_list_short() -> i32 {
-    match windows::list_detailed() {
+pub(super) fn run_list_short(all: bool) -> i32 {
+    match list_source(all)() {
         Ok(mut monitors) => {
             monitors.sort_by(|a, b| {
                 // Primary first, then by fingerprint
@@ -247,6 +256,20 @@ pub(crate) fn parse_ls(_cmd: &str, args: &[impl AsRef<str>]) -> Result<Command, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[allow(unpredictable_function_pointer_comparisons)]
+    fn list_source_without_all_uses_list_detailed() {
+        let expected: fn() -> Result<Vec<windows::Monitor>, String> = windows::list_detailed;
+        assert_eq!(list_source(false), expected);
+    }
+
+    #[test]
+    #[allow(unpredictable_function_pointer_comparisons)]
+    fn list_source_with_all_uses_list_all_detailed() {
+        let expected: fn() -> Result<Vec<windows::Monitor>, String> = windows::list_all_detailed;
+        assert_eq!(list_source(true), expected);
+    }
 
     #[test]
     fn physical_line_formats_inches_and_cm() {

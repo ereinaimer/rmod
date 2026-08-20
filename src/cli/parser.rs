@@ -18,15 +18,30 @@ pub enum HelpTopic {
     Set,
     Layout,
     Temp,
-    View {
-        /// The action whose page to show; `None` is the top-level page.
-        action: Option<ViewAction>,
+    Brightness {
+        /// The value parsed so far; the page itself is static.
+        value: BrightnessValue,
+        /// The backend parsed so far, or `None`.
+        via: Option<BrightnessBackend>,
     },
-    #[allow(dead_code)]
-    Completions,
-    Monitor {
-        /// The action whose page to show; `None` is the top-level page.
-        action: Option<MonitorAction>,
+    Contrast {
+        /// The value parsed so far; the page itself is static.
+        value: u32,
+        /// The backend parsed so far, or `None`.
+        via: Option<ContrastBackend>,
+        /// Whether the reset keyword was parsed.
+        reset: bool,
+    },
+    Attach,
+    Detach,
+    Sleep,
+    Wake,
+    Mirror,
+    Extend,
+    Project,
+    Single {
+        /// The target parsed so far; the page itself is static.
+        monitor: MonitorTarget,
     },
 }
 
@@ -42,45 +57,6 @@ pub enum LayoutAction {
     Primary {
         monitor: MonitorTarget,
     },
-}
-
-/// What the `monitor` command should do.
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum MonitorAction {
-    /// Detach a monitor from the desktop.
-    Disable,
-    /// Re-attach a monitor to the desktop.
-    Enable,
-    /// Put every monitor to sleep.
-    Sleep,
-    /// Wake every monitor.
-    Wake,
-    /// Set the backlight level of a display.
-    Brightness {
-        /// Backlight level 0-100, or a composite mode: min, max, or boost.
-        value: BrightnessValue,
-        /// Forced backend, or `None` for auto-detect.
-        via: Option<BrightnessBackend>,
-    },
-    /// `rmod monitor contrast <VALUE>` — set display contrast
-    /// (0-130; 100 = neutral, above 100 overdrives the gamma ramp).
-    Contrast {
-        /// Contrast level 0-130, 100 = neutral.
-        value: u32,
-        /// Forced backend, or `None` for auto-detect.
-        via: Option<ContrastBackend>,
-    },
-    /// `rmod monitor contrast reset` — reset contrast to defaults (DDC 100 + gamma identity).
-    ContrastReset,
-}
-
-/// What the `view` command should do.
-#[derive(Debug, PartialEq, Clone)]
-pub enum ViewAction {
-    Mirror,
-    Extend,
-    Project,
-    Single { monitor: MonitorTarget },
 }
 
 /// What the `temp` command should do.
@@ -111,17 +87,60 @@ pub enum Command {
         orientation: Option<u32>,
         yes: bool,
     },
-    Monitor {
-        action: MonitorAction,
-        monitor: MonitorTarget,
-        yes: bool,
-    },
     Temp {
         action: TempAction,
         monitor: MonitorTarget,
     },
-    View {
-        action: ViewAction,
+    Brightness {
+        /// Backlight level 0-100, or a composite mode: min, max, or boost.
+        value: BrightnessValue,
+        /// Forced backend, or `None` for auto-detect.
+        via: Option<BrightnessBackend>,
+        /// The display(s) to target (default: primary).
+        monitor: MonitorTarget,
+    },
+    Contrast {
+        /// Contrast level 0-130, 100 = neutral.
+        value: u32,
+        /// Forced backend, or `None` for auto-detect.
+        via: Option<ContrastBackend>,
+        /// The display(s) to target (default: primary).
+        monitor: MonitorTarget,
+    },
+    ContrastReset {
+        /// The display(s) to target (default: primary).
+        monitor: MonitorTarget,
+    },
+    Attach {
+        /// The display(s) to re-attach (required).
+        monitor: MonitorTarget,
+        /// Skip the confirmation prompt.
+        yes: bool,
+    },
+    Detach {
+        /// The display(s) to detach (required).
+        monitor: MonitorTarget,
+        /// Skip the confirmation prompt.
+        yes: bool,
+    },
+    Sleep,
+    Wake,
+    Mirror {
+        /// Skip the confirmation prompt.
+        yes: bool,
+    },
+    Extend {
+        /// Skip the confirmation prompt.
+        yes: bool,
+    },
+    Project {
+        /// Skip the confirmation prompt.
+        yes: bool,
+    },
+    Single {
+        /// The monitor to keep (default: primary).
+        monitor: MonitorTarget,
+        /// Skip the confirmation prompt.
         yes: bool,
     },
     Completions {
@@ -185,15 +204,22 @@ pub fn parse_from<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
 
     match cmd_str {
         "--help" | "-h" => Ok(Command::Help { topic: None }),
-        "--version" => Ok(Command::Version),
+        "--version" | "-V" => Ok(Command::Version),
         "ls" | "list" => crate::cli::commands::ls::parse_ls(cmd_str, args),
         "layout" => crate::cli::commands::layout::parse_layout(args),
-        "main" => Err("unknown command main. use rmod layout -m a1b2c3d4 --primary".to_string()),
         "set" => crate::cli::commands::set::parse_set(args),
-        "monitor" => crate::cli::commands::monitor::parse_monitor(args),
         "temp" => crate::cli::commands::temp::parse_temp(args),
-        "view" => crate::cli::commands::view::parse_view(cmd_str, args),
         "completions" => crate::cli::commands::completions::parse_completions("completions", args),
+        "brightness" => crate::cli::commands::brightness::parse_brightness(args, "brightness"),
+        "contrast" => crate::cli::commands::contrast::parse_contrast(args, "contrast"),
+        "attach" => crate::cli::commands::attach::parse_attach(args, "attach"),
+        "detach" => crate::cli::commands::attach::parse_detach(args, "detach"),
+        "sleep" => crate::cli::commands::sleep::parse_sleep(args, "sleep"),
+        "wake" => crate::cli::commands::sleep::parse_wake(args, "wake"),
+        "mirror" => crate::cli::commands::mirror::parse_mirror(args, "mirror"),
+        "extend" => crate::cli::commands::extend::parse_extend(args, "extend"),
+        "project" => crate::cli::commands::project::parse_project(args, "project"),
+        "single" => crate::cli::commands::single::parse_single(args, "single"),
         _ => Err(format!(
             "unknown command {}. run rmod --help to list commands",
             cmd_str
@@ -245,7 +271,7 @@ mod tests {
 
     #[test]
     fn version_flags() {
-        assert!(parse(&["-V"]).is_err());
+        assert_eq!(parse(&["-V"]), Ok(Command::Version));
         assert_eq!(parse(&["--version"]), Ok(Command::Version));
         assert_eq!(parse(&["--version", "x"]), Ok(Command::Version));
     }
@@ -273,15 +299,41 @@ mod tests {
     }
 
     #[test]
-    fn main_command_now_errors_with_hint() {
+    fn main_command_now_errors_with_generic_message() {
         assert_eq!(
             parse(&["main"]),
-            Err("unknown command main. use rmod layout -m a1b2c3d4 --primary".to_string())
+            Err("unknown command main. run rmod --help to list commands".to_string())
         );
         assert_eq!(
             parse(&["main", "2", "-y"]),
-            Err("unknown command main. use rmod layout -m a1b2c3d4 --primary".to_string())
+            Err("unknown command main. run rmod --help to list commands".to_string())
         );
+    }
+
+    #[test]
+    fn legacy_commands_error_with_generic_unknown_command() {
+        for args in [
+            &["monitor"][..],
+            &["monitor", "brightness", "60"][..],
+            &["monitor", "-m", "2", "detach"][..],
+            &["view"][..],
+            &["view", "mirror"][..],
+            &["main"][..],
+            &["disable", "-m", "2"][..],
+            &["off"][..],
+            &["enable", "-m", "2"][..],
+            &["on"][..],
+        ] {
+            let word = args[0];
+            assert_eq!(
+                parse(args),
+                Err(format!(
+                    "unknown command {word}. run rmod --help to list commands"
+                )),
+                "args: {:?}",
+                args
+            );
+        }
     }
 
     #[test]
@@ -352,11 +404,301 @@ mod tests {
     }
 
     #[test]
+    fn brightness_primary_default() {
+        assert_eq!(
+            parse(&["brightness", "60"]),
+            Ok(Command::Brightness {
+                value: BrightnessValue::Percent(60),
+                via: None,
+                monitor: MonitorTarget::Primary,
+            })
+        );
+    }
+
+    #[test]
+    fn brightness_with_monitor_and_backend() {
+        assert_eq!(
+            parse(&["brightness", "40", "-m", "2", "--via", "ddc"]),
+            Ok(Command::Brightness {
+                value: BrightnessValue::Percent(40),
+                via: Some(BrightnessBackend::Ddc),
+                monitor: MonitorTarget::Index(2),
+            })
+        );
+        assert_eq!(
+            parse(&["brightness", "min", "-m", "all"]),
+            Ok(Command::Brightness {
+                value: BrightnessValue::Min,
+                via: None,
+                monitor: MonitorTarget::All,
+            })
+        );
+    }
+
+    #[test]
+    fn brightness_out_of_range_is_error() {
+        assert_eq!(
+            parse(&["brightness", "150"]),
+            Err("invalid brightness 150. use a number between 0 and 100".to_string())
+        );
+    }
+
+    #[test]
+    fn brightness_missing_value_is_error() {
+        assert_eq!(
+            parse(&["brightness"]),
+            Err(
+                "brightness needs a value. a number between 0 and 100\ne.g. rmod brightness 60"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn brightness_unknown_backend_is_error() {
+        assert_eq!(
+            parse(&["brightness", "60", "--via", "gamma2"]),
+            Err("unknown backend gamma2. use ddc, slider, or gamma".to_string())
+        );
+    }
+
+    #[test]
+    fn brightness_rejects_yes_flag() {
+        assert_eq!(
+            parse(&["brightness", "60", "-y"]),
+            Err(
+                "-y, --yes is not valid for brightness. brightness does not prompt for confirmation"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn contrast_primary_default() {
+        assert_eq!(
+            parse(&["contrast", "60"]),
+            Ok(Command::Contrast {
+                value: 60,
+                via: None,
+                monitor: MonitorTarget::Primary,
+            })
+        );
+    }
+
+    #[test]
+    fn contrast_with_monitor_and_backend() {
+        assert_eq!(
+            parse(&["contrast", "40", "-m", "all", "--via", "gamma"]),
+            Ok(Command::Contrast {
+                value: 40,
+                via: Some(ContrastBackend::Gamma),
+                monitor: MonitorTarget::All,
+            })
+        );
+    }
+
+    #[test]
+    fn contrast_reset_with_monitor() {
+        assert_eq!(
+            parse(&["contrast", "reset", "-m", "2"]),
+            Ok(Command::ContrastReset {
+                monitor: MonitorTarget::Index(2),
+            })
+        );
+        assert_eq!(
+            parse(&["contrast", "-m", "2", "reset"]),
+            Ok(Command::ContrastReset {
+                monitor: MonitorTarget::Index(2),
+            })
+        );
+    }
+
+    #[test]
+    fn contrast_out_of_range_is_error() {
+        assert_eq!(
+            parse(&["contrast", "131"]),
+            Err("invalid contrast 131. use a number between 0 and 130".to_string())
+        );
+    }
+
+    #[test]
+    fn contrast_missing_value_is_error() {
+        assert_eq!(
+            parse(&["contrast"]),
+            Err(
+                "contrast needs a value. a number between 0 and 130\ne.g. rmod contrast 60"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn contrast_rejects_yes_flag() {
+        assert_eq!(
+            parse(&["contrast", "60", "-y"]),
+            Err(
+                "-y, --yes is not valid for contrast. contrast does not prompt for confirmation"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn attach_requires_monitor_flag() {
+        assert_eq!(
+            parse(&["attach"]),
+            Err(
+                "attach needs -m, --monitor. a monitor ID or all\ne.g. rmod attach -m a1b2c3d4"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            parse(&["attach", "2"]),
+            Err("unexpected argument 2 for attach. use --monitor or --yes".to_string())
+        );
+    }
+
+    #[test]
+    fn detach_requires_monitor_flag() {
+        assert_eq!(
+            parse(&["detach"]),
+            Err(
+                "detach needs -m, --monitor. a monitor ID or all\ne.g. rmod detach -m a1b2c3d4"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn attach_with_monitor_and_yes() {
+        assert_eq!(
+            parse(&["attach", "-m", "2", "-y"]),
+            Ok(Command::Attach {
+                monitor: MonitorTarget::Index(2),
+                yes: true,
+            })
+        );
+        assert_eq!(
+            parse(&["detach", "-m", "all"]),
+            Ok(Command::Detach {
+                monitor: MonitorTarget::All,
+                yes: false,
+            })
+        );
+    }
+
+    #[test]
+    fn attach_missing_monitor_value_is_error() {
+        assert_eq!(
+            parse(&["detach", "-m"]),
+            Err("-m, --monitor needs a value. a monitor ID or all\ne.g. -m a1b2c3d4".to_string())
+        );
+    }
+
+    #[test]
+    fn sleep_command() {
+        assert_eq!(parse(&["sleep"]), Ok(Command::Sleep));
+    }
+
+    #[test]
+    fn wake_command() {
+        assert_eq!(parse(&["wake"]), Ok(Command::Wake));
+    }
+
+    #[test]
+    fn sleep_rejects_monitor_flag() {
+        assert_eq!(
+            parse(&["sleep", "-m", "2"]),
+            Err("-m, --monitor is not valid for sleep. sleep applies to all monitors".to_string())
+        );
+    }
+
+    #[test]
+    fn sleep_rejects_yes_flag() {
+        assert_eq!(
+            parse(&["wake", "-y"]),
+            Err("-y, --yes is not valid for wake. wake applies to all monitors".to_string())
+        );
+    }
+
+    #[test]
+    fn mirror_command() {
+        assert_eq!(parse(&["mirror"]), Ok(Command::Mirror { yes: false }));
+        assert_eq!(parse(&["mirror", "-y"]), Ok(Command::Mirror { yes: true }));
+    }
+
+    #[test]
+    fn extend_command() {
+        assert_eq!(parse(&["extend"]), Ok(Command::Extend { yes: false }));
+    }
+
+    #[test]
+    fn project_command() {
+        assert_eq!(
+            parse(&["project", "-y"]),
+            Ok(Command::Project { yes: true })
+        );
+    }
+
+    #[test]
+    fn mode_commands_reject_monitor_flag() {
+        for args in [
+            &["mirror", "-m", "2"][..],
+            &["extend", "-m", "2"][..],
+            &["project", "--monitor", "2"][..],
+        ] {
+            assert_eq!(
+                parse(args),
+                Err(format!(
+                    "unexpected argument {} for {}. use -y or --help",
+                    args[1], args[0]
+                )),
+                "args: {:?}",
+                args
+            );
+        }
+    }
+
+    #[test]
+    fn single_with_monitor() {
+        assert_eq!(
+            parse(&["single", "-m", "2"]),
+            Ok(Command::Single {
+                monitor: MonitorTarget::Index(2),
+                yes: false,
+            })
+        );
+        assert_eq!(
+            parse(&["single", "-y"]),
+            Ok(Command::Single {
+                monitor: MonitorTarget::Primary,
+                yes: true,
+            })
+        );
+    }
+
+    #[test]
+    fn single_missing_monitor_value_is_error() {
+        assert_eq!(
+            parse(&["single", "-m"]),
+            Err("-m, --monitor needs a value. a monitor ID or number\ne.g. -m 2".to_string())
+        );
+    }
+
+    #[test]
+    fn single_unexpected_argument_is_error() {
+        assert_eq!(
+            parse(&["single", "foo"]),
+            Err("unexpected argument foo for single. use -m, --monitor, -y, or --help".to_string())
+        );
+    }
+
+    #[test]
     fn all_parser_errors_are_actionable() {
         // add a row when you add an error message
         let cases: &[(&[&str], &str)] = &[
             (&["frobnicate"], "parse_from unknown command"),
-            (&["main"], "parse_from legacy 'main' command"),
+            (&["main"], "parse_from unknown command"),
             (&["list", "-m"], "parse_ls -m missing value"),
             (&["list", "-m", "-x"], "parse_ls -m flag-like value"),
             (&["list", "foo"], "parse_ls unexpected argument"),
@@ -421,8 +763,50 @@ mod tests {
             (&["temp", "3000", "4000"], "parse_temp second positional"),
             (
                 &["monitor", "brightness", "min", "-v", "ddc"],
-                "parse_monitor_brightness keyword plus backend",
+                "parse_from unknown command",
             ),
+            (&["brightness"], "parse_brightness missing value"),
+            (&["brightness", "150"], "parse_brightness out of range"),
+            (
+                &["brightness", "60", "foo"],
+                "parse_brightness unexpected argument",
+            ),
+            (
+                &["brightness", "60", "-m"],
+                "parse_brightness -m missing value",
+            ),
+            (
+                &["brightness", "60", "-v"],
+                "parse_brightness -v missing value",
+            ),
+            (
+                &["brightness", "60", "-v", "x"],
+                "parse_brightness unknown backend",
+            ),
+            (
+                &["brightness", "min", "-v", "ddc"],
+                "parse_brightness keyword plus backend",
+            ),
+            (&["contrast"], "parse_contrast missing value"),
+            (&["contrast", "131"], "parse_contrast out of range"),
+            (
+                &["contrast", "60", "foo"],
+                "parse_contrast unexpected argument",
+            ),
+            (
+                &["contrast", "reset", "-v", "ddc"],
+                "parse_contrast via with reset",
+            ),
+            (&["attach"], "parse_attach missing monitor"),
+            (&["detach"], "parse_detach missing monitor"),
+            (&["attach", "foo"], "parse_attach unexpected argument"),
+            (&["detach", "-m"], "parse_detach -m missing value"),
+            (&["sleep", "foo"], "parse_sleep unexpected argument"),
+            (&["mirror", "-m", "2"], "parse_mirror -m rejected"),
+            (&["extend", "foo"], "parse_extend unexpected argument"),
+            (&["project", "-m", "2"], "parse_project -m rejected"),
+            (&["single", "-m"], "parse_single -m missing value"),
+            (&["single", "foo"], "parse_single unexpected argument"),
         ];
         for (args, label) in cases {
             let err = parse(args).unwrap_err();

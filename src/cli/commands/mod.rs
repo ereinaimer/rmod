@@ -5,20 +5,25 @@
 //! [`crate::sys::windows`], report the outcome, and run the shared
 //! keep-or-revert confirmation flow.
 
+pub(crate) mod attach;
+pub(crate) mod brightness;
 pub(crate) mod completions;
+pub(crate) mod contrast;
+pub(crate) mod extend;
 pub(crate) mod flow;
 pub(crate) mod layout;
 pub(crate) mod ls;
-pub(crate) mod monitor;
+pub(crate) mod mirror;
+pub(crate) mod project;
 pub(crate) mod set;
+pub(crate) mod single;
+pub(crate) mod sleep;
 pub(crate) mod temp;
-pub(crate) mod view;
 
 use crate::cli::{
-    Command, HelpTopic, MonitorAction, MonitorTarget, ViewAction, completions, help,
-    layout as layout_help, ls, monitor as monitor_help, monitor_attach, monitor_brightness,
-    monitor_contrast, monitor_detach, set as set_help, temp as temp_help, version, view,
-    view_extend_help, view_mirror_help, view_project_help, view_single_help,
+    Command, HelpTopic, MonitorTarget, attach, brightness, contrast, detach, extend, help,
+    layout as layout_help, ls, mirror, project, set as set_help, single, sleep, temp as temp_help,
+    version, wake,
 };
 use crate::sys::windows::{AttachAction, AttachChange, Change, Mode};
 
@@ -29,10 +34,8 @@ use flow::{
 };
 use layout::run_layout;
 use ls::{run_list, run_list_short};
-use monitor::run_monitor;
 use set::run_set;
 use temp::run_temp;
-use view::run_view;
 
 const CONFIRM_TIMEOUT_SECS: u64 = 5;
 
@@ -63,41 +66,69 @@ pub fn run(command: Command) -> i32 {
             0
         }
         Command::Help {
-            topic: Some(HelpTopic::Monitor { action }),
-        } => {
-            let page = match action {
-                Some(MonitorAction::Disable) => monitor_detach(),
-                Some(MonitorAction::Enable) => monitor_attach(),
-                Some(MonitorAction::Brightness { .. }) => monitor_brightness(),
-                Some(MonitorAction::Contrast { .. }) => monitor_contrast(),
-                _ => monitor_help(),
-            };
-            println!("{page}");
-            0
-        }
-        Command::Help {
             topic: Some(HelpTopic::Temp),
         } => {
             println!("{}", temp_help());
             0
         }
         Command::Help {
-            topic: Some(HelpTopic::View { action }),
+            topic: Some(HelpTopic::Brightness { .. }),
         } => {
-            let page = match action {
-                Some(ViewAction::Mirror) => view_mirror_help(),
-                Some(ViewAction::Extend) => view_extend_help(),
-                Some(ViewAction::Project) => view_project_help(),
-                Some(ViewAction::Single { .. }) => view_single_help(),
-                _ => view(),
-            };
-            println!("{page}");
+            println!("{}", brightness());
             0
         }
         Command::Help {
-            topic: Some(HelpTopic::Completions),
+            topic: Some(HelpTopic::Contrast { .. }),
         } => {
-            println!("{}", completions());
+            println!("{}", contrast());
+            0
+        }
+        Command::Help {
+            topic: Some(HelpTopic::Attach),
+        } => {
+            println!("{}", attach());
+            0
+        }
+        Command::Help {
+            topic: Some(HelpTopic::Detach),
+        } => {
+            println!("{}", detach());
+            0
+        }
+        Command::Help {
+            topic: Some(HelpTopic::Sleep),
+        } => {
+            println!("{}", sleep());
+            0
+        }
+        Command::Help {
+            topic: Some(HelpTopic::Wake),
+        } => {
+            println!("{}", wake());
+            0
+        }
+        Command::Help {
+            topic: Some(HelpTopic::Mirror),
+        } => {
+            println!("{}", mirror());
+            0
+        }
+        Command::Help {
+            topic: Some(HelpTopic::Extend),
+        } => {
+            println!("{}", extend());
+            0
+        }
+        Command::Help {
+            topic: Some(HelpTopic::Project),
+        } => {
+            println!("{}", project());
+            0
+        }
+        Command::Help {
+            topic: Some(HelpTopic::Single { .. }),
+        } => {
+            println!("{}", single());
             0
         }
         Command::Version => {
@@ -106,7 +137,7 @@ pub fn run(command: Command) -> i32 {
         }
         Command::List { short, all } => {
             if short {
-                run_list_short()
+                run_list_short(all)
             } else {
                 run_list(all)
             }
@@ -118,13 +149,26 @@ pub fn run(command: Command) -> i32 {
             orientation,
             yes,
         } => run_set(spec, monitor, orientation, yes),
-        Command::Monitor {
-            action,
+        Command::Brightness {
+            value,
+            via,
             monitor,
-            yes,
-        } => run_monitor(action, monitor, yes),
+        } => brightness::run_brightness(value, via, monitor),
+        Command::Contrast {
+            value,
+            via,
+            monitor,
+        } => contrast::run_contrast(value, via, monitor),
+        Command::ContrastReset { monitor } => contrast::run_contrast_reset(monitor),
+        Command::Attach { monitor, yes } => attach::run_attach(AttachAction::Enable, monitor, yes),
+        Command::Detach { monitor, yes } => attach::run_attach(AttachAction::Disable, monitor, yes),
+        Command::Sleep => sleep::run_sleep(),
+        Command::Wake => sleep::run_wake(),
+        Command::Mirror { yes } => mirror::run_mirror(yes),
+        Command::Extend { yes } => extend::run_extend(yes),
+        Command::Project { yes } => project::run_project(yes),
+        Command::Single { monitor, yes } => single::run_single(monitor, yes),
         Command::Temp { action, monitor } => run_temp(action, monitor),
-        Command::View { action, yes } => run_view(action, yes),
         Command::Completions { help } => run_completions(help),
     }
 }
