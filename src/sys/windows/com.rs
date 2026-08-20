@@ -1,9 +1,12 @@
 //! COM/ole32/oleaut32 FFI shared by the WMI backend: minimal `VARIANT`,
 //! `SAFEARRAY`, `DISPPARAMS`, and `EXCEPINFO` types, the `IDispatch` vtable,
-//! and the `call`/`get_prop`/`put_prop` dispatch helpers.
+//! and the `call`/`get_prop`/`put_prop` dispatch helpers. Includes a
+//! per-interface DISPID cache to avoid repeated `GetIDsOfNames` round-trips.
 
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::ptr;
+use std::sync::{LazyLock, Mutex};
 
 use super::bindings::encode_wide;
 
@@ -313,8 +316,25 @@ pub(crate) fn sys_alloc(wide: &[u16]) -> *mut u16 {
     unsafe { SysAllocString(wide.as_ptr()) }
 }
 
-/// Looks up a member's `DISPID` on an automation object.
+/// DISPID cache: maps (object pointer, member name) -> DISPID.
+/// DISPIDs are stable per interface, so we can cache them to avoid
+/// repeated `GetIDsOfNames` round-trips.
+static DISPID_CACHE: LazyLock<Mutex<HashMap<(usize, String), i32>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Looks up a member's `DISPID` on an automation object, using a cache
+/// to avoid repeated `GetIDsOfNames` calls for the same (interface, member) pair.
 pub(crate) fn dispatch_id(disp: *mut c_void, name: &str) -> Result<i32, String> {
+    let disp_addr = disp as usize;
+    // Try cache first
+    if let Some(&id) = DISPID_CACHE
+        .lock()
+        .unwrap()
+        .get(&(disp_addr, name.to_string()))
+    {
+        return Ok(id);
+    }
+    // Not cached: call GetIDsOfNames
     let vtbl = unsafe { idispatch_vtbl(disp) };
     let mut id = 0i32;
     let wide = encode_wide(name);
@@ -323,6 +343,11 @@ pub(crate) fn dispatch_id(disp: *mut c_void, name: &str) -> Result<i32, String> 
     if hr != S_OK {
         return Err(format!("member \"{name}\" not found: 0x{hr:08x}"));
     }
+    // Cache the result
+    DISPID_CACHE
+        .lock()
+        .unwrap()
+        .insert((disp_addr, name.to_string()), id);
     Ok(id)
 }
 
