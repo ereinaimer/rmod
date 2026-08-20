@@ -118,7 +118,15 @@ pub(super) fn run_show() -> i32 {
 /// The arrangement grid: header, separator and one aligned row per monitor,
 /// every column sized to its widest entry.
 fn grid(monitors: &[Monitor]) -> String {
-    let rels: Vec<String> = monitors.iter().map(|m| relative_to(monitors, m)).collect();
+    // Find the primary monitor once (O(n)) instead of per-row (O(n²))
+    let primary = monitors
+        .iter()
+        .find(|m| m.is_primary)
+        .or_else(|| monitors.first());
+    let rels: Vec<String> = monitors
+        .iter()
+        .map(|m| relative_to_with_primary(m, primary))
+        .collect();
     let number_width = monitors
         .iter()
         .map(|m| m.number.to_string().len())
@@ -187,12 +195,8 @@ fn rotation_angle(orientation: u32) -> String {
 /// described by the dominant axis, horizontal winning ties. When no
 /// monitor is primary, the first monitor is the reference (mirrors
 /// [`crate::sys::windows::resolve_device`]).
-fn relative_to(monitors: &[Monitor], monitor: &Monitor) -> String {
-    let Some(primary) = monitors
-        .iter()
-        .find(|m| m.is_primary)
-        .or_else(|| monitors.first())
-    else {
+fn relative_to_with_primary(monitor: &Monitor, primary: Option<&Monitor>) -> String {
+    let Some(primary) = primary else {
         return String::new();
     };
     if monitor.number == primary.number {
@@ -208,6 +212,16 @@ fn relative_to(monitors: &[Monitor], monitor: &Monitor) -> String {
         "above"
     };
     format!("{side} {}", primary.number)
+}
+
+/// Compatibility wrapper for tests - finds primary from the monitor list.
+#[allow(dead_code)]
+fn relative_to(monitors: &[Monitor], monitor: &Monitor) -> String {
+    let primary = monitors
+        .iter()
+        .find(|m| m.is_primary)
+        .or_else(|| monitors.first());
+    relative_to_with_primary(monitor, primary)
 }
 
 /// Places a monitor on a side of another monitor and runs the keep-or-revert
