@@ -213,6 +213,7 @@ fn physical_dpi(native_width: u32, native_height: u32, size_cm: (f32, f32)) -> O
 /// Builds a [`Monitor`] for a device: friendly name (falling back to the
 /// raw device name) and current mode; primary is determined by origin 0,0.
 /// EDID fields are set to defaults; use `describe_with_edid` for full data.
+#[allow(dead_code)]
 pub(crate) fn describe(index: usize, name: &str) -> Monitor {
     let mode = current_mode(name);
     Monitor {
@@ -245,6 +246,48 @@ pub(crate) fn describe(index: usize, name: &str) -> Monitor {
         log_pixels: mode.as_ref().map_or(0, |m| m.dm_log_pixels as u32),
         orientation: mode.as_ref().map_or(0, |m| m.dm_display_orientation),
         connector: query_connector(name),
+    }
+}
+
+/// Builds a [`Monitor`] with a pre-built path map from [`match_paths`].
+/// Uses the batched path table for connector lookup instead of per-device QDC.
+pub fn describe_with_path_map(
+    index: usize,
+    name: &str,
+    path_map: &std::collections::HashMap<String, DisplayConfigPathInfo>,
+) -> Monitor {
+    let mode = current_mode(name);
+    let path = path_map.get(&name.to_ascii_lowercase());
+    Monitor {
+        number: index as u32 + 1,
+        name: friendly_name(&encode_wide(name)).unwrap_or_else(|| name.to_string()),
+        device_name: name.to_string(),
+        is_primary: mode
+            .as_ref()
+            .is_some_and(|m| m.dm_position.x == 0 && m.dm_position.y == 0),
+        width: mode.as_ref().map_or(0, |m| m.dm_pels_width),
+        height: mode.as_ref().map_or(0, |m| m.dm_pels_height),
+        refresh: mode.as_ref().map_or(0, |m| m.dm_display_frequency),
+        modes: Vec::new(),
+        x: mode.as_ref().map_or(0, |m| m.dm_position.x),
+        y: mode.as_ref().map_or(0, |m| m.dm_position.y),
+        manufacturer: String::new(),
+        serial: String::new(),
+        fingerprint: String::new(),
+        manufactured_week: 0,
+        manufactured_year: 0,
+        native_width: 0,
+        native_height: 0,
+        native_refresh: 0,
+        physical_size_cm: None,
+        gamma: None,
+        dpi_physical: None,
+        gamut: None,
+        hdr: None,
+        bits_per_pel: mode.as_ref().map_or(0, |m| m.dm_bits_per_pel),
+        log_pixels: mode.as_ref().map_or(0, |m| m.dm_log_pixels as u32),
+        orientation: mode.as_ref().map_or(0, |m| m.dm_display_orientation),
+        connector: path.map(connector_for_path),
     }
 }
 
@@ -414,14 +457,22 @@ pub fn connected_displays_list() -> String {
 pub fn get_current_mode(monitor: u32) -> Result<Monitor, String> {
     let names = enumerate_devices();
     let (index, name) = resolve_device(Some(monitor), &names)?;
-    Ok(describe(index, name))
+    let path_map: std::collections::HashMap<String, DisplayConfigPathInfo> = match_paths()
+        .into_iter()
+        .map(|(source_name, path)| (source_name.to_ascii_lowercase(), path))
+        .collect();
+    Ok(describe_with_path_map(index, name, &path_map))
 }
 
 /// Returns the current mode for the primary monitor.
 pub fn get_primary_mode() -> Result<Monitor, String> {
     let names = enumerate_devices();
     let (index, name) = resolve_device(None, &names)?;
-    Ok(describe(index, name))
+    let path_map: std::collections::HashMap<String, DisplayConfigPathInfo> = match_paths()
+        .into_iter()
+        .map(|(source_name, path)| (source_name.to_ascii_lowercase(), path))
+        .collect();
+    Ok(describe_with_path_map(index, name, &path_map))
 }
 
 /// Reads EDID data for a display device from the raw EDID blob the display

@@ -32,9 +32,11 @@ mod wmi;
 
 pub use apply::{ApplyOutcome, Change, MainChange, MainOutcome, Refresh};
 pub use attach::{AttachAction, AttachChange, AttachOutcome};
+pub use bindings::DisplayConfigPathInfo;
 pub use brightness::{BrightnessBackend, BrightnessLayer, BrightnessOutcome, BrightnessValue};
 pub use capabilities::Mode;
 pub use contrast::{ContrastBackend, ContrastOutcome};
+pub use hdr::match_paths;
 pub use layout::{Direction, PlacementChange, PlacementOutcome};
 pub use query::{Monitor, connected_displays_list};
 pub use temp::TempChange;
@@ -51,10 +53,14 @@ pub fn list() -> Result<Vec<Monitor>, String> {
         return fake::list();
     }
     let names = query::enumerate_devices();
+    let path_map: std::collections::HashMap<String, DisplayConfigPathInfo> = match_paths()
+        .into_iter()
+        .map(|(source_name, path)| (source_name.to_ascii_lowercase(), path))
+        .collect();
     let monitors: Vec<Monitor> = names
         .iter()
         .enumerate()
-        .map(|(i, name)| query::describe(i, name))
+        .map(|(i, name)| query::describe_with_path_map(i, name, &path_map))
         .collect();
     if monitors.is_empty() {
         return Err("no displays found, connect a display and try again".into());

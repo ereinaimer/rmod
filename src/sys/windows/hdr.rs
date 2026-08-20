@@ -95,7 +95,7 @@ pub(crate) fn from_edid(edid_hdr: Option<&edid::HdrEdid>) -> Option<HdrInfo> {
 /// `GetDisplayConfigBufferSizes` + `QueryDisplayConfig` + one
 /// `DisplayConfigGetDeviceInfo` per path. Paths whose source name cannot be
 /// read are skipped. Empty on every FFI failure.
-pub(crate) fn match_paths() -> Vec<(String, DisplayConfigPathInfo)> {
+pub fn match_paths() -> Vec<(String, DisplayConfigPathInfo)> {
     let mut num_paths: u32 = 0;
     let mut num_modes: u32 = 0;
     let rc = unsafe {
@@ -143,6 +143,7 @@ pub(crate) fn match_paths() -> Vec<(String, DisplayConfigPathInfo)> {
 
 /// Finds the path whose GDI source device name equals `name` in the table
 /// returned by [`match_paths`], case-insensitively; the first match wins.
+#[allow(dead_code)]
 pub(crate) fn find_path<'a>(
     paths: &'a [(String, DisplayConfigPathInfo)],
     name: &str,
@@ -160,6 +161,7 @@ pub(crate) fn find_path<'a>(
 ///
 /// The matched path also carries the connector type (`output_technology`),
 /// so HDR and the `Connector:` value share a single enumeration.
+#[allow(dead_code)]
 pub(crate) fn match_path(device_name: &str) -> Option<DisplayConfigPathInfo> {
     find_path(&match_paths(), device_name).copied()
 }
@@ -240,6 +242,7 @@ pub(crate) fn connector_for_path(path: &DisplayConfigPathInfo) -> &'static str {
 /// Queries the connector type of the display with Win32 device name
 /// `device_name` (e.g. `\\.\DISPLAY1`); `None` when no active path
 /// matches (headless sessions, old Windows).
+#[allow(dead_code)]
 pub(crate) fn query_connector(device_name: &str) -> Option<&'static str> {
     match_path(device_name).map(|p| connector_for_path(&p))
 }

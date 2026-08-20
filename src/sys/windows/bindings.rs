@@ -240,7 +240,7 @@ pub(crate) struct DisplayConfigPathTargetInfo {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct DisplayConfigPathInfo {
+pub struct DisplayConfigPathInfo {
     pub source_info: DisplayConfigPathSourceInfo,
     pub target_info: DisplayConfigPathTargetInfo,
     pub flags: u32,
