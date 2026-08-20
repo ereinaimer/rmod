@@ -81,14 +81,27 @@ pub(super) fn run_mirror(yes: bool) -> i32 {
 /// Finds a common resolution supported by all monitors.
 fn find_common_mode(monitors: &[Monitor]) -> Option<crate::sys::windows::Mode> {
     use crate::sys::windows::Mode;
+    use std::collections::{HashMap, HashSet};
 
-    let mut common_resolutions: Option<std::collections::HashSet<(u32, u32)>> = None;
+    // Build a map of (width, height) -> HashSet of refresh rates for each monitor
+    // in one pass per monitor, instead of two calls to caps_all_modes_for_device.
+    let mut monitor_maps: Vec<HashMap<(u32, u32), HashSet<u32>>> = Vec::new();
 
     for monitor in monitors {
         let modes = caps_all_modes_for_device(&monitor.device_name);
-        let res_set: std::collections::HashSet<(u32, u32)> =
-            modes.into_iter().map(|m| (m.width, m.height)).collect();
+        let mut map: HashMap<(u32, u32), HashSet<u32>> = HashMap::new();
+        for m in modes {
+            map.entry((m.width, m.height))
+                .or_default()
+                .insert(m.refresh);
+        }
+        monitor_maps.push(map);
+    }
 
+    // Find common resolutions across all monitors
+    let mut common_resolutions: Option<HashSet<(u32, u32)>> = None;
+    for map in &monitor_maps {
+        let res_set: HashSet<(u32, u32)> = map.keys().copied().collect();
         if let Some(ref mut common) = common_resolutions {
             common.retain(|(w, h)| res_set.contains(&(*w, *h)));
             if common.is_empty() {
@@ -105,22 +118,19 @@ fn find_common_mode(monitors: &[Monitor]) -> Option<crate::sys::windows::Mode> {
         let (width, height) = best_res;
 
         // Find a common refresh rate for this resolution across all monitors
-        let mut common_refresh: Option<std::collections::HashSet<u32>> = None;
-        for monitor in monitors {
-            let modes = caps_all_modes_for_device(&monitor.device_name);
-            let refresh_set: std::collections::HashSet<u32> = modes
-                .into_iter()
-                .filter(|m| m.width == width && m.height == height)
-                .map(|m| m.refresh)
-                .collect();
-
-            if let Some(ref mut common) = common_refresh {
-                common.retain(|r| refresh_set.contains(r));
-                if common.is_empty() {
-                    return None;
+        let mut common_refresh: Option<HashSet<u32>> = None;
+        for map in &monitor_maps {
+            if let Some(refreshes) = map.get(&(width, height)) {
+                if let Some(ref mut common) = common_refresh {
+                    common.retain(|r| refreshes.contains(r));
+                    if common.is_empty() {
+                        return None;
+                    }
+                } else {
+                    common_refresh = Some(refreshes.clone());
                 }
             } else {
-                common_refresh = Some(refresh_set);
+                return None; // This monitor doesn't support the selected resolution
             }
         }
 
