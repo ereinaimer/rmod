@@ -262,7 +262,6 @@ pub fn max_all(orientation: Option<u32>) -> Result<Vec<ApplyOutcome>, String> {
 ///
 /// # Errors
 /// Unknown monitor or a mode the display rejects.
-#[allow(dead_code)]
 pub fn revert(
     monitor: Option<u32>,
     previous: Mode,
@@ -288,7 +287,6 @@ pub fn revert(
 ///
 /// # Errors
 /// Unknown monitor number or a rejected display change.
-#[allow(dead_code)]
 pub fn make_main(monitor: u32, names: &[String]) -> Result<MainOutcome<'_>, String> {
     let (target_index, target_name) = query::resolve_device(Some(monitor), names)?;
     let (_, partner_name) = query::resolve_device(None, names)?;
@@ -318,7 +316,6 @@ pub fn make_main(monitor: u32, names: &[String]) -> Result<MainOutcome<'_>, Stri
 ///
 /// # Errors
 /// A rejected display change.
-#[allow(dead_code)]
 pub fn revert_main(change: &MainChange<'_>) -> Result<(), String> {
     fade::transition_all(|| apply_with_rollback(&change.previous, &change.applied, apply_position))
 }
@@ -333,7 +330,7 @@ fn is_primary(devmode: &DevmodeW) -> bool {
 /// 0,0 and the current primary moved to the target's previous position.
 /// Both devmodes gain the `DM_POSITION` field flag; everything else is
 /// copied through unchanged and the inputs are not modified.
-fn build_swap(target: &DevmodeW, partner: &DevmodeW) -> (DevmodeW, DevmodeW) {
+pub(crate) fn build_swap(target: &DevmodeW, partner: &DevmodeW) -> (DevmodeW, DevmodeW) {
     let mut new_primary = *target;
     new_primary.dm_position = Pointl { x: 0, y: 0 };
     new_primary.dm_fields |= DM_POSITION;

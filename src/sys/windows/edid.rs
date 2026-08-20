@@ -122,7 +122,6 @@ pub(crate) fn hdr_metadata(bytes: &[u8]) -> Option<HdrEdid> {
 
 /// Color-gamut coverage of the display against the sRGB and DCI-P3
 /// reference triangles, as a percentage rounded to an integer.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct GamutCoverage {
     pub srgb: u32,
@@ -131,7 +130,6 @@ pub(crate) struct GamutCoverage {
 
 /// Computes the share of the sRGB and DCI-P3 reference triangles covered by
 /// the display's RGB triangle, as rounded percentages clamped to 100.
-#[allow(dead_code)]
 pub(crate) fn gamut_coverage(c: &Chromaticity) -> GamutCoverage {
     const SRGB: [(f32, f32); 3] = [(0.640, 0.330), (0.300, 0.600), (0.150, 0.060)];
     const P3: [(f32, f32); 3] = [(0.680, 0.320), (0.265, 0.690), (0.150, 0.060)];

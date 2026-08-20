@@ -200,7 +200,6 @@ pub fn revert_main(change: &MainChange<'_>) -> Result<(), String> {
 /// # Errors
 /// Unknown monitor or reference, placing a monitor relative to itself, a
 /// blocked swap destination, or a rejected position change.
-#[allow(dead_code)]
 pub fn apply_placement(
     monitor: u32,
     direction: Direction,
@@ -220,7 +219,6 @@ pub fn apply_placement(
 ///
 /// # Errors
 /// A rejected position change.
-#[allow(dead_code)]
 pub fn revert_placement(change: &PlacementChange) -> Result<(), String> {
     #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
@@ -257,7 +255,6 @@ pub(crate) fn enumerate_all_devices() -> Vec<String> {
 /// # Errors
 /// Unknown monitor, an attempt to disable the primary display, or a
 /// rejected display change.
-#[allow(dead_code)]
 pub fn disable(monitor: Option<u32>) -> Result<AttachOutcome, String> {
     #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
@@ -274,7 +271,6 @@ pub fn disable(monitor: Option<u32>) -> Result<AttachOutcome, String> {
 /// # Errors
 /// Unknown monitor, a monitor with no saved settings and no supported
 /// modes, or a rejected display change.
-#[allow(dead_code)]
 pub fn enable(monitor: Option<u32>) -> Result<AttachOutcome, String> {
     #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
@@ -301,33 +297,31 @@ pub fn revert_attach(change: &AttachChange) -> Result<(), String> {
 /// Puts every monitor to sleep (backlight off). Returns the label of every
 /// affected monitor.
 ///
-/// See [`power::sleep_monitor`].
+/// See [`power::set_power_state`].
 ///
 /// # Errors
 /// No displays attached.
-#[allow(dead_code)]
 pub fn sleep_monitor() -> Result<Vec<String>, String> {
     #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
         return fake::sleep_monitor();
     }
-    power::sleep_monitor()
+    power::set_power_state(2)
 }
 
 /// Wakes every monitor (backlight on). Returns the label of every affected
 /// monitor.
 ///
-/// See [`power::wake_monitor`].
+/// See [`power::set_power_state`].
 ///
 /// # Errors
 /// No displays attached.
-#[allow(dead_code)]
 pub fn wake_monitor() -> Result<Vec<String>, String> {
     #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
         return fake::wake_monitor();
     }
-    power::wake_monitor()
+    power::set_power_state(-1)
 }
 
 /// Returns the current mode for a specific monitor number (1-based).

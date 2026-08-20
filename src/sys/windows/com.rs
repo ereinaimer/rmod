@@ -313,26 +313,17 @@ pub(crate) fn sys_alloc(wide: &[u16]) -> *mut u16 {
     unsafe { SysAllocString(wide.as_ptr()) }
 }
 
-/// Runs `f` with a null-terminated wide copy of `s`.
-pub(crate) fn with_wide<R>(s: &str, f: impl FnOnce(*const u16) -> R) -> R {
-    f(encode_wide(s).as_ptr())
-}
-
 /// Looks up a member's `DISPID` on an automation object.
 pub(crate) fn dispatch_id(disp: *mut c_void, name: &str) -> Result<i32, String> {
-    fn dispatch_id_inner(disp: *mut c_void, name: &str) -> Result<i32, String> {
-        let vtbl = unsafe { idispatch_vtbl(disp) };
-        let mut id = 0i32;
-        let hr = with_wide(name, |wide| {
-            let mut names = [wide as *mut u16];
-            unsafe { (vtbl.get_ids_of_names)(disp, &IID_NULL, names.as_mut_ptr(), 1, 0, &mut id) }
-        });
-        if hr != S_OK {
-            return Err(format!("member \"{name}\" not found: 0x{hr:08x}"));
-        }
-        Ok(id)
+    let vtbl = unsafe { idispatch_vtbl(disp) };
+    let mut id = 0i32;
+    let wide = encode_wide(name);
+    let mut names = [wide.as_ptr() as *mut u16];
+    let hr = unsafe { (vtbl.get_ids_of_names)(disp, &IID_NULL, names.as_mut_ptr(), 1, 0, &mut id) };
+    if hr != S_OK {
+        return Err(format!("member \"{name}\" not found: 0x{hr:08x}"));
     }
-    dispatch_id_inner(disp, name)
+    Ok(id)
 }
 
 /// The `DISPPARAMS` layout for a call: the args reversed into a fixed
@@ -367,66 +358,56 @@ pub(crate) fn dispatch_invoke(
     args: &mut [Variant],
     named: &[(i32, usize)],
 ) -> Result<Variant, String> {
-    fn dispatch_invoke_inner(
-        disp: *mut c_void,
-        member: i32,
-        name: &str,
-        flags: u16,
-        args: &mut [Variant],
-        named: &[(i32, usize)],
-    ) -> Result<Variant, String> {
-        let vtbl = unsafe { idispatch_vtbl(disp) };
+    let vtbl = unsafe { idispatch_vtbl(disp) };
 
-        let (mut reversed, mut named_disps, base) = reversed_args(args, named);
-        let params = DispParams {
-            rgvarg: unsafe { reversed.as_mut_ptr().add(base) },
-            rgdispid_named_args: if named.is_empty() {
-                ptr::null_mut()
-            } else {
-                unsafe { named_disps.as_mut_ptr().add(base) }
-            },
-            c_args: args.len() as u32,
-            c_named_args: named.len() as u32,
-        };
-        let mut result = Variant::empty();
-        let mut excep = ExcepInfo::new();
-        // Pin the `DISPPARAMS`, result, and `EXCEPINFO` in real memory before
-        // the call. Under `opt-level = "z"` with whole-program LTO, LLVM can
-        // otherwise keep these values in registers and emit an `Invoke` that
-        // reaches oleaut32 with a valid HRESULT but no marshaled arguments or
-        // result (`ConnectServer` then returns VT_EMPTY or the stub reports
-        // bad data, 0x800706F7). The reads force the values to be spilled, so
-        // the pointers `Invoke` receives point at real, initialized memory.
-        std::hint::black_box(&params);
-        std::hint::black_box(&mut result);
-        std::hint::black_box(&mut excep);
-        let hr = unsafe {
-            (vtbl.invoke)(
-                disp,
-                member,
-                &IID_NULL,
-                0,
-                flags,
-                &params,
-                &mut result,
-                &mut excep,
-                ptr::null_mut(),
-            )
-        };
-        for arg in args {
-            if arg.vt == VT_BSTR {
-                unsafe { VariantClear(arg) };
-            }
+    let (mut reversed, mut named_disps, base) = reversed_args(args, named);
+    let params = DispParams {
+        rgvarg: unsafe { reversed.as_mut_ptr().add(base) },
+        rgdispid_named_args: if named.is_empty() {
+            ptr::null_mut()
+        } else {
+            unsafe { named_disps.as_mut_ptr().add(base) }
+        },
+        c_args: args.len() as u32,
+        c_named_args: named.len() as u32,
+    };
+    let mut result = Variant::empty();
+    let mut excep = ExcepInfo::new();
+    // Pin the `DISPPARAMS`, result, and `EXCEPINFO` in real memory before
+    // the call. Under `opt-level = "z"` with whole-program LTO, LLVM can
+    // otherwise keep these values in registers and emit an `Invoke` that
+    // reaches oleaut32 with a valid HRESULT but no marshaled arguments or
+    // result (`ConnectServer` then returns VT_EMPTY or the stub reports
+    // bad data, 0x800706F7). The reads force the values to be spilled, so
+    // the pointers `Invoke` receives point at real, initialized memory.
+    std::hint::black_box(&params);
+    std::hint::black_box(&mut result);
+    std::hint::black_box(&mut excep);
+    let hr = unsafe {
+        (vtbl.invoke)(
+            disp,
+            member,
+            &IID_NULL,
+            0,
+            flags,
+            &params,
+            &mut result,
+            &mut excep,
+            ptr::null_mut(),
+        )
+    };
+    for arg in args {
+        if arg.vt == VT_BSTR {
+            unsafe { VariantClear(arg) };
         }
-        if hr != S_OK {
-            if hr == DISP_E_EXCEPTION && excep.scode != 0 {
-                return Err(format!("{name}: 0x{:08x}", excep.scode));
-            }
-            return Err(format!("{name}: 0x{hr:08x}"));
-        }
-        Ok(result)
     }
-    dispatch_invoke_inner(disp, member, name, flags, args, named)
+    if hr != S_OK {
+        if hr == DISP_E_EXCEPTION && excep.scode != 0 {
+            return Err(format!("{name}: 0x{:08x}", excep.scode));
+        }
+        return Err(format!("{name}: 0x{hr:08x}"));
+    }
+    Ok(result)
 }
 
 /// Calls a method by name with positional args.

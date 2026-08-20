@@ -45,7 +45,6 @@ impl BrightnessBackend {
 
 /// The requested brightness change: a numeric level or a composite mode.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-#[allow(dead_code)]
 pub enum BrightnessValue {
     /// A numeric level, 0-100.
     Percent(u32),
@@ -81,7 +80,6 @@ pub struct BrightnessOutcome {
     /// The writes that carried the change, hardware first when present.
     pub layers: Vec<BrightnessLayer>,
     /// True when the change overdrives the ramp past full scale.
-    #[allow(dead_code)]
     pub clipped: bool,
 }
 

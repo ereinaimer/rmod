@@ -14,7 +14,6 @@ use super::query;
 
 /// The side of the reference monitor a target is placed on.
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
-#[allow(dead_code)]
 pub enum Direction {
     Left,
     Right,
@@ -24,7 +23,6 @@ pub enum Direction {
 
 /// A completed placement: what was applied and what to revert.
 #[derive(Debug, PartialEq)]
-#[allow(dead_code)]
 pub struct PlacementChange {
     /// The target display label, e.g. `AOC 24G2 [:2]`.
     pub display: String,
@@ -40,7 +38,6 @@ pub struct PlacementChange {
 
 /// The result of a placement request.
 #[derive(Debug, PartialEq)]
-#[allow(dead_code)]
 pub enum PlacementOutcome {
     /// The monitor moved (or swapped); the change is revertible.
     Applied(PlacementChange),
@@ -63,7 +60,6 @@ pub enum PlacementOutcome {
 /// # Errors
 /// Unknown monitor or reference, placing a monitor relative to itself, a
 /// blocked swap destination, or a rejected position change.
-#[allow(dead_code)]
 pub(crate) fn apply_placement(
     monitor: u32,
     direction: Direction,
@@ -129,7 +125,6 @@ pub(crate) fn apply_placement(
 ///
 /// # Errors
 /// A rejected position change.
-#[allow(dead_code)]
 pub(crate) fn revert_placement(change: &PlacementChange) -> Result<(), String> {
     fade::transition_all(|| {
         apply_with_rollback(&change.previous, &change.applied, |name, devmode| {
@@ -167,7 +162,6 @@ pub(crate) fn apply_with_rollback<N: AsRef<str>>(
 /// The landing position of `target` relative to `reference`, top-aligned,
 /// measured edge-to-edge with raw pixel dimensions so rotated displays use
 /// their on-screen footprint.
-#[allow(dead_code)]
 pub(crate) fn landing_position(
     direction: Direction,
     reference: &DevmodeW,
@@ -211,7 +205,6 @@ fn rects_overlap(a: (i32, i32, i32, i32), b: (i32, i32, i32, i32)) -> bool {
 
 /// The lowest-indexed monitor (0-based index and devmode) whose rect
 /// overlaps the landing spot, ignoring the target; `None` when free.
-#[allow(dead_code)]
 fn occupant_overlapping(
     landing: Pointl,
     target_dev: &DevmodeW,
@@ -230,7 +223,6 @@ fn occupant_overlapping(
 /// The lowest-indexed monitor whose rect overlaps the target's current
 /// rect, ignoring the target and the swapping occupant; `None` when the
 /// destination is free.
-#[allow(dead_code)]
 fn destination_occupied(
     target_dev: &DevmodeW,
     target_index: usize,
@@ -298,7 +290,6 @@ fn build_placement(
 }
 
 /// The target devmode moved to the landing spot, marked with `DM_POSITION`.
-#[allow(dead_code)]
 fn build_moved(target: &DevmodeW, landing: Pointl) -> DevmodeW {
     let mut new_target = *target;
     new_target.dm_position = landing;
@@ -309,9 +300,7 @@ fn build_moved(target: &DevmodeW, landing: Pointl) -> DevmodeW {
 /// Builds the two devmodes of a placement swap: the target moved to the
 /// landing spot and the occupant moved to the target's previous spot. Both
 /// devmodes gain the `DM_POSITION` field flag; everything else is copied
-/// through unchanged and the inputs are not modified (mirrors
-/// [`apply::build_swap`]).
-#[allow(dead_code)]
+/// through unchanged and the inputs are not modified.
 fn build_swap(target: &DevmodeW, occupant: &DevmodeW, landing: Pointl) -> (DevmodeW, DevmodeW) {
     let mut new_occupant = *occupant;
     new_occupant.dm_position = target.dm_position;

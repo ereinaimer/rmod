@@ -23,7 +23,6 @@ pub enum ContrastBackend {
 
 impl ContrastBackend {
     /// The lowercase name used by `--via` and in output.
-    #[allow(dead_code)]
     pub fn name(&self) -> &'static str {
         match self {
             ContrastBackend::Ddc => "ddc",
@@ -33,7 +32,6 @@ impl ContrastBackend {
 }
 
 /// The outcome of a contrast change against one display.
-#[allow(dead_code)]
 pub struct ContrastOutcome {
     /// Display label, e.g. `Generic PnP Monitor [:1]`.
     pub display: String,
