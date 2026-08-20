@@ -1,9 +1,9 @@
 //! Fade-to-black display-change transitions.
 //!
 //! [`transition`] masks a single monitor's mode switch behind a layered
-//! black overlay: fade out, run the change, settle, fade in.
-//! [`transition_all`] does the same around a batch of changes, covering
-//! the whole virtual screen.
+//! black overlay: fade out, run the change, wait for the desktop to stop
+//! rearranging windows, fade in. [`transition_all`] does the same around a
+//! batch of changes, covering the whole virtual screen.
 
 use super::bindings::DevmodeW;
 
@@ -81,27 +81,29 @@ pub(crate) fn union_rect(a: (i32, i32, i32, i32), b: (i32, i32, i32, i32)) -> (i
 }
 
 use super::bindings::{
-    BLACK_BRUSH, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-    GetModuleHandleW, GetStockObject, GetSystemMetrics, HWND_TOPMOST, LWA_ALPHA, Msg, PM_REMOVE,
-    PeekMessageW, RegisterClassExW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
-    SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetLayeredWindowAttributes, SetWindowPos,
-    TranslateMessage, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
-    WndClassExW,
+    BLACK_BRUSH, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EnumWindows,
+    GetModuleHandleW, GetStockObject, GetSystemMetrics, GetWindowRect, HWND_TOPMOST,
+    IsWindowVisible, LWA_ALPHA, Msg, PM_REMOVE, PeekMessageW, Rect, RegisterClassExW,
+    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE,
+    SWP_SHOWWINDOW, SetLayeredWindowAttributes, SetWindowPos, TranslateMessage, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WndClassExW,
 };
 use super::query;
 use std::sync::OnceLock;
 
 pub(crate) const SETTLE_CAP_MS: u64 = 1000;
 pub(crate) const SETTLE_POLL_MS: u64 = 50;
-pub(crate) const SETTLE_BATCH_MS: u64 = 800;
 
 /// Nul-terminated UTF-16 class name for the overlay window class.
 pub(crate) const CLASS_NAME_W: &[u16] = &[114, 109, 111, 100, 95, 102, 97, 100, 101, 0];
 
-/// Holds the overlay opaque for this long after the device reports the
-/// target mode, so DWM and the window manager finish re-scaling and
-/// re-aligning windows before the reveal begins.
-pub(crate) const SETTLE_GRACE_MS: u64 = 800;
+/// Keeps the overlay opaque until the desktop stops rearranging after a
+/// mode change: poll top-level window geometry every `SETTLE_WINDOW_POLL_MS`,
+/// require `SETTLE_WINDOW_MIN_MS` of stability, and give up (best-effort)
+/// after `SETTLE_WINDOW_CAP_MS` so the reveal is never delayed indefinitely.
+pub(crate) const SETTLE_WINDOW_POLL_MS: u64 = 100;
+pub(crate) const SETTLE_WINDOW_MIN_MS: u64 = 800;
+pub(crate) const SETTLE_WINDOW_CAP_MS: u64 = 3000;
 
 /// Registers the overlay window class once per process; subsequent calls
 /// return the first result.
@@ -229,9 +231,84 @@ fn settle(name: &str, target: &DevmodeW) {
     }
 }
 
+/// The bounding rectangle of the whole virtual screen in virtual-screen
+/// coordinates: origin at `SM_XVIRTUALSCREEN`/`SM_YVIRTUALSCREEN`, size
+/// `SM_CXVIRTUALSCREEN`/`SM_CYVIRTUALSCREEN`.
+fn virtual_screen() -> (i32, i32, i32, i32) {
+    (
+        unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) },
+        unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) },
+        unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) },
+        unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) },
+    )
+}
+
+/// A window entry in a desktop snapshot: `(hwnd, (left, top, right, bottom))`.
+type WindowRect = (usize, (i32, i32, i32, i32));
+
+/// Visible top-level windows as [`WindowRect`]s, excluding `exclude`,
+/// sorted by hwnd. The sort makes two snapshots of a settled desktop
+/// position-comparable.
+fn window_snapshot(exclude: usize) -> Vec<WindowRect> {
+    let mut windows: Vec<WindowRect> = Vec::new();
+    unsafe extern "system" fn collect(hwnd: usize, l_param: isize) -> i32 {
+        let windows = unsafe { &mut *(l_param as *mut Vec<WindowRect>) };
+        if unsafe { IsWindowVisible(hwnd) } != 0 {
+            let mut rect: Rect = unsafe { std::mem::zeroed() };
+            if unsafe { GetWindowRect(hwnd, &mut rect) } != 0 {
+                windows.push((hwnd, (rect.left, rect.top, rect.right, rect.bottom)));
+            }
+        }
+        1
+    }
+    unsafe {
+        EnumWindows(Some(collect), &mut windows as *mut _ as isize);
+    }
+    windows.retain(|(hwnd, _)| *hwnd != exclude);
+    windows.sort_by_key(|(hwnd, _)| *hwnd);
+    windows
+}
+
+/// True when both snapshots are identical position-wise. Both must be
+/// sorted by hwnd (as [`window_snapshot`] produces), so matching hwnds sit
+/// at matching positions and only the rects need comparing.
+fn snapshots_equal(a: &[WindowRect], b: &[WindowRect]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x == y)
+}
+
+/// Waits until the desktop has stopped rearranging, keeping the overlay
+/// covering the fresh screen rect. Polls the top-level windows; when two
+/// consecutive snapshots taken at least `SETTLE_WINDOW_MIN_MS` apart are
+/// equal, the desktop is settled and the reveal is safe. Gives up after
+/// `SETTLE_WINDOW_CAP_MS` (best-effort).
+fn settle_desktop(overlay: &Overlay, cover_of: impl Fn() -> (i32, i32, i32, i32)) {
+    let start = std::time::Instant::now();
+    let mut applied: Option<(i32, i32, i32, i32)> = None;
+    let mut prev: Option<Vec<WindowRect>> = None;
+    while (start.elapsed().as_millis() as u64) < SETTLE_WINDOW_CAP_MS {
+        let fresh = cover_of();
+        if applied != Some(fresh) {
+            overlay.set_rect(fresh);
+            applied = Some(fresh);
+        }
+        let curr = window_snapshot(overlay.hwnd);
+        if start.elapsed().as_millis() as u64 >= SETTLE_WINDOW_MIN_MS
+            && prev
+                .as_ref()
+                .is_some_and(|prev| snapshots_equal(prev, &curr))
+        {
+            return;
+        }
+        prev = Some(curr);
+        sleep_pump(SETTLE_WINDOW_POLL_MS);
+    }
+}
+
 /// Masks a mode change on one monitor behind a fade to black and back,
-/// then returns the closure's result. Best-effort: when the overlay cannot
-/// be created the change runs unmasked.
+/// waiting for the desktop to settle (windows stop rearranging) before the
+/// fade-in reveals the screen, then returns the closure's result.
+/// Best-effort: when the overlay cannot be created the change runs
+/// unmasked.
 pub(crate) fn transition<T>(name: &str, target: &DevmodeW, apply: impl FnOnce() -> T) -> T {
     let Some(rect) = query::current_mode(name).map(|mode| rect_of(&mode)) else {
         return apply();
@@ -243,43 +320,27 @@ pub(crate) fn transition<T>(name: &str, target: &DevmodeW, apply: impl FnOnce() 
     animate(&overlay, FADE_OUT_MS, 0, 255, Ease::Out);
     let result = apply();
     settle(name, target);
-    sleep_pump(SETTLE_GRACE_MS);
-    if let Some(current) = query::current_mode(name) {
-        let fresh = rect_of(&current);
-        if fresh != rect {
-            overlay.set_rect(fresh);
-        }
-    }
+    settle_desktop(&overlay, || {
+        query::current_mode(name)
+            .map(|mode| rect_of(&mode))
+            .unwrap_or(covered)
+    });
     animate(&overlay, FADE_IN_MS, 255, 0, Ease::InOut);
     result
 }
 
 /// Masks a batch of mode changes behind one fade covering the whole
-/// virtual screen, then returns the closure's result. Best-effort like
+/// virtual screen, then returns the closure's result. The fade-in is gated
+/// on desktop quiescence like [`transition`]. Best-effort like
 /// [`transition`].
 pub(crate) fn transition_all<T>(apply: impl FnOnce() -> T) -> T {
-    let rect = (
-        unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) },
-        unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) },
-        unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) },
-        unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) },
-    );
+    let rect = virtual_screen();
     let Some(overlay) = Overlay::new(rect) else {
         return apply();
     };
     animate(&overlay, FADE_OUT_MS, 0, 255, Ease::Out);
     let result = apply();
-    sleep_pump(SETTLE_BATCH_MS / 2);
-    let fresh = (
-        unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) },
-        unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) },
-        unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) },
-        unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) },
-    );
-    if fresh != rect {
-        overlay.set_rect(fresh);
-    }
-    sleep_pump(SETTLE_BATCH_MS / 2);
+    settle_desktop(&overlay, virtual_screen);
     animate(&overlay, FADE_IN_MS, 255, 0, Ease::InOut);
     result
 }
@@ -429,5 +490,40 @@ mod tests {
             CLASS_NAME_W,
             &[114, 109, 111, 100, 95, 102, 97, 100, 101, 0]
         );
+    }
+
+    #[test]
+    fn snapshots_equal_identical_snapshots() {
+        let a = [(0x10, (0, 0, 1920, 1080)), (0x20, (-1920, 0, 1920, 1080))];
+        let b = [(0x10, (0, 0, 1920, 1080)), (0x20, (-1920, 0, 1920, 1080))];
+        assert!(snapshots_equal(&a, &b));
+    }
+
+    #[test]
+    fn snapshots_equal_empty_snapshots() {
+        let a: [(usize, (i32, i32, i32, i32)); 0] = [];
+        let b: [(usize, (i32, i32, i32, i32)); 0] = [];
+        assert!(snapshots_equal(&a, &b));
+    }
+
+    #[test]
+    fn snapshots_equal_detects_moved_rect() {
+        let a = [(0x10, (0, 0, 1920, 1080)), (0x20, (-1920, 0, 1920, 1080))];
+        let b = [(0x10, (100, 0, 1920, 1080)), (0x20, (-1920, 0, 1920, 1080))];
+        assert!(!snapshots_equal(&a, &b));
+    }
+
+    #[test]
+    fn snapshots_equal_detects_different_hwnd_sets() {
+        let a = [(0x10, (0, 0, 1920, 1080)), (0x20, (-1920, 0, 1920, 1080))];
+        let b = [(0x10, (0, 0, 1920, 1080)), (0x30, (-1920, 0, 1920, 1080))];
+        assert!(!snapshots_equal(&a, &b));
+    }
+
+    #[test]
+    fn snapshots_equal_compares_position_wise() {
+        let a = [(0x10, (0, 0, 1920, 1080)), (0x20, (-1920, 0, 1920, 1080))];
+        let b = [(0x20, (-1920, 0, 1920, 1080)), (0x10, (0, 0, 1920, 1080))];
+        assert!(!snapshots_equal(&a, &b));
     }
 }

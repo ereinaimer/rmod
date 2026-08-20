@@ -358,6 +358,12 @@ unsafe extern "system" {
         >,
         dw_data: isize,
     ) -> i32;
+    pub(crate) fn EnumWindows(
+        lp_enum_func: Option<unsafe extern "system" fn(usize, isize) -> i32>,
+        l_param: isize,
+    ) -> i32;
+    pub(crate) fn GetWindowRect(h_wnd: usize, lp_rect: *mut Rect) -> i32;
+    pub(crate) fn IsWindowVisible(h_wnd: usize) -> i32;
     pub(crate) fn GetMonitorInfoW(h_monitor: usize, lpmi: *mut MonitorInfoExW) -> i32;
     pub(crate) fn GetDisplayConfigBufferSizes(
         flags: u32,
@@ -547,6 +553,19 @@ mod tests {
         assert_eq!(SWP_SHOWWINDOW, 0x0040);
         assert_eq!(HWND_TOPMOST, -1);
         assert_eq!(PM_REMOVE, 0x1);
+    }
+
+    #[test]
+    fn window_enumeration_ffi_links() {
+        unsafe extern "system" fn stop_enumeration(_hwnd: usize, _l_param: isize) -> i32 {
+            0
+        }
+        unsafe {
+            assert_eq!(EnumWindows(Some(stop_enumeration), 0), 0);
+            let mut rect = std::mem::zeroed::<Rect>();
+            assert_eq!(GetWindowRect(0, &mut rect), 0);
+            assert_eq!(IsWindowVisible(0), 0);
+        }
     }
 
     #[test]
