@@ -220,7 +220,7 @@ fn print_monitor_with_detached(m: &crate::sys::windows::Monitor, show_detached: 
     }
 }
 
-pub(crate) fn parse_ls(_cmd: &str, args: &[impl AsRef<str>]) -> Result<Command, String> {
+pub(crate) fn parse_ls(args: &[impl AsRef<str>]) -> Result<Command, String> {
     let mut i = 1;
     let mut short = false;
     let mut all = false;

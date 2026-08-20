@@ -239,7 +239,7 @@ pub(super) fn run_completions(help: bool) -> i32 {
 }
 
 /// Parses the `completions` command.
-pub(crate) fn parse_completions(_cmd: &str, args: &[impl AsRef<str>]) -> Result<Command, String> {
+pub(crate) fn parse_completions(args: &[impl AsRef<str>]) -> Result<Command, String> {
     let mut i = 1;
     let mut help = false;
 

@@ -205,11 +205,11 @@ pub fn parse_from<S: AsRef<str>>(args: &[S]) -> Result<Command, String> {
     match cmd_str {
         "--help" | "-h" => Ok(Command::Help { topic: None }),
         "--version" | "-V" => Ok(Command::Version),
-        "ls" | "list" => crate::cli::commands::ls::parse_ls(cmd_str, args),
+        "ls" | "list" => crate::cli::commands::ls::parse_ls(args),
         "layout" => crate::cli::commands::layout::parse_layout(args),
         "set" => crate::cli::commands::set::parse_set(args),
         "temp" => crate::cli::commands::temp::parse_temp(args),
-        "completions" => crate::cli::commands::completions::parse_completions("completions", args),
+        "completions" => crate::cli::commands::completions::parse_completions(args),
         "brightness" => crate::cli::commands::brightness::parse_brightness(args, "brightness"),
         "contrast" => crate::cli::commands::contrast::parse_contrast(args, "contrast"),
         "attach" => crate::cli::commands::attach::parse_attach(args, "attach"),

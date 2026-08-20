@@ -23,7 +23,9 @@
 use std::ffi::c_void;
 use std::ptr;
 
-use super::bindings::{DISPLAY_DEVICEW, EnumDisplayDevicesW, encode_wide, wide_to_string};
+use super::bindings::{
+    DISPLAY_DEVICEW, EnumDisplayDevicesW, HKEY_LOCAL_MACHINE, encode_wide, wide_to_string,
+};
 use super::com::{
     CLSCTX_INPROC_SERVER, CLSID_WBEMSCRIPTING_LOCATOR, COINIT_MULTITHREADED, CoCreateInstance,
     CoInitializeEx, CoInitializeSecurity, CoUninitialize, EOAC_NONE, IID_IDISPATCH,
@@ -46,9 +48,6 @@ const METHOD_SET: &str = "WmiSetBrightness";
 const KEY_INSTANCE_NAME: &str = "InstanceName";
 /// The property listing every brightness level the panel accepts.
 const PROP_LEVEL: &str = "Level";
-
-/// `HKEY_LOCAL_MACHINE`.
-const HKEY_LOCAL_MACHINE: *mut c_void = 0x8000_0002usize as *mut c_void;
 /// The registry key holding every display device instance.
 const KEY_DISPLAY: &str = "SYSTEM\\CurrentControlSet\\Enum\\DISPLAY";
 
@@ -114,10 +113,10 @@ fn display_device_instances(name: &str) -> Option<Vec<String>> {
     let subpath = format!("{KEY_DISPLAY}\\{model}");
     let mut matched = Vec::new();
     let mut rest = Vec::new();
-    for instance in registry_keys(HKEY_LOCAL_MACHINE, &subpath) {
+    for instance in registry_keys(HKEY_LOCAL_MACHINE as *mut c_void, &subpath) {
         let instance_name = format!("DISPLAY\\{model}\\{instance}");
         let instance_key = format!("{subpath}\\{instance}");
-        if read_reg_string(HKEY_LOCAL_MACHINE, &instance_key, "Driver").as_deref()
+        if read_reg_string(HKEY_LOCAL_MACHINE as *mut c_void, &instance_key, "Driver").as_deref()
             == Some(driver.as_str())
         {
             matched.push(instance_name);
