@@ -35,7 +35,8 @@ pub(super) fn run_project(yes: bool) -> i32 {
     let external = externals.iter().max_by_key(|m| m.width * m.height).unwrap();
 
     // Promote external to primary (move to 0,0)
-    let names = windows::enumerate_devices();
+    // Use device names from the already-enumerated monitors instead of re-enumerating
+    let names: Vec<String> = monitors.iter().map(|m| m.device_name.clone()).collect();
     let mut main_change = None;
     match windows::make_main(external.number, &names) {
         Ok(windows::MainOutcome::Unchanged(_)) => {
