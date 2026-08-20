@@ -16,7 +16,7 @@ use super::bindings::{
 use super::capabilities::{self, Mode};
 use super::fade;
 use super::layout::apply_with_rollback;
-use super::plan::{Planned, has_applied, plan_max, plan_set};
+use super::plan::{Planned, has_applied, plan_max};
 use super::query;
 
 /// Refresh rate handling for the set command.
@@ -234,28 +234,6 @@ pub fn max(monitor: Option<u32>, orientation: Option<u32>) -> Result<ApplyOutcom
         })?;
     }
     Ok(result)
-}
-
-/// Applies a resolution, refresh and rotation policy to every attached
-/// display.
-///
-/// Every monitor is dry-run validated before anything is applied; when any
-/// display rejects the mode, nothing changes and the failures are listed.
-/// Monitors already at the requested mode and orientation are reported as
-/// unchanged and left untouched.
-///
-/// # Errors
-/// No displays found, a mode no display supports, or preflight failures.
-#[allow(dead_code)]
-pub fn set_all(
-    width: Option<u32>,
-    height: Option<u32>,
-    refresh: Refresh,
-    orientation: Option<u32>,
-) -> Result<Vec<ApplyOutcome>, String> {
-    let names = query::enumerate_devices();
-    let targets = query::resolve_all(&names)?;
-    apply_all(plan_set(&targets, width, height, refresh, orientation)?)
 }
 
 /// Applies the best supported mode to every attached display.

@@ -449,34 +449,6 @@ impl Session {
     }
 }
 
-/// Sets the brightness of the display addressed by `name` through WMI.
-///
-/// `Ok(None)` means the display has no WMI brightness instance.
-#[allow(dead_code)]
-pub(crate) fn set(name: &str, value: u32) -> Result<Option<bool>, String> {
-    let Some(session) = Session::for_display(name)? else {
-        return Ok(None);
-    };
-    session.set(value)
-}
-
-/// The smallest positive `Level` entry of the display addressed by `name`,
-/// or `None` when the value is unreadable.
-///
-/// The `Level` array lists every brightness level the panel accepts; the
-/// smallest positive entry is the hardware floor `min` writes directly. A
-/// zero-only array means the panel can go dark, so there is no floor.
-#[allow(dead_code)]
-pub(crate) fn min_level(name: &str) -> Option<u32> {
-    Session::for_display(name).ok().flatten()?.min_level()
-}
-
-/// The smallest positive entry of a `Levels` array, or `None` when every
-/// entry is zero (the panel can go dark, so there is no hardware floor).
-fn smallest_positive(levels: &[u8]) -> Option<u32> {
-    levels.iter().filter(|&&v| v > 0).min().map(|&v| v as u32)
-}
-
 /// Copies the payload of a 1-D `VT_UI1` SAFEARRAY, or `None` when the
 /// array is not a readable one-dimensional byte array.
 unsafe fn safe_array_ui1(psa: *mut SafeArray) -> Option<Vec<u8>> {
@@ -510,6 +482,12 @@ unsafe fn safe_array_ui1(psa: *mut SafeArray) -> Option<Vec<u8>> {
         SafeArrayUnaccessData(psa);
         Some(levels)
     }
+}
+
+/// The smallest positive entry of a `Levels` array, or `None` when every
+/// entry is zero (the panel can go dark, so there is no hardware floor).
+fn smallest_positive(levels: &[u8]) -> Option<u32> {
+    levels.iter().filter(|&&v| v > 0).min().map(|&v| v as u32)
 }
 
 /// The smallest positive element of a 1-D `VT_UI1` SAFEARRAY, or `None`

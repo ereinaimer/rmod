@@ -318,19 +318,6 @@ pub(crate) fn max_all(orientation: Option<u32>) -> Result<Vec<ApplyOutcome>, Str
     Ok(vec![max(Some(1), orientation)?, max(Some(2), orientation)?])
 }
 
-/// Applies a resolution, refresh and orientation policy to every fake monitor.
-pub(crate) fn set_all(
-    width: Option<u32>,
-    height: Option<u32>,
-    refresh: Refresh,
-    orientation: Option<u32>,
-) -> Result<Vec<ApplyOutcome>, String> {
-    Ok(vec![
-        set(Some(1), width, height, refresh, orientation)?,
-        set(Some(2), width, height, refresh, orientation)?,
-    ])
-}
-
 /// Re-applies a previously captured mode to undo a fake change.
 pub(crate) fn revert(
     _monitor: Option<u32>,

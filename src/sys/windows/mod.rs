@@ -229,27 +229,6 @@ pub fn revert_placement(change: &PlacementChange) -> Result<(), String> {
     layout::revert_placement(change)
 }
 
-/// Applies a resolution, refresh and rotation policy to every attached
-/// display.
-///
-/// See [`apply::set_all`].
-///
-/// # Errors
-/// No displays found, a mode no display supports, or preflight failures.
-#[allow(dead_code)]
-pub fn set_all(
-    width: Option<u32>,
-    height: Option<u32>,
-    refresh: Refresh,
-    orientation: Option<u32>,
-) -> Result<Vec<ApplyOutcome>, String> {
-    #[cfg(any(test, feature = "fake"))]
-    if fake::enabled() {
-        return fake::set_all(width, height, refresh, orientation);
-    }
-    apply::set_all(width, height, refresh, orientation)
-}
-
 /// Enumerates the device names of every display attached to the desktop.
 pub(crate) fn enumerate_devices() -> Vec<String> {
     #[cfg(any(test, feature = "fake"))]
