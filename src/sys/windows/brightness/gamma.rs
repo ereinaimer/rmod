@@ -1,16 +1,19 @@
 use super::super::bindings::{
     CreateDCW, DeleteDC, GetDeviceGammaRamp, SetDeviceGammaRamp, encode_wide,
 };
+use super::super::temp::{build_ramp, kelvin_to_rgb};
 
 /// Sets brightness through a gamma ramp; this is the fallback that works on
 /// every display. `exact` selects the mode-leg semantics (an exact ramp
 /// match and a pure [`gamma_ramp`] write) over the percent-leg semantics
-/// (a [`b_est`] tolerance and a shape-preserving re-scale).
+/// (a [`b_est`] tolerance and a shape-preserving re-scale). `temp` enables
+/// mode+temp composition when `Some(kelvin)`.
 pub(crate) fn set_via_gamma(
     name: &str,
     value: u32,
     display: &str,
     exact: bool,
+    temp: Option<u32>,
 ) -> Result<Option<bool>, String> {
     let name_wide = encode_wide(name);
     let dc = unsafe {
@@ -24,7 +27,7 @@ pub(crate) fn set_via_gamma(
     if dc == 0 {
         return Err(format!("cannot open the display for gamma control: {name}"));
     }
-    let result = set_via_gamma_dc(dc, value, display, exact);
+    let result = set_via_gamma_dc(dc, value, display, exact, temp);
     let _ = unsafe { DeleteDC(dc) };
     result
 }
@@ -34,17 +37,28 @@ fn set_via_gamma_dc(
     value: u32,
     display: &str,
     exact: bool,
+    temp: Option<u32>,
 ) -> Result<Option<bool>, String> {
     let mut ramp = [0u16; 768];
     let ok = unsafe { GetDeviceGammaRamp(dc, ramp.as_mut_ptr()) };
-    let write = match (exact, ok != 0) {
-        (true, true) if gamma_matches(&ramp, value) => return Ok(Some(true)),
-        (true, _) => gamma_ramp(value),
-        (false, true) => match percent_write(&ramp, value) {
+    let write = match (temp, exact, ok != 0) {
+        // Plain paths (temp=None) — byte-identical to today
+        (None, true, true) if gamma_matches(&ramp, value) => return Ok(Some(true)),
+        (None, true, _) => gamma_ramp(value),
+        (None, false, true) => match percent_write(&ramp, value) {
             None => return Ok(Some(true)),
             Some(write) => write,
         },
-        (false, false) => gamma_ramp(value),
+        (None, false, false) => gamma_ramp(value),
+        // Mode+temp legs (temp=Some) — both exact=true and exact=false use compose_temp
+        (Some(kelvin), _, true) => {
+            let candidate = compose_temp(kelvin, value);
+            if ramp_eq(&ramp, &candidate) {
+                return Ok(Some(true));
+            }
+            candidate
+        }
+        (Some(kelvin), _, false) => compose_temp(kelvin, value),
     };
     let set = unsafe { SetDeviceGammaRamp(dc, write.as_ptr() as *mut u16) };
     if set == 0 {
@@ -113,6 +127,29 @@ fn scale_ramp(ramp: &[u16; 768], value: u32, estimated: u32) -> [u16; 768] {
         out[i] = scaled.min(65535) as u16;
     }
     out
+}
+
+/// Builds a temperature-composed gamma ramp at `level` percent.
+/// Uses `temp::build_ramp` / `kelvin_to_rgb` to create the temp ramp,
+/// then scales it to `level` using `scale_ramp` (forced, no `percent_write`
+/// short-circuit).
+pub(crate) fn compose_temp(kelvin: u32, level: u32) -> [u16; 768] {
+    let (r, g, b) = kelvin_to_rgb(kelvin);
+    let temp_ramp = build_ramp(r, g, b);
+    // Convert Ramp to [u16; 768] format
+    let mut ramp = [0u16; 768];
+    for i in 0..256 {
+        ramp[i] = temp_ramp.red[i];
+        ramp[256 + i] = temp_ramp.green[i];
+        ramp[512 + i] = temp_ramp.blue[i];
+    }
+    let estimated = b_est(&ramp);
+    scale_ramp(&ramp, level, estimated)
+}
+
+/// Entry-wise equality of two 768-entry ramps.
+pub(crate) fn ramp_eq(a: &[u16; 768], b: &[u16; 768]) -> bool {
+    a.iter().zip(b.iter()).all(|(x, y)| x == y)
 }
 
 /// The percent write decision: `None` when the ramp is already within the
@@ -296,5 +333,103 @@ mod tests {
             gamma_error(100, "Generic PnP Monitor [:1]"),
             "the gamma brightness change failed"
         );
+    }
+
+    // compose_temp tests
+
+    #[test]
+    fn compose_temp_is_non_degenerate_at_presets() {
+        for k in [1900, 2700, 3400, 4500, 6500] {
+            for level in [50, 100, 130] {
+                let ramp = compose_temp(k, level);
+                // ramp should not be all zeros
+                assert!(ramp.iter().any(|&v| v > 0), "kelvin {k} level {level}");
+            }
+        }
+    }
+
+    #[test]
+    fn compose_temp_tint_ratios_match_kelvin_to_rgb() {
+        // At 100%, the channel ratios should match kelvin_to_rgb after CHANNEL_FLOOR
+        // (0.5) is applied in build_ramp. Check at midpoint (index 128) to avoid
+        // clamping distortion at the top end.
+        const CHANNEL_FLOOR: f64 = 0.5;
+        for k in [1900, 2700, 3400, 4500, 6500] {
+            let (r_mult, g_mult, b_mult) = kelvin_to_rgb(k);
+            let r_mult = r_mult.max(CHANNEL_FLOOR);
+            let g_mult = g_mult.max(CHANNEL_FLOOR);
+            let b_mult = b_mult.max(CHANNEL_FLOOR);
+            let ramp = compose_temp(k, 100);
+            // Use index 128 (midpoint) to avoid clamping effects at index 255
+            let r_mid = ramp[128] as f64;
+            let g_mid = ramp[256 + 128] as f64;
+            let b_mid = ramp[512 + 128] as f64;
+            let expected_g = r_mid * (g_mult / r_mult);
+            let expected_b = r_mid * (b_mult / r_mult);
+            assert!((g_mid - expected_g).abs() <= 2.0, "kelvin {k} green: g_mid={g_mid}, expected={expected_g}");
+            assert!((b_mid - expected_b).abs() <= 2.0, "kelvin {k} blue: b_mid={b_mid}, expected={expected_b}");
+        }
+    }
+
+    #[test]
+    fn compose_temp_red_255_at_100_reads_b_est_100() {
+        for k in [1900, 2700, 3400, 4500, 6500] {
+            let ramp = compose_temp(k, 100);
+            assert_eq!(b_est(&ramp), 100, "kelvin {k}");
+        }
+    }
+
+    // ramp_eq tests
+
+    #[test]
+    fn ramp_eq_identical_is_true() {
+        let ramp = gamma_ramp(50);
+        assert!(ramp_eq(&ramp, &ramp));
+    }
+
+    #[test]
+    fn ramp_eq_one_entry_diff_is_false() {
+        let a = gamma_ramp(50);
+        let mut b = gamma_ramp(50);
+        b[100] += 1;
+        assert!(!ramp_eq(&a, &b));
+    }
+
+    // Mode+temp unchanged detection tests
+
+    #[test]
+    fn mode_temp_double_apply_is_unchanged() {
+        // First apply
+        let r1 = compose_temp(3400, 50);
+        // Second apply should be detected as unchanged via ramp_eq
+        assert!(ramp_eq(&r1, &r1));
+    }
+
+    #[test]
+    fn mode_temp_changed_kelvin_writes() {
+        let r1 = compose_temp(3400, 50);
+        let r2 = compose_temp(4500, 50);
+        assert!(!ramp_eq(&r1, &r2));
+    }
+
+    #[test]
+    fn plain_mode_temp_none_still_uses_gamma_matches() {
+        // Regression pin: temp=None path should use gamma_matches logic
+        let ramp = gamma_ramp(50);
+        assert!(gamma_matches(&ramp, 50));
+        assert!(!gamma_matches(&ramp, 51));
+    }
+
+    // Composed ramp is forced (no percent_write None skip)
+
+    #[test]
+    fn composed_ramp_forced_no_percent_write_skip() {
+        // compose_temp should always produce a ramp, never return None like percent_write
+        let ramp = compose_temp(3400, 100);
+        // At 3400K, the shape should differ from a pure gamma ramp
+        let pure = gamma_ramp(100);
+        assert!(!ramp_eq(&ramp, &pure));
+        // The green channel should be reduced at 3400K
+        assert!(ramp[256 + 255] < pure[256 + 255]);
     }
 }

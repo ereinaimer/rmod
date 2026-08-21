@@ -245,7 +245,7 @@ fn set_mode(name: &str, mode: BrightnessValue, display: &str) -> Result<Brightne
         BrightnessValue::Percent(_) => unreachable!("set_mode only runs for modes"),
     }
     let level = gamma_level_for(mode);
-    let gamma_unchanged = match set_via_gamma(name, level, display, true)? {
+    let gamma_unchanged = match set_via_gamma(name, level, display, true, None)? {
         Some(unchanged) => unchanged,
         None => unreachable!(
             "gamma control always reports Some; set_via_gamma only returns None for unsupported backends"
@@ -293,7 +293,7 @@ fn set_via(
     match backend {
         BrightnessBackend::Ddc => set_via_ddc(name, value),
         BrightnessBackend::Slider => set_via_slider(name, value),
-        BrightnessBackend::Gamma => set_via_gamma(name, value, display, false),
+        BrightnessBackend::Gamma => set_via_gamma(name, value, display, false, None),
     }
 }
 

@@ -92,7 +92,7 @@ pub fn get_temp(monitor: Option<u32>) -> Result<TempChange, String> {
 
 /// Converts a Kelvin value to per-channel multipliers in `[0, 1]` using the
 /// Tanner Helland approximation, clamped to [`MIN_KELVIN`]–[`MAX_KELVIN`].
-fn kelvin_to_rgb(kelvin: u32) -> (f64, f64, f64) {
+pub(crate) fn kelvin_to_rgb(kelvin: u32) -> (f64, f64, f64) {
     let temp = (kelvin as f64).clamp(MIN_KELVIN as f64, MAX_KELVIN as f64) / 100.0;
     let red = if temp <= 66.0 {
         255.0
@@ -126,7 +126,7 @@ const CHANNEL_FLOOR: f64 = 0.5;
 
 /// Builds a gamma ramp by scaling the linear ramp `i * 256` per channel,
 /// capped at `65535`, with every channel kept at or above [`CHANNEL_FLOOR`].
-fn build_ramp(red: f64, green: f64, blue: f64) -> Ramp {
+pub(crate) fn build_ramp(red: f64, green: f64, blue: f64) -> Ramp {
     let (red, green, blue) = (
         red.max(CHANNEL_FLOOR),
         green.max(CHANNEL_FLOOR),
@@ -170,7 +170,7 @@ static IDENTITY_RAMP: Ramp = {
 /// 49). 0 for an all-zero ramp. The canonical definition lives alongside
 /// `brightness::b_est`; the red channel carries only brightness because its
 /// Kelvin multiplier is 1.0 for every valid temperature.
-fn b_est(ramp: &Ramp) -> u32 {
+pub(crate) fn b_est(ramp: &Ramp) -> u32 {
     ramp.red[255] as u32 * 100 / 65535
 }
 
