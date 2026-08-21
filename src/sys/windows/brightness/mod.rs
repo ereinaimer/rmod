@@ -43,6 +43,19 @@ impl BrightnessBackend {
     }
 }
 
+/// Classification of a brightness value for mode vs percent handling.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ModeKind {
+    /// A plain percent value (0-100).
+    Plain,
+    /// The hardware floor with a gamma dim layer.
+    Min,
+    /// Hardware 100 with the identity gamma ramp.
+    Max,
+    /// Hardware 100 with an overdriven gamma ramp.
+    Boost,
+}
+
 /// The requested brightness change: a numeric level or a composite mode.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum BrightnessValue {
@@ -54,6 +67,18 @@ pub enum BrightnessValue {
     Max,
     /// Hardware 100 with an overdriven gamma ramp.
     Boost,
+}
+
+impl BrightnessValue {
+    /// Returns the [`ModeKind`] classification of this brightness value.
+    pub fn mode_kind(&self) -> ModeKind {
+        match self {
+            BrightnessValue::Percent(_) => ModeKind::Plain,
+            BrightnessValue::Min => ModeKind::Min,
+            BrightnessValue::Max => ModeKind::Max,
+            BrightnessValue::Boost => ModeKind::Boost,
+        }
+    }
 }
 
 /// One write of a brightness change: a hardware backlight write or a gamma
@@ -94,6 +119,8 @@ pub struct BrightnessOutcome {
 /// `monitor` is the 1-based number from `rmod list`; `None` selects the
 /// primary display.
 ///
+/// `temp` is an optional color temperature in Kelvin for mode+temp composition.
+///
 /// # Errors
 /// Unknown monitor, a forced backend the display does not support, a mode
 /// with a forced backend, or no brightness-control path at all.
@@ -101,17 +128,18 @@ pub fn set_brightness(
     monitor: Option<u32>,
     value: BrightnessValue,
     via: Option<BrightnessBackend>,
+    temp: Option<u32>,
 ) -> Result<BrightnessOutcome, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
     let display = query::display_label(name, index as u32 + 1);
     match value {
-        BrightnessValue::Percent(level) => set_percent(name, level, via, &display),
+        BrightnessValue::Percent(level) => set_percent(name, level, via, &display, temp),
         mode => {
             if via.is_some() {
                 return Err(mode_backend_error(mode));
             }
-            set_mode(name, mode, &display)
+            set_mode(name, mode, &display, temp)
         }
     }
 }
@@ -150,6 +178,7 @@ fn set_percent(
     level: u32,
     via: Option<BrightnessBackend>,
     display: &str,
+    temp: Option<u32>,
 ) -> Result<BrightnessOutcome, String> {
     let outcome = |backend: BrightnessBackend, unchanged: bool| BrightnessOutcome {
         display: display.to_string(),
@@ -159,7 +188,7 @@ fn set_percent(
         clipped: false,
     };
     match via {
-        Some(backend) => match set_via(backend, name, level, display) {
+        Some(backend) => match set_via(backend, name, level, display, temp) {
             Ok(Some(unchanged)) => Ok(outcome(backend, unchanged)),
             Ok(None) => Err(format!(
                 "{display} does not support {} brightness control",
@@ -173,7 +202,7 @@ fn set_percent(
                 BrightnessBackend::Slider,
                 BrightnessBackend::Gamma,
             ] {
-                match set_via(backend, name, level, display) {
+                match set_via(backend, name, level, display, temp) {
                     Ok(Some(unchanged)) => return Ok(outcome(backend, unchanged)),
                     Ok(None) => continue,
                     Err(e) => return Err(e),
@@ -211,7 +240,7 @@ impl HardwareChange {
 
 /// The mode path: the best available hardware write (when any applies) plus
 /// the mode's gamma write.
-fn set_mode(name: &str, mode: BrightnessValue, display: &str) -> Result<BrightnessOutcome, String> {
+fn set_mode(name: &str, mode: BrightnessValue, display: &str, temp: Option<u32>) -> Result<BrightnessOutcome, String> {
     let mut layers = Vec::with_capacity(2);
     let mut hardware_unchanged = true;
     match mode {
@@ -245,7 +274,7 @@ fn set_mode(name: &str, mode: BrightnessValue, display: &str) -> Result<Brightne
         BrightnessValue::Percent(_) => unreachable!("set_mode only runs for modes"),
     }
     let level = gamma_level_for(mode);
-    let gamma_unchanged = match set_via_gamma(name, level, display, true, None)? {
+    let gamma_unchanged = match set_via_gamma(name, level, display, true, temp)? {
         Some(unchanged) => unchanged,
         None => unreachable!(
             "gamma control always reports Some; set_via_gamma only returns None for unsupported backends"
@@ -289,17 +318,28 @@ fn set_via(
     name: &str,
     value: u32,
     display: &str,
+    temp: Option<u32>,
 ) -> Result<Option<bool>, String> {
     match backend {
         BrightnessBackend::Ddc => set_via_ddc(name, value),
         BrightnessBackend::Slider => set_via_slider(name, value),
-        BrightnessBackend::Gamma => set_via_gamma(name, value, display, false, None),
+        BrightnessBackend::Gamma => set_via_gamma(name, value, display, false, temp),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mode_kind_classification() {
+        assert_eq!(BrightnessValue::Percent(0).mode_kind(), ModeKind::Plain);
+        assert_eq!(BrightnessValue::Percent(50).mode_kind(), ModeKind::Plain);
+        assert_eq!(BrightnessValue::Percent(100).mode_kind(), ModeKind::Plain);
+        assert_eq!(BrightnessValue::Min.mode_kind(), ModeKind::Min);
+        assert_eq!(BrightnessValue::Max.mode_kind(), ModeKind::Max);
+        assert_eq!(BrightnessValue::Boost.mode_kind(), ModeKind::Boost);
+    }
 
     #[test]
     fn mode_backend_error_names_the_mode() {
@@ -321,5 +361,34 @@ mod tests {
         assert_eq!(BrightnessBackend::Ddc.name(), "ddc");
         assert_eq!(BrightnessBackend::Slider.name(), "slider");
         assert_eq!(BrightnessBackend::Gamma.name(), "gamma");
+    }
+
+    #[test]
+    #[cfg(feature = "fake")]
+    fn set_mode_with_temp_passes_temp_through() {
+        use crate::sys::windows::fake::brightness::set_brightness;
+        use crate::sys::windows::{BrightnessLayer, BrightnessValue};
+
+        // Call set_brightness with a mode and temp - should not error
+        let outcome = set_brightness(Some(1), BrightnessValue::Min, None, Some(3400)).unwrap();
+        assert_eq!(outcome.kind, BrightnessValue::Min);
+        // Verify layers are present (hardware + gamma)
+        assert_eq!(outcome.layers.len(), 2);
+        assert!(matches!(outcome.layers[0], BrightnessLayer::Hardware { .. }));
+        assert!(matches!(outcome.layers[1], BrightnessLayer::Gamma { level: 50 }));
+    }
+
+    #[test]
+    #[cfg(feature = "fake")]
+    fn set_percent_with_temp_passes_temp_through() {
+        use crate::sys::windows::fake::brightness::set_brightness;
+        use crate::sys::windows::{BrightnessLayer, BrightnessValue};
+
+        // Call set_brightness with a percent value and temp - should not error
+        let outcome = set_brightness(Some(2), BrightnessValue::Percent(50), None, Some(3400)).unwrap();
+        assert_eq!(outcome.kind, BrightnessValue::Percent(50));
+        // Verify gamma layer is present
+        assert_eq!(outcome.layers.len(), 1);
+        assert!(matches!(outcome.layers[0], BrightnessLayer::Gamma { level: 50 }));
     }
 }

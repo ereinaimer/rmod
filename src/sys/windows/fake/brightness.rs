@@ -59,10 +59,13 @@ fn mode_layers(monitor: &Monitor, mode: BrightnessValue) -> Vec<BrightnessLayer>
 /// [`BrightnessValue::Boost`] compose a hardware write with a gamma write;
 /// they reject a forced backend and report `unchanged` when the same mode
 /// was applied last.
+///
+/// `temp` is an optional color temperature in Kelvin for mode+temp composition.
 pub(crate) fn set_brightness(
     monitor: Option<u32>,
     value: BrightnessValue,
     via: Option<BrightnessBackend>,
+    _temp: Option<u32>,
 ) -> Result<BrightnessOutcome, String> {
     let monitor = resolve(monitor)?;
     let display = display_label(&monitor);
@@ -128,7 +131,7 @@ mod tests {
 
     #[test]
     fn set_brightness_primary_auto_uses_ddc() {
-        let outcome = set_brightness(None, BrightnessValue::Percent(30), None).unwrap();
+        let outcome = set_brightness(None, BrightnessValue::Percent(30), None, None).unwrap();
         assert_eq!(outcome.display, "RMOD Fake Monitor 1 [:1]");
         assert_eq!(
             outcome.layers,
@@ -142,7 +145,7 @@ mod tests {
 
     #[test]
     fn set_brightness_already_at_is_unchanged() {
-        let outcome = set_brightness(None, BrightnessValue::Percent(60), None).unwrap();
+        let outcome = set_brightness(None, BrightnessValue::Percent(60), None, None).unwrap();
         assert_eq!(
             outcome.layers,
             vec![BrightnessLayer::Hardware {
@@ -155,7 +158,7 @@ mod tests {
 
     #[test]
     fn set_brightness_second_monitor_auto_falls_back_to_gamma() {
-        let outcome = set_brightness(Some(2), BrightnessValue::Percent(30), None).unwrap();
+        let outcome = set_brightness(Some(2), BrightnessValue::Percent(30), None, None).unwrap();
         assert_eq!(outcome.display, "RMOD Fake Monitor 2 [:2]");
         assert_eq!(outcome.layers, vec![BrightnessLayer::Gamma { level: 30 }]);
         assert!(!outcome.unchanged);
@@ -167,7 +170,8 @@ mod tests {
             set_brightness(
                 Some(2),
                 BrightnessValue::Percent(30),
-                Some(BrightnessBackend::Ddc)
+                Some(BrightnessBackend::Ddc),
+                None
             )
             .err(),
             Some("RMOD Fake Monitor 2 [:2] does not support ddc brightness control".to_string())
@@ -176,7 +180,8 @@ mod tests {
             set_brightness(
                 Some(2),
                 BrightnessValue::Percent(30),
-                Some(BrightnessBackend::Slider)
+                Some(BrightnessBackend::Slider),
+                None
             )
             .err(),
             Some("RMOD Fake Monitor 2 [:2] does not support slider brightness control".to_string())
@@ -189,6 +194,7 @@ mod tests {
             Some(1),
             BrightnessValue::Percent(30),
             Some(BrightnessBackend::Gamma),
+            None,
         )
         .unwrap();
         assert_eq!(outcome.layers, vec![BrightnessLayer::Gamma { level: 30 }]);
@@ -198,7 +204,7 @@ mod tests {
     #[test]
     fn set_brightness_unknown_monitor_is_error() {
         assert_eq!(
-            set_brightness(Some(99), BrightnessValue::Percent(30), None).err(),
+            set_brightness(Some(99), BrightnessValue::Percent(30), None, None).err(),
             Some("monitor 99 not found. run rmod list to see connected displays".to_string())
         );
     }
@@ -206,7 +212,7 @@ mod tests {
     #[test]
     fn set_brightness_min_on_monitor_1_layers_slider_floor_and_gamma() {
         reset_brightness_modes();
-        let outcome = set_brightness(Some(1), BrightnessValue::Min, None).unwrap();
+        let outcome = set_brightness(Some(1), BrightnessValue::Min, None, None).unwrap();
         assert_eq!(outcome.display, "RMOD Fake Monitor 1 [:1]");
         assert_eq!(outcome.kind, BrightnessValue::Min);
         assert!(!outcome.unchanged);
@@ -226,7 +232,7 @@ mod tests {
     #[test]
     fn set_brightness_max_on_monitor_1_layers_ddc_full_and_gamma() {
         reset_brightness_modes();
-        let outcome = set_brightness(Some(1), BrightnessValue::Max, None).unwrap();
+        let outcome = set_brightness(Some(1), BrightnessValue::Max, None, None).unwrap();
         assert_eq!(outcome.kind, BrightnessValue::Max);
         assert!(!outcome.unchanged);
         assert_eq!(
@@ -245,7 +251,7 @@ mod tests {
     #[test]
     fn set_brightness_boost_on_monitor_1_layers_slider_full_and_overdriven_gamma() {
         reset_brightness_modes();
-        let outcome = set_brightness(Some(1), BrightnessValue::Boost, None).unwrap();
+        let outcome = set_brightness(Some(1), BrightnessValue::Boost, None, None).unwrap();
         assert_eq!(outcome.kind, BrightnessValue::Boost);
         assert!(!outcome.unchanged);
         assert_eq!(
@@ -264,7 +270,7 @@ mod tests {
     #[test]
     fn set_brightness_min_on_gamma_only_monitor_2_is_gamma_only() {
         reset_brightness_modes();
-        let outcome = set_brightness(Some(2), BrightnessValue::Min, None).unwrap();
+        let outcome = set_brightness(Some(2), BrightnessValue::Min, None, None).unwrap();
         assert_eq!(outcome.display, "RMOD Fake Monitor 2 [:2]");
         assert_eq!(outcome.kind, BrightnessValue::Min);
         assert!(!outcome.unchanged);
@@ -275,7 +281,7 @@ mod tests {
     #[test]
     fn set_brightness_max_on_gamma_only_monitor_2_is_gamma_only() {
         reset_brightness_modes();
-        let outcome = set_brightness(Some(2), BrightnessValue::Max, None).unwrap();
+        let outcome = set_brightness(Some(2), BrightnessValue::Max, None, None).unwrap();
         assert_eq!(outcome.kind, BrightnessValue::Max);
         assert!(!outcome.unchanged);
         assert_eq!(outcome.layers, vec![BrightnessLayer::Gamma { level: 100 }]);
@@ -285,7 +291,7 @@ mod tests {
     #[test]
     fn set_brightness_boost_on_gamma_only_monitor_2_is_gamma_only() {
         reset_brightness_modes();
-        let outcome = set_brightness(Some(2), BrightnessValue::Boost, None).unwrap();
+        let outcome = set_brightness(Some(2), BrightnessValue::Boost, None, None).unwrap();
         assert_eq!(outcome.kind, BrightnessValue::Boost);
         assert!(!outcome.unchanged);
         assert_eq!(outcome.layers, vec![BrightnessLayer::Gamma { level: 130 }]);
@@ -295,15 +301,15 @@ mod tests {
     #[test]
     fn set_brightness_mode_unknown_monitor_is_error() {
         assert_eq!(
-            set_brightness(Some(99), BrightnessValue::Min, None).err(),
+            set_brightness(Some(99), BrightnessValue::Min, None, None).err(),
             Some("monitor 99 not found. run rmod list to see connected displays".to_string())
         );
     }
 
     #[test]
     fn set_brightness_repeated_mode_is_unchanged() {
-        set_brightness(Some(1), BrightnessValue::Min, None).unwrap();
-        let outcome = set_brightness(Some(1), BrightnessValue::Min, None).unwrap();
+        set_brightness(Some(1), BrightnessValue::Min, None, None).unwrap();
+        let outcome = set_brightness(Some(1), BrightnessValue::Min, None, None).unwrap();
         assert!(outcome.unchanged);
         assert_eq!(
             outcome.layers,
@@ -319,30 +325,30 @@ mod tests {
 
     #[test]
     fn set_brightness_different_mode_after_mode_is_a_change() {
-        set_brightness(Some(1), BrightnessValue::Min, None).unwrap();
-        let outcome = set_brightness(Some(1), BrightnessValue::Max, None).unwrap();
+        set_brightness(Some(1), BrightnessValue::Min, None, None).unwrap();
+        let outcome = set_brightness(Some(1), BrightnessValue::Max, None, None).unwrap();
         assert!(!outcome.unchanged);
     }
 
     #[test]
     fn set_brightness_mode_after_percent_is_a_change() {
         reset_brightness_modes();
-        set_brightness(Some(1), BrightnessValue::Percent(30), None).unwrap();
-        let outcome = set_brightness(Some(1), BrightnessValue::Min, None).unwrap();
+        set_brightness(Some(1), BrightnessValue::Percent(30), None, None).unwrap();
+        let outcome = set_brightness(Some(1), BrightnessValue::Min, None, None).unwrap();
         assert!(!outcome.unchanged);
     }
 
     #[test]
     fn set_brightness_percent_after_mode_keeps_percent_unchanged_detection() {
-        set_brightness(Some(1), BrightnessValue::Min, None).unwrap();
-        let outcome = set_brightness(Some(1), BrightnessValue::Percent(60), None).unwrap();
+        set_brightness(Some(1), BrightnessValue::Min, None, None).unwrap();
+        let outcome = set_brightness(Some(1), BrightnessValue::Percent(60), None, None).unwrap();
         assert!(outcome.unchanged);
     }
 
     #[test]
     fn set_brightness_repeated_mode_on_second_monitor_is_unchanged() {
-        set_brightness(Some(2), BrightnessValue::Boost, None).unwrap();
-        let outcome = set_brightness(Some(2), BrightnessValue::Boost, None).unwrap();
+        set_brightness(Some(2), BrightnessValue::Boost, None, None).unwrap();
+        let outcome = set_brightness(Some(2), BrightnessValue::Boost, None, None).unwrap();
         assert!(outcome.unchanged);
         assert_eq!(outcome.layers, vec![BrightnessLayer::Gamma { level: 130 }]);
         assert!(outcome.clipped);
@@ -356,7 +362,7 @@ mod tests {
             (BrightnessValue::Boost, "boost"),
         ] {
             assert_eq!(
-                set_brightness(Some(1), mode, Some(BrightnessBackend::Ddc)).err(),
+                set_brightness(Some(1), mode, Some(BrightnessBackend::Ddc), None).err(),
                 Some(format!(
                     "{word} does not take a backend. use a number to choose a backend"
                 )),

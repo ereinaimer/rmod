@@ -19,10 +19,10 @@ pub(super) fn run_brightness(
     monitor: MonitorTarget,
 ) -> i32 {
     match monitor {
-        MonitorTarget::Primary => report_brightness(windows::set_brightness(None, value, via)),
-        MonitorTarget::Index(n) => report_brightness(windows::set_brightness(Some(n), value, via)),
+        MonitorTarget::Primary => report_brightness(windows::set_brightness(None, value, via, None)),
+        MonitorTarget::Index(n) => report_brightness(windows::set_brightness(Some(n), value, via, None)),
         MonitorTarget::Id(_) => match resolve_target(&monitor) {
-            Ok(idx) => report_brightness(windows::set_brightness(idx, value, via)),
+            Ok(idx) => report_brightness(windows::set_brightness(idx, value, via, None)),
             Err(e) => {
                 eprintln!("error: {e}");
                 2
@@ -32,7 +32,7 @@ pub(super) fn run_brightness(
             let count = windows::enumerate_devices().len();
             let mut any_error = false;
             for n in 1..=count as u32 {
-                match windows::set_brightness(Some(n), value, via) {
+                match windows::set_brightness(Some(n), value, via, None) {
                     Ok(outcome) => print_brightness(&outcome),
                     Err(e) => {
                         eprintln!("error: {e}");

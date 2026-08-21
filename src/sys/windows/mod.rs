@@ -365,6 +365,8 @@ pub fn get_primary_mode() -> Result<Monitor, String> {
 /// `monitor` is the 1-based number from `rmod list`; `None` selects the
 /// primary display.
 ///
+/// `temp` is an optional color temperature in Kelvin for mode+temp composition.
+///
 /// # Errors
 /// Unknown monitor, a forced backend the display does not support, a mode
 /// with a forced backend, or no brightness-control path at all.
@@ -372,12 +374,13 @@ pub fn set_brightness(
     monitor: Option<u32>,
     value: BrightnessValue,
     via: Option<BrightnessBackend>,
+    temp: Option<u32>,
 ) -> Result<BrightnessOutcome, String> {
     #[cfg(any(test, feature = "fake"))]
     if fake::enabled() {
-        return fake::set_brightness(monitor, value, via);
+        return fake::set_brightness(monitor, value, via, temp);
     }
-    brightness::set_brightness(monitor, value, via)
+    brightness::set_brightness(monitor, value, via, temp)
 }
 
 /// Sets a display's contrast, auto-detecting the backend chain
