@@ -4,12 +4,138 @@
 //! [`run_set`] reports the outcome per display, then runs the shared
 //! keep-or-revert confirmation flow for the changes it applied.
 
-use crate::cli::flags::{ORIENTATIONS, PROFILES};
+use crate::cli::flags::{ORIENTATIONS, PROFILES, TEMP_MAX_KELVIN, TEMP_MIN_KELVIN, TEMP_PRESETS};
 use crate::cli::parser::parse_monitor_target;
 use crate::cli::{Command, HelpTopic, MonitorTarget, SetSpec};
-use crate::sys::windows::{self, ApplyOutcome, Refresh};
+use crate::sys::windows::{self, ApplyOutcome, BrightnessOutcome, BrightnessValue, BrightnessLayer, Refresh};
 
 use super::{confirm_or_revert, confirm_or_revert_all, describe_outcome, resolve_target};
+
+/// Runs the brightness+temp composition: applies brightness with a color temperature.
+fn run_brightness_temp(
+    brightness: BrightnessValue,
+    temp: u32,
+    monitor: MonitorTarget,
+    _yes: bool,
+) -> i32 {
+    match monitor {
+        MonitorTarget::Primary | MonitorTarget::Id(_) | MonitorTarget::Index(_) => {
+            let monitor_idx = match resolve_target(&monitor) {
+                Ok(idx) => idx,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return 2;
+                }
+            };
+            match windows::set_brightness(monitor_idx, brightness, None, Some(temp)) {
+                Ok(outcome) => {
+                    println!("{}", describe_brightness_temp(&outcome, temp));
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    2
+                }
+            }
+        }
+        MonitorTarget::All => {
+            let devices = windows::enumerate_devices();
+            let mut any_error = false;
+            for (idx, _name) in devices.iter().enumerate() {
+                let monitor_num = (idx + 1) as u32;
+                match windows::set_brightness(Some(monitor_num), brightness, None, Some(temp)) {
+                    Ok(outcome) => println!("{}", describe_brightness_temp(&outcome, temp)),
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        any_error = true;
+                    }
+                }
+            }
+            if any_error { 2 } else { 0 }
+        }
+    }
+}
+
+/// Describes a brightness+temp outcome.
+fn describe_brightness_temp(outcome: &BrightnessOutcome, temp: u32) -> String {
+    match outcome.kind {
+        BrightnessValue::Percent(value) => {
+            if outcome.unchanged {
+                format!(
+                    "{} is already at {}% with {}K",
+                    outcome.display, value, temp
+                )
+            } else {
+                format!(
+                    "set {} brightness to {}% with {}K via {}",
+                    outcome.display,
+                    value,
+                    temp,
+                    layer_backend(outcome)
+                )
+            }
+        }
+        BrightnessValue::Min | BrightnessValue::Max | BrightnessValue::Boost => {
+            if outcome.unchanged {
+                format!(
+                    "{} is already at {} with {}K",
+                    outcome.display,
+                    mode_word(outcome.kind),
+                    temp
+                )
+            } else {
+                format!(
+                    "set {} brightness to {} ({}) with {}K",
+                    outcome.display,
+                    mode_word(outcome.kind),
+                    describe_layers(outcome),
+                    temp
+                )
+            }
+        }
+    }
+}
+
+/// The backend word of the outcome's hardware layer, or `gamma` for a
+/// gamma layer.
+fn layer_backend(outcome: &BrightnessOutcome) -> &str {
+    match outcome.layers.first() {
+        Some(crate::sys::windows::BrightnessLayer::Hardware { backend, .. }) => backend.name(),
+        Some(crate::sys::windows::BrightnessLayer::Gamma { .. }) => "gamma",
+        None => unreachable!("outcomes always carry at least one layer"),
+    }
+}
+
+/// The joined layer descriptions of a mode outcome, e.g. `slider 5 + gamma 50%`.
+fn describe_layers(outcome: &BrightnessOutcome) -> String {
+    outcome
+        .layers
+        .iter()
+        .map(describe_layer)
+        .collect::<Vec<_>>()
+        .join(" + ")
+}
+
+/// Describes one write of a brightness change: a backend word with its
+/// level, or the gamma ramp as a percentage.
+fn describe_layer(layer: &crate::sys::windows::BrightnessLayer) -> String {
+    match layer {
+        crate::sys::windows::BrightnessLayer::Hardware { backend, level } => {
+            format!("{} {}", backend.name(), level)
+        }
+        crate::sys::windows::BrightnessLayer::Gamma { level } => format!("gamma {level}%"),
+    }
+}
+
+/// The lowercase CLI word of a mode, used in errors and output.
+fn mode_word(mode: BrightnessValue) -> &'static str {
+    match mode {
+        BrightnessValue::Min => "min",
+        BrightnessValue::Max => "max",
+        BrightnessValue::Boost => "boost",
+        BrightnessValue::Percent(_) => unreachable!("percent is not a mode"),
+    }
+}
 
 /// Resolves a SetSpec to width, height, and refresh using current display state.
 fn resolve_spec(
@@ -41,6 +167,7 @@ fn resolve_spec(
         SetSpec::RefreshOnly(refresh) => (None, None, *refresh),
         SetSpec::Keep => (None, None, Refresh::Keep),
         SetSpec::Max => unreachable!(),
+        SetSpec::BrightnessTemp { .. } => (None, None, Refresh::Keep),
     }
 }
 
@@ -52,6 +179,9 @@ pub(super) fn run_set(
     orientation: Option<u32>,
     yes: bool,
 ) -> i32 {
+    if let SetSpec::BrightnessTemp { brightness, temp } = spec {
+        return run_brightness_temp(brightness, temp, monitor, yes);
+    }
     if spec == SetSpec::Max {
         match monitor {
             MonitorTarget::Primary | MonitorTarget::Id(_) | MonitorTarget::Index(_) => {
@@ -205,7 +335,7 @@ pub(super) fn run_set(
 
 pub(crate) fn parse_set(args: &[impl AsRef<str>]) -> Result<Command, String> {
     if args.len() < 2 {
-        return Err("set needs something to change. width/height, refresh rate, profile, or --max\ne.g. rmod set -p 1080".to_string());
+        return Err("set needs something to change. width/height, refresh rate, profile, --max, or -b/--brightness with -t/--temp\ne.g. rmod set -p 1080".to_string());
     }
 
     let mut width = None;
@@ -216,6 +346,10 @@ pub(crate) fn parse_set(args: &[impl AsRef<str>]) -> Result<Command, String> {
     let mut orientation = None;
     let mut yes = false;
     let mut max_flag = false;
+    let mut brightness: Option<BrightnessValue> = None;
+    let mut temp: Option<u32> = None;
+    let mut brightness_set = false;
+    let mut temp_set = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -326,13 +460,98 @@ pub(crate) fn parse_set(args: &[impl AsRef<str>]) -> Result<Command, String> {
                 max_flag = true;
                 i += 1;
             }
+            "-b" | "--brightness" => {
+                if brightness_set {
+                    return Err("--brightness specified multiple times".to_string());
+                }
+                i += 1;
+                let Some(val) = args.get(i) else {
+                    return Err(
+                        "-b, --brightness needs a value. a number between 0 and 100, or min, max, boost\ne.g. -b 50".to_string(),
+                    );
+                };
+                let val = val.as_ref();
+                if val.starts_with('-') {
+                    return Err(
+                        "-b, --brightness needs a value. a number between 0 and 100, or min, max, boost\ne.g. -b 50".to_string(),
+                    );
+                }
+                let new_value = match val.to_lowercase().as_str() {
+                    "min" => BrightnessValue::Min,
+                    "max" => BrightnessValue::Max,
+                    "boost" => BrightnessValue::Boost,
+                    _ => BrightnessValue::Percent(val.parse::<u32>().map_err(|_| {
+                        format!("invalid brightness {val}. use a number between 0 and 100")
+                    })?),
+                };
+                if let BrightnessValue::Percent(v) = new_value
+                    && v > 100
+                {
+                    return Err(format!(
+                        "invalid brightness {val}. use a number between 0 and 100"
+                    ));
+                }
+                brightness = Some(new_value);
+                brightness_set = true;
+                i += 1;
+            }
+            "-t" | "--temp" => {
+                if temp_set {
+                    return Err("--temp specified multiple times".to_string());
+                }
+                i += 1;
+                let Some(val) = args.get(i) else {
+                    return Err(
+                        "-t, --temp needs a value. a Kelvin value (1000-6500) or a preset\ne.g. -t 3400".to_string(),
+                    );
+                };
+                let val = val.as_ref();
+                if val.starts_with('-') {
+                    return Err(
+                        "-t, --temp needs a value. a Kelvin value (1000-6500) or a preset\ne.g. -t 3400".to_string(),
+                    );
+                }
+                let kelvin = parse_temp_value(val)?;
+                if !(TEMP_MIN_KELVIN..=TEMP_MAX_KELVIN).contains(&kelvin) {
+                    return Err(format!(
+                        "invalid temperature {val}. use a Kelvin value (1000-6500) or a preset"
+                    ));
+                }
+                temp = Some(kelvin);
+                temp_set = true;
+                i += 1;
+            }
             other => {
                 return Err(format!(
-                    "unexpected argument {} for set. use --width, --height, --refresh, --profile, --monitor, --orientation, or --max",
+                    "unexpected argument {} for set. use --width, --height, --refresh, --profile, --monitor, --orientation, --max, --brightness, or --temp",
                     other
                 ));
             }
         }
+    }
+
+    let has_resolution_spec = width.is_some() || height.is_some() || refresh.is_some() || profile.is_some() || max_flag;
+    let has_brightness_temp = brightness_set || temp_set;
+
+    if has_resolution_spec && has_brightness_temp {
+        return Err(
+            "use `rmod monitor brightness` / `rmod temp` for single actions; `-b` and `-t` compose".to_string(),
+        );
+    }
+
+    if max_flag && (width.is_some() || height.is_some() || refresh.is_some() || profile.is_some()) {
+        return Err("use --max alone or one of: width/height, refresh, profile".to_string());
+    }
+
+    if brightness_set && !temp_set {
+        return Err(
+            "use rmod monitor brightness for brightness only".to_string(),
+        );
+    }
+    if temp_set && !brightness_set {
+        return Err(
+            "use rmod temp for temperature only".to_string(),
+        );
     }
 
     if (width.is_some() && height.is_none()) || (width.is_none() && height.is_some()) {
@@ -345,11 +564,12 @@ pub(crate) fn parse_set(args: &[impl AsRef<str>]) -> Result<Command, String> {
         return Err("use --profile or explicit width/height, not both".to_string());
     }
 
-    if max_flag && (width.is_some() || height.is_some() || refresh.is_some() || profile.is_some()) {
-        return Err("use --max alone or one of: width/height, refresh, profile".to_string());
-    }
-
-    let spec = if max_flag {
+    let spec = if brightness_set && temp_set {
+        SetSpec::BrightnessTemp {
+            brightness: brightness.unwrap(),
+            temp: temp.unwrap(),
+        }
+    } else if max_flag {
         SetSpec::Max
     } else if let Some(p) = profile {
         if let Some(r) = refresh {
@@ -376,6 +596,22 @@ pub(crate) fn parse_set(args: &[impl AsRef<str>]) -> Result<Command, String> {
         monitor,
         orientation,
         yes,
+    })
+}
+
+fn parse_temp_value(arg: &str) -> Result<u32, String> {
+    let lower = arg.to_lowercase();
+    if let Some((_, _, kelvin)) = TEMP_PRESETS
+        .iter()
+        .find(|(name, alias, _)| *name == lower || *alias == lower)
+    {
+        return Ok(*kelvin);
+    }
+    let digits = lower.strip_suffix('k').unwrap_or(&lower);
+    digits.parse::<u32>().map_err(|_| {
+        format!(
+            "invalid temperature {arg}. use a Kelvin value (1000-6500), a preset, or reset\ne.g. rmod temp 3400"
+        )
     })
 }
 
@@ -893,7 +1129,13 @@ mod tests {
 
     #[test]
     fn set_missing_spec_is_error() {
-        assert_eq!(parse(&["set"]), Err("set needs something to change. width/height, refresh rate, profile, or --max\ne.g. rmod set -p 1080".to_string()));
+        assert_eq!(
+            parse(&["set"]),
+            Err(
+                "set needs something to change. width/height, refresh rate, profile, --max, or -b/--brightness with -t/--temp\ne.g. rmod set -p 1080"
+                    .to_string()
+            )
+        );
     }
 
     #[test]
@@ -1018,5 +1260,244 @@ mod tests {
                 yes: true
             })
         );
+    }
+
+    #[test]
+    fn set_brightness_temp_together_parse_correctly() {
+        for (b_arg, b_val, t_arg, t_kelvin) in [
+            ("50", BrightnessValue::Percent(50), "3400", 3400),
+            ("min", BrightnessValue::Min, "warm", 2700),
+            ("max", BrightnessValue::Max, "cool", 4500),
+            ("boost", BrightnessValue::Boost, "candle", 1900),
+            ("75", BrightnessValue::Percent(75), "4000k", 4000),
+        ] {
+            assert_eq!(
+                parse(&["set", "-b", b_arg, "-t", t_arg]),
+                Ok(Command::Set {
+                    spec: SetSpec::BrightnessTemp {
+                        brightness: b_val,
+                        temp: t_kelvin,
+                    },
+                    monitor: MonitorTarget::Primary,
+                    orientation: None,
+                    yes: false
+                }),
+                "b='{}', t='{}'",
+                b_arg,
+                t_arg
+            );
+        }
+    }
+
+    #[test]
+    fn set_brightness_temp_long_flags() {
+        assert_eq!(
+            parse(&["set", "--brightness", "50", "--temp", "3400"]),
+            Ok(Command::Set {
+                spec: SetSpec::BrightnessTemp {
+                    brightness: BrightnessValue::Percent(50),
+                    temp: 3400,
+                },
+                monitor: MonitorTarget::Primary,
+                orientation: None,
+                yes: false
+            })
+        );
+    }
+
+    #[test]
+    fn set_brightness_alone_errors() {
+        let err = parse(&["set", "-b", "50"]).unwrap_err();
+        assert_eq!(err, "use rmod monitor brightness for brightness only");
+    }
+
+    #[test]
+    fn set_temp_alone_errors() {
+        let err = parse(&["set", "-t", "3400"]).unwrap_err();
+        assert_eq!(err, "use rmod temp for temperature only");
+    }
+
+    #[test]
+    fn set_brightness_temp_mutual_exclusion_with_resolution() {
+        for args in [
+            &["set", "-b", "50", "-t", "3400", "-w", "1920", "-h", "1080"][..],
+            &["set", "-b", "50", "-t", "3400", "-p", "1080"][..],
+            &["set", "-b", "50", "-t", "3400", "-r", "60"][..],
+            &["set", "-b", "50", "-t", "3400", "--max"][..],
+        ] {
+            let err = parse(args).unwrap_err();
+            assert_eq!(
+                err,
+                "use `rmod monitor brightness` / `rmod temp` for single actions; `-b` and `-t` compose",
+                "args: {:?}",
+                args
+            );
+        }
+    }
+
+    #[test]
+    fn set_brightness_mode_words_with_temp() {
+        for (mode, val) in [
+            ("min", BrightnessValue::Min),
+            ("max", BrightnessValue::Max),
+            ("boost", BrightnessValue::Boost),
+        ] {
+            assert_eq!(
+                parse(&["set", "-b", mode, "-t", "3400"]),
+                Ok(Command::Set {
+                    spec: SetSpec::BrightnessTemp {
+                        brightness: val,
+                        temp: 3400,
+                    },
+                    monitor: MonitorTarget::Primary,
+                    orientation: None,
+                    yes: false
+                }),
+                "mode '{}'",
+                mode
+            );
+        }
+    }
+
+    #[test]
+    fn set_brightness_mode_words_case_insensitive_with_temp() {
+        assert_eq!(
+            parse(&["set", "-b", "Min", "-t", "3400"]),
+            parse(&["set", "-b", "min", "-t", "3400"])
+        );
+        assert_eq!(
+            parse(&["set", "-b", "BOOST", "-t", "3400"]),
+            parse(&["set", "-b", "boost", "-t", "3400"])
+        );
+    }
+
+    #[test]
+    fn set_temp_presets_and_aliases_with_brightness() {
+        for (preset, alias, kelvin) in crate::cli::flags::TEMP_PRESETS {
+            assert_eq!(
+                parse(&["set", "-b", "50", "-t", preset]),
+                Ok(Command::Set {
+                    spec: SetSpec::BrightnessTemp {
+                        brightness: BrightnessValue::Percent(50),
+                        temp: *kelvin,
+                    },
+                    monitor: MonitorTarget::Primary,
+                    orientation: None,
+                    yes: false
+                }),
+                "preset '{}'",
+                preset
+            );
+            assert_eq!(
+                parse(&["set", "-b", "50", "-t", alias]),
+                Ok(Command::Set {
+                    spec: SetSpec::BrightnessTemp {
+                        brightness: BrightnessValue::Percent(50),
+                        temp: *kelvin,
+                    },
+                    monitor: MonitorTarget::Primary,
+                    orientation: None,
+                    yes: false
+                }),
+                "alias '{}'",
+                alias
+            );
+        }
+    }
+
+    #[test]
+    fn set_temp_kelvin_bounds_enforced() {
+        for arg in ["0", "500", "999", "6501", "9000"] {
+            let err = parse(&["set", "-b", "50", "-t", arg]).unwrap_err();
+            assert!(
+                err.contains("invalid temperature"),
+                "arg '{}' gave: {}",
+                arg,
+                err
+            );
+        }
+        // Boundaries are accepted
+        assert!(parse(&["set", "-b", "50", "-t", "1000"]).is_ok());
+        assert!(parse(&["set", "-b", "50", "-t", "6500"]).is_ok());
+    }
+
+    #[test]
+    fn set_brightness_out_of_range_with_temp_errors() {
+        let err = parse(&["set", "-b", "150", "-t", "3400"]).unwrap_err();
+        assert!(err.contains("invalid brightness"));
+        let err = parse(&["set", "-b", "abc", "-t", "3400"]).unwrap_err();
+        assert!(err.contains("invalid brightness"));
+    }
+
+    #[test]
+    fn set_brightness_temp_with_monitor() {
+        assert_eq!(
+            parse(&["set", "-b", "50", "-t", "3400", "-m", "2"]),
+            Ok(Command::Set {
+                spec: SetSpec::BrightnessTemp {
+                    brightness: BrightnessValue::Percent(50),
+                    temp: 3400,
+                },
+                monitor: MonitorTarget::Index(2),
+                orientation: None,
+                yes: false
+            })
+        );
+    }
+
+    #[test]
+    fn set_brightness_temp_with_all() {
+        assert_eq!(
+            parse(&["set", "-b", "50", "-t", "3400", "-m", "all"]),
+            Ok(Command::Set {
+                spec: SetSpec::BrightnessTemp {
+                    brightness: BrightnessValue::Percent(50),
+                    temp: 3400,
+                },
+                monitor: MonitorTarget::All,
+                orientation: None,
+                yes: false
+            })
+        );
+    }
+
+    #[test]
+    fn set_brightness_temp_with_yes() {
+        assert_eq!(
+            parse(&["set", "-b", "50", "-t", "3400", "-y"]),
+            Ok(Command::Set {
+                spec: SetSpec::BrightnessTemp {
+                    brightness: BrightnessValue::Percent(50),
+                    temp: 3400,
+                },
+                monitor: MonitorTarget::Primary,
+                orientation: None,
+                yes: true
+            })
+        );
+    }
+
+    #[test]
+    fn set_brightness_temp_duplicate_brightness_error() {
+        let err = parse(&["set", "-b", "50", "-b", "60", "-t", "3400"]).unwrap_err();
+        assert_eq!(err, "--brightness specified multiple times");
+    }
+
+    #[test]
+    fn set_brightness_temp_duplicate_temp_error() {
+        let err = parse(&["set", "-b", "50", "-t", "3400", "-t", "4000"]).unwrap_err();
+        assert_eq!(err, "--temp specified multiple times");
+    }
+
+    #[test]
+    fn set_brightness_temp_missing_brightness_value_error() {
+        let err = parse(&["set", "-b", "-t", "3400"]).unwrap_err();
+        assert!(err.contains("-b, --brightness needs a value"));
+    }
+
+    #[test]
+    fn set_brightness_temp_missing_temp_value_error() {
+        let err = parse(&["set", "-b", "50", "-t"]).unwrap_err();
+        assert!(err.contains("-t, --temp needs a value"));
     }
 }

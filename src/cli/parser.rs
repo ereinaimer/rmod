@@ -174,6 +174,10 @@ pub enum SetSpec {
     RefreshOnly(Refresh),
     Max,
     Keep,
+    BrightnessTemp {
+        brightness: BrightnessValue,
+        temp: u32,
+    },
 }
 
 /// Parses the process arguments into a [`Command`].
@@ -761,6 +765,13 @@ mod tests {
             (&["temp", "9000"], "parse_temp out-of-range value"),
             (&["temp", "-m"], "parse_temp -m missing value"),
             (&["temp", "3000", "4000"], "parse_temp second positional"),
+            (&["set", "-b"], "parse_set -b missing value"),
+            (&["set", "-b", "-t", "3400"], "parse_set -b flag-like value"),
+            (&["set", "-t"], "parse_set -t missing value"),
+            (&["set", "-t", "-b", "50"], "parse_set -t flag-like value"),
+            (&["set", "-b", "50", "-t", "3400", "-w", "1920"], "parse_set -b -t with resolution"),
+            (&["set", "-b", "50"], "parse_set -b alone"),
+            (&["set", "-t", "3400"], "parse_set -t alone"),
             (
                 &["monitor", "brightness", "min", "-v", "ddc"],
                 "parse_from unknown command",

@@ -62,6 +62,14 @@ pub(crate) const SET_FLAGS: &[Flag] = &[
         doc: "Resolution preset (see Profiles below)",
     },
     Flag {
+        flag: "-b, --brightness",
+        doc: "Brightness level 0-100, or min, max, boost (requires --temp)",
+    },
+    Flag {
+        flag: "-t, --temp",
+        doc: "Color temperature in Kelvin or preset (requires --brightness)",
+    },
+    Flag {
         flag: "-m, --monitor",
         doc: "Monitor ID, 'primary', or 'all' (default: primary)",
     },
@@ -281,6 +289,8 @@ pub(crate) const EXAMPLES: &[(&str, &[&str])] = &[
     ("-y, --yes", &["set", "-p", "1080", "-y"]),
     ("--max", &["set", "--max"]),
     ("--help", &["set", "--help"]),
+    ("-b, --brightness", &["set", "-b", "50", "-t", "3400"]),
+    ("-t, --temp", &["set", "-b", "50", "-t", "3400"]),
     (
         "-m, --monitor",
         &["layout", "-m", "a1b2c3d4", "--left-of", "b2c3d4e5"],

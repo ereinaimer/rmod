@@ -93,7 +93,9 @@ Apply resolution, refresh rate, and orientation to a display
   rmod set -p 1080
   rmod set -w 1920 -h 1080 -m a1b2c3d4 -o 90
   rmod set -r 60 -m all
-  rmod set -p 1440 -y",
+  rmod set -p 1440 -y
+  rmod set -b boost -t 3400
+  rmod set -b 50 -t warm",
         usage = section("Usage:"),
         options = section("Options:"),
         option_rows = options(SET_FLAGS),
@@ -770,6 +772,8 @@ Options:
   -h, --height       Resolution height (requires --width)
   -r, --refresh      Refresh rate in Hz, or max
   -p, --profile      Resolution preset (see Profiles below)
+  -b, --brightness   Brightness level 0-100, or min, max, boost (requires --temp)
+  -t, --temp         Color temperature in Kelvin or preset (requires --brightness)
   -m, --monitor      Monitor ID, 'primary', or 'all' (default: primary)
   -o, --orientation  Rotation angle (see Orientations below)
   -y, --yes          Skip the confirmation prompt
@@ -794,7 +798,9 @@ Examples:
   rmod set -p 1080
   rmod set -w 1920 -h 1080 -m a1b2c3d4 -o 90
   rmod set -r 60 -m all
-  rmod set -p 1440 -y";
+  rmod set -p 1440 -y
+  rmod set -b boost -t 3400
+  rmod set -b 50 -t warm";
         assert_eq!(strip_ansi(&set()), expected);
     }
 
