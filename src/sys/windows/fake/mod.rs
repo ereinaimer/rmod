@@ -29,6 +29,39 @@ use super::temp::TempChange;
 const MONITOR_1_NAME: &str = "RMOD Fake Monitor 1";
 const MONITOR_2_NAME: &str = "RMOD Fake Monitor 2";
 
+/// The gamma ramp state for a fake monitor, indexed by 1-based monitor number.
+/// Each ramp is a 768-entry array (256 per channel: R, G, B).
+static GAMMA_RAMPS: OnceLock<Mutex<Vec<[u16; 768]>>> = OnceLock::new();
+
+fn gamma_ramps() -> &'static Mutex<Vec<[u16; 768]>> {
+    GAMMA_RAMPS.get_or_init(|| {
+        let identity = identity_gamma_ramp();
+        Mutex::new(vec![identity, identity])
+    })
+}
+
+/// The identity gamma ramp (all channels linear 0-65535).
+fn identity_gamma_ramp() -> [u16; 768] {
+    let mut ramp = [0u16; 768];
+    for i in 0..256u32 {
+        let v = (i * 257) as u16;
+        ramp[i as usize] = v;
+        ramp[256 + i as usize] = v;
+        ramp[512 + i as usize] = v;
+    }
+    ramp
+}
+
+/// Gets the current gamma ramp for a monitor (1-based).
+fn get_gamma_ramp(monitor: u32) -> [u16; 768] {
+    gamma_ramps().lock().unwrap()[monitor as usize - 1]
+}
+
+/// Sets the gamma ramp for a monitor (1-based).
+fn set_gamma_ramp(monitor: u32, ramp: [u16; 768]) {
+    gamma_ramps().lock().unwrap()[monitor as usize - 1] = ramp;
+}
+
 /// True when the fake backend is active (`RMOD_SYS_FAKE=1`).
 pub(crate) fn enabled() -> bool {
     static ACTIVE: OnceLock<bool> = OnceLock::new();
@@ -67,6 +100,7 @@ pub(crate) fn reset_state() {
     *MAIN.get_or_init(|| Mutex::new(1)).lock().unwrap() = 1;
     main_previous().lock().unwrap().clear();
     *temperatures().lock().unwrap() = vec![6500, 6500];
+    *gamma_ramps().lock().unwrap() = vec![identity_gamma_ramp(), identity_gamma_ramp()];
 }
 
 /// The monitor with the given 1-based number, or `None` when unknown.

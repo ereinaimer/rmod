@@ -11,8 +11,10 @@ use super::super::brightness::{
     BrightnessBackend, BrightnessLayer, BrightnessOutcome, BrightnessValue, gamma_level_for,
     mode_word,
 };
+use super::super::temp::{build_ramp, kelvin_to_rgb};
+use super::super::brightness::gamma::b_est;
 use super::Monitor;
-use super::{display_label, resolve};
+use super::{display_label, get_gamma_ramp, resolve, set_gamma_ramp};
 
 /// Per-monitor brightness-mode state, indexed by 1-based monitor number.
 /// `None` means no mode has been applied yet.
@@ -51,6 +53,34 @@ fn mode_layers(monitor: &Monitor, mode: BrightnessValue) -> Vec<BrightnessLayer>
     }
 }
 
+/// Builds a temperature-composed gamma ramp at `level` percent, mirroring
+/// the real `compose_temp` implementation.
+fn compose_temp(kelvin: u32, level: u32) -> [u16; 768] {
+    let (r, g, b) = kelvin_to_rgb(kelvin);
+    let temp_ramp = build_ramp(r, g, b);
+    // Convert Ramp to [u16; 768] format
+    let mut ramp = [0u16; 768];
+    for i in 0..256 {
+        ramp[i] = temp_ramp.red[i];
+        ramp[256 + i] = temp_ramp.green[i];
+        ramp[512 + i] = temp_ramp.blue[i];
+    }
+    let estimated = b_est(&ramp);
+    scale_ramp(&ramp, level, estimated)
+}
+
+/// Scales `ramp` by `value / estimated` with round-to-nearest, clamped at
+/// 65535. Mirrors the real `scale_ramp` implementation.
+fn scale_ramp(ramp: &[u16; 768], value: u32, estimated: u32) -> [u16; 768] {
+    let mut out = [0u16; 768];
+    let ratio = value as f64 / estimated as f64;
+    for (i, entry) in ramp.iter().enumerate() {
+        let scaled = (*entry as f64 * ratio).round() as u64;
+        out[i] = scaled.min(65535) as u16;
+    }
+    out
+}
+
 /// Sets a fake monitor's brightness. Monitor 1 supports `ddc` and `slider`
 /// (current 60); monitor 2 is gamma-only (current 40).
 ///
@@ -65,7 +95,7 @@ pub(crate) fn set_brightness(
     monitor: Option<u32>,
     value: BrightnessValue,
     via: Option<BrightnessBackend>,
-    _temp: Option<u32>,
+    temp: Option<u32>,
 ) -> Result<BrightnessOutcome, String> {
     let monitor = resolve(monitor)?;
     let display = display_label(&monitor);
@@ -90,6 +120,13 @@ pub(crate) fn set_brightness(
                 BrightnessBackend::Gamma => BrightnessLayer::Gamma { level },
                 backend => BrightnessLayer::Hardware { backend, level },
             };
+            // On gamma backend with temp, compose the temp ramp and store it
+            if matches!(backend, BrightnessBackend::Gamma) {
+                if let Some(kelvin) = temp {
+                    let composed = compose_temp(kelvin, level);
+                    set_gamma_ramp(monitor.number, composed);
+                }
+            }
             Ok(BrightnessOutcome {
                 display,
                 kind: BrightnessValue::Percent(level),
@@ -110,6 +147,12 @@ pub(crate) fn set_brightness(
             let previous = &mut states[monitor.number as usize - 1];
             let unchanged = previous.as_ref() == Some(&layers);
             *previous = Some(layers.clone());
+            // On mode with temp, compose the temp ramp for the gamma layer and store it
+            if let Some(kelvin) = temp {
+                let gamma_level = gamma_level_for(mode);
+                let composed = compose_temp(kelvin, gamma_level);
+                set_gamma_ramp(monitor.number, composed);
+            }
             Ok(BrightnessOutcome {
                 display,
                 kind: mode,
