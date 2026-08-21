@@ -10,6 +10,7 @@ use super::bindings::{
     SetDeviceGammaRamp, SetVCPFeature, encode_wide,
 };
 use super::brightness::{DDC_BUDGET, physical_monitors, timed};
+use super::brightness::gamma::ramp_eq;
 use super::query;
 
 /// The contrast-control backend used for a change.
@@ -236,18 +237,27 @@ fn set_via_gamma_dc(dc: usize, value: u32) -> Result<Option<bool>, String> {
             }
         }
     }
-    let current = c_est(&ramp);
-    if value == 100 {
-        // Always write identity ramp to clear any previous boost.
-        // The tolerance check below handles the genuine "already at 100" case
-        // (identity ramp, c_est ≈ 100).
-    } else if (current - value as f64).abs() <= 2.0 {
+    let c = c_est(&ramp);
+
+    let candidate = if value == 100 {
+        if c == 0.0 {
+            contrast_ramp(100)
+        } else {
+            stretch_ramp(&ramp, 100.0 / c)
+        }
+    } else if c == 0.0 {
+        contrast_ramp(value)
+    } else if (c - value as f64).abs() <= 2.0 {
+        return Ok(Some(true));
+    } else {
+        stretch_ramp(&ramp, value as f64 / c)
+    };
+
+    if ramp_eq(&ramp, &candidate) {
         return Ok(Some(true));
     }
-    // Always compute absolute ramp from identity (strict set, not incremental).
-    // This avoids cumulative stretching on already-boosted ramps.
-    let out = contrast_ramp(value);
-    let set = unsafe { SetDeviceGammaRamp(dc, out.as_ptr() as *mut u16) };
+
+    let set = unsafe { SetDeviceGammaRamp(dc, candidate.as_ptr() as *mut u16) };
     if set == 0 {
         return Err("the gamma contrast change failed".to_string());
     }
@@ -271,7 +281,6 @@ pub(crate) fn c_est(ramp: &[u16; 768]) -> f64 {
 }
 
 // Pivot-stretch each channel around its own entry 128, per-channel.
-#[allow(dead_code)]
 pub(crate) fn stretch_ramp(ramp: &[u16; 768], ratio: f64) -> [u16; 768] {
     let mut out = [0u16; 768];
     for ch in 0..3 {
@@ -397,5 +406,84 @@ mod tests {
         let ramp = contrast_ramp(130);
         assert_eq!(ramp[0], 0);
         assert_eq!(ramp[255], 65535);
+    }
+
+    /// Helper: a ramp with a warm tint (green/blue reduced at top)
+    fn tinted_ramp() -> [u16; 768] {
+        let mut ramp = identity();
+        for i in 0..256 {
+            let g_idx = 256 + i;
+            let b_idx = 512 + i;
+            ramp[g_idx] = (ramp[g_idx] as f64 * 0.8).round() as u16;
+            ramp[b_idx] = (ramp[b_idx] as f64 * 0.6).round() as u16;
+        }
+        ramp
+    }
+
+    /// Helper: a dimmed ramp (all channels scaled down)
+    fn dimmed_ramp() -> [u16; 768] {
+        let mut ramp = identity();
+        for entry in &mut ramp {
+            *entry = (*entry as f64 * 0.5).round() as u16;
+        }
+        ramp
+    }
+
+    #[test]
+    fn stretch_ramp_over_tinted_keeps_tint_and_reads_c_est() {
+        let tinted = tinted_ramp();
+        let stretched = stretch_ramp(&tinted, 0.6);
+        let est = c_est(&stretched);
+        assert!((est - 60.0).abs() <= 0.5, "c_est = {est}");
+        let g_ratio = stretched[256 + 255] as f64 / stretched[255] as f64;
+        let b_ratio = stretched[512 + 255] as f64 / stretched[255] as f64;
+        let orig_g_ratio = tinted[256 + 255] as f64 / tinted[255] as f64;
+        let orig_b_ratio = tinted[512 + 255] as f64 / tinted[255] as f64;
+        assert!((g_ratio - orig_g_ratio).abs() <= 0.02, "green tint changed: {g_ratio} vs {orig_g_ratio}");
+        assert!((b_ratio - orig_b_ratio).abs() <= 0.02, "blue tint changed: {b_ratio} vs {orig_b_ratio}");
+    }
+
+    #[test]
+    fn stretch_ramp_over_dimmed_preserves_midpoint_brightness() {
+        let dimmed = dimmed_ramp();
+        let stretched = stretch_ramp(&dimmed, 0.6);
+        let est = c_est(&stretched);
+        assert!((est - 60.0).abs() <= 0.5, "c_est = {est}");
+        // Midpoint (index 128) is the brightness anchor — should be unchanged by stretch
+        assert_eq!(stretched[128], dimmed[128], "midpoint brightness changed");
+        assert_eq!(stretched[256 + 128], dimmed[256 + 128], "green midpoint brightness changed");
+        assert_eq!(stretched[512 + 128], dimmed[512 + 128], "blue midpoint brightness changed");
+    }
+
+    // The c_est == 0 fallback is tested via set_via_gamma_dc integration tests;
+    // stretch_ramp itself doesn't have fallback logic (that's in the caller).
+
+    #[test]
+    fn stretch_ramp_value_100_on_tinted_neutralizes_contrast_keeps_tint() {
+        let tinted = tinted_ramp();
+        let est = c_est(&tinted);
+        let stretched = stretch_ramp(&tinted, 100.0 / est);
+        let new_est = c_est(&stretched);
+        assert!((new_est - 100.0).abs() <= 0.5, "c_est after neutralize = {new_est}");
+        let g_ratio = stretched[256 + 255] as f64 / stretched[255] as f64;
+        let b_ratio = stretched[512 + 255] as f64 / stretched[255] as f64;
+        let orig_g_ratio = tinted[256 + 255] as f64 / tinted[255] as f64;
+        let orig_b_ratio = tinted[512 + 255] as f64 / tinted[255] as f64;
+        assert!((g_ratio - orig_g_ratio).abs() <= 0.02, "green tint changed: {g_ratio} vs {orig_g_ratio}");
+        assert!((b_ratio - orig_b_ratio).abs() <= 0.02, "blue tint changed: {b_ratio} vs {orig_b_ratio}");
+    }
+
+    #[test]
+    fn ramp_eq_identical_is_true() {
+        let ramp = identity();
+        assert!(ramp_eq(&ramp, &ramp));
+    }
+
+    #[test]
+    fn ramp_eq_one_entry_diff_is_false() {
+        let a = identity();
+        let mut b = identity();
+        b[100] += 1;
+        assert!(!ramp_eq(&a, &b));
     }
 }
