@@ -26,7 +26,7 @@ pub(crate) fn plan_max<'a>(
     let mut planned = Vec::new();
     let mut failures = Vec::new();
     for (index, name) in targets {
-        let display = query::display_label(name, *index as u32 + 1);
+        let display = query::display_label_for(name, *index as u32 + 1);
         let Some(mode) = best_mode(capabilities::enumerate_modes(name)) else {
             failures.push(format!(
                 "{display} has no supported modes, the display may be disabled or not connected"

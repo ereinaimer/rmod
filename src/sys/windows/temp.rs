@@ -49,7 +49,7 @@ pub fn set_temp(monitor: Option<u32>, kelvin: u32) -> Result<TempChange, String>
     let ramp = scale(&build_ramp(r, g, b), ratio);
     apply_ramp(name, &ramp)?;
     Ok(TempChange {
-        display: query::display_label(name, index as u32 + 1),
+        display: query::display_label_for(name, index as u32 + 1),
         kelvin,
     })
 }
@@ -68,7 +68,7 @@ pub fn reset_temp(monitor: Option<u32>) -> Result<TempChange, String> {
     let estimated = dim_ratio(&read_ramp(name)?);
     apply_ramp(name, &scale(&IDENTITY_RAMP, estimated))?;
     Ok(TempChange {
-        display: query::display_label(name, index as u32 + 1),
+        display: query::display_label_for(name, index as u32 + 1),
         kelvin: MAX_KELVIN,
     })
 }
@@ -85,7 +85,7 @@ pub fn get_temp(monitor: Option<u32>) -> Result<TempChange, String> {
     let (index, name) = query::resolve_device(monitor, &names)?;
     let ramp = read_ramp(name)?;
     Ok(TempChange {
-        display: query::display_label(name, index as u32 + 1),
+        display: query::display_label_for(name, index as u32 + 1),
         kelvin: estimate_kelvin(&ramp),
     })
 }

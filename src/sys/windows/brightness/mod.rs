@@ -132,7 +132,7 @@ pub fn set_brightness(
 ) -> Result<BrightnessOutcome, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
-    let display = query::display_label(name, index as u32 + 1);
+    let display = query::display_label_for(name, index as u32 + 1);
     match value {
         BrightnessValue::Percent(level) => set_percent(name, level, via, &display, temp),
         mode => {

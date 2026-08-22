@@ -19,7 +19,7 @@ use super::{AttachAction, AttachChange, AttachOutcome, apply_attach, build_disab
 pub fn disable(monitor: Option<u32>) -> Result<AttachOutcome, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
-    let display = query::display_label(name, index as u32 + 1);
+    let display = query::display_label_for(name, index as u32 + 1);
     let base = query::current_mode(name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
     if base.dm_position.x == 0 && base.dm_position.y == 0 {
         return Err("cannot detach the primary display".to_string());

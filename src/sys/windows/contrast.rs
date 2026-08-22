@@ -65,7 +65,7 @@ pub fn set_contrast(
 ) -> Result<ContrastOutcome, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
-    let display = query::display_label(name, index as u32 + 1);
+    let display = query::display_label_for(name, index as u32 + 1);
     let outcome = |backend: ContrastBackend, unchanged: bool| ContrastOutcome {
         display: display.clone(),
         value,
@@ -117,7 +117,7 @@ pub fn set_contrast(
 pub fn reset_contrast(monitor: Option<u32>) -> Result<ContrastOutcome, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
-    let display = query::display_label(name, index as u32 + 1);
+    let display = query::display_label_for(name, index as u32 + 1);
 
     // Force DDC to 100 if supported
     let ddc_ok = set_via_ddc(name, 100).is_ok();

@@ -28,7 +28,7 @@ fn attached_labels() -> Result<Vec<String>, String> {
     Ok(names
         .iter()
         .enumerate()
-        .map(|(i, name)| query::display_label(name, i as u32 + 1))
+        .map(|(i, name)| query::display_label_for(name, i as u32 + 1))
         .collect())
 }
 

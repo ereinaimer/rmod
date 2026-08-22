@@ -212,7 +212,7 @@ pub fn set(
 pub fn max(monitor: Option<u32>, orientation: Option<u32>) -> Result<ApplyOutcome, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
-    let display = query::display_label(name, index as u32 + 1);
+    let display = query::display_label_for(name, index as u32 + 1);
     let best = best_mode(capabilities::enumerate_modes(name)).ok_or_else(|| {
         format!("{display} has no supported modes, the display may be disabled or not connected")
     })?;
@@ -269,7 +269,7 @@ pub fn revert(
 ) -> Result<Mode, String> {
     let names = query::enumerate_devices();
     let (index, name) = query::resolve_device(monitor, &names)?;
-    let display = query::display_label(name, index as u32 + 1);
+    let display = query::display_label_for(name, index as u32 + 1);
     let base = query::current_mode(name).unwrap_or_else(|| unsafe { std::mem::zeroed() });
     let devmode = build_devmode(&previous, &base, previous_orientation);
     fade::transition(name, &devmode, || apply_mode(name, &display, &devmode))?;

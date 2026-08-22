@@ -186,13 +186,12 @@ pub(crate) fn display_label_with_edid(
 }
 
 /// Human-readable display label for a single device from its cached EDID:
-/// the EDID display name (see [`display_name_for`]) plus the 1-based monitor
-/// number. Falls back to the friendly-name label when the EDID cannot be
-/// read.
-pub(crate) fn display_label_for(name: &str, number: u32) -> String {
+/// the EDID display name (see [`display_name_for`]). Falls back to the
+/// friendly-name label when the EDID cannot be read.
+pub(crate) fn display_label_for(name: &str, _number: u32) -> String {
     match read_edid_registry(name) {
-        Ok(edid) => format!("{} [:{number}]", display_name_for(&edid, name)),
-        Err(_) => display_label_with_edid(name, number, None),
+        Ok(edid) => display_name_for(&edid, name),
+        Err(_) => display_label_with_edid(name, _number, None),
     }
 }
 
