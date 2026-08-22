@@ -174,10 +174,6 @@ pub enum SetSpec {
     RefreshOnly(Refresh),
     Max,
     Keep,
-    BrightnessTemp {
-        brightness: BrightnessValue,
-        temp: u32,
-    },
 }
 
 /// Parses the process arguments into a [`Command`].
